@@ -187,6 +187,8 @@ fn main() -> anyhow::Result<()> {
     spawn_delayed_cmd(&rt, &cmd_tx, "SLINTY_NEW_SESSION_AFTER", |_| UiCmd::NewSession);
     spawn_delayed_cmd(&rt, &cmd_tx, "SLINTY_OPEN_TREE_AFTER", |_| UiCmd::OpenTree);
     spawn_delayed_cmd(&rt, &cmd_tx, "SLINTY_FORK_FROM_AFTER", UiCmd::ForkFrom);
+    // Same as SLINTY_DEMO_AUTOSEND but for the real (non-demo) backend.
+    spawn_delayed_cmd(&rt, &cmd_tx, "SLINTY_SEND_AFTER", UiCmd::Send);
     spawn_delayed_cmd(&rt, &cmd_tx, "SLINTY_OPEN_PALETTE_AFTER", |_| UiCmd::OpenPalette);
     spawn_delayed_cmd(&rt, &cmd_tx, "SLINTY_PALETTE_QUERY_AFTER", UiCmd::PaletteQuery);
     // Bypasses the native file dialog, which (like screenshots and
