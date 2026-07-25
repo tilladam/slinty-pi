@@ -347,10 +347,8 @@ export component AppWindow inherits Window {
 
     in-out property <bool> palette-visible: false;
     in property <[PaletteRow]> palette-entries: [];
-    in-out property <int> palette-selected: 0;
     changed palette-visible => {
         if (root.palette-visible) {
-            root.palette-selected = 0;
             root.open-palette();
         }
     }
@@ -383,18 +381,6 @@ export component AppWindow inherits Window {
     public function cycle-density() {
         root.density = root.density >= 2 ? 0 : root.density + 1;
     }
-    public function palette-move(delta: int) {
-        if (root.palette-entries.length == 0) {
-            return;
-        }
-        root.palette-selected = max(0, min(root.palette-entries.length - 1, root.palette-selected + delta));
-    }
-    public function palette-exec-selected() {
-        if (root.palette-selected >= 0 && root.palette-selected < root.palette-entries.length) {
-            root.palette-exec(root.palette-entries[root.palette-selected].id);
-            root.palette-visible = false;
-        }
-    }
     // Prefill the composer (used after a fork, which hands back the text of
     // the forked-from message instead of keeping it in context).
     public function set-composer-text(text: string) {
@@ -425,36 +411,17 @@ export component AppWindow inherits Window {
         }
 
     FocusScope {
-        // Cmd+P toggles the command palette from anywhere. While it's open,
-        // Up/Down/Enter/Esc are its own (everything else falls through to
-        // its query field for typing) and the other global shortcuts below
-        // are disabled so they can't fire mid-query. Esc otherwise closes
+        // Cmd+P opens the command palette (it closes itself via its own
+        // internal FocusScope, since opening moves keyboard focus into its
+        // subtree — outside this scope — so this handler can no longer
+        // reach it once it's up; see palette.slint). Esc otherwise closes
         // the tree overlay if open, else aborts from anywhere (including
         // while the composer has focus). Cmd+B toggles the sidebar; Cmd+N
         // starts a new session; Cmd+T opens the tree; Ctrl+O cycles density.
         capture-key-pressed(event) => {
             if (event.modifiers.meta && event.text == "p") {
-                root.palette-visible = !root.palette-visible;
+                root.palette-visible = true;
                 return accept;
-            }
-            if (root.palette-visible) {
-                if (event.text == Key.Escape) {
-                    root.palette-visible = false;
-                    return accept;
-                }
-                if (event.text == Key.DownArrow) {
-                    root.palette-move(1);
-                    return accept;
-                }
-                if (event.text == Key.UpArrow) {
-                    root.palette-move(-1);
-                    return accept;
-                }
-                if (event.text == Key.Return) {
-                    root.palette-exec-selected();
-                    return accept;
-                }
-                return reject;
             }
             if (event.text == Key.Escape && root.tree-visible) {
                 root.tree-visible = false;
@@ -662,7 +629,6 @@ export component AppWindow inherits Window {
 
     if root.palette-visible: CommandPalette {
         entries: root.palette-entries;
-        selected: root.palette-selected;
         close => { root.palette-visible = false; }
         query-changed(q) => { root.palette-query(q); }
         exec(id) => {

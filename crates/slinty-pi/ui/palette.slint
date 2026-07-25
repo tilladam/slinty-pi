@@ -7,13 +7,16 @@ export struct PaletteRow {
     detail: string,
 }
 
-// Purely presentational: the selected index and the ranked entry list are
-// both owned by AppWindow (see `palette-selected`/`palette-move` there),
-// since keyboard nav is driven from the root FocusScope's capture phase,
-// which can't reach into a component nested behind `if palette-visible:`.
+// Owns its own selection state and keyboard nav via an internal FocusScope.
+// This can't be driven from the root FocusScope: `capture-key-pressed` only
+// fires on FocusScopes that are ancestors of the currently-focused element,
+// and the query LineEdit's `init => self.focus()` moves focus into this
+// component's subtree the moment it opens — outside the root scope, which
+// lives inside a sibling HorizontalLayout. (The tree overlay never hit this
+// because it never grabs focus.)
 export component CommandPalette inherits Rectangle {
     in property <[PaletteRow]> entries: [];
-    in property <int> selected: 0;
+    property <int> selected: 0;
     callback query-changed(string);
     callback exec(string);
     callback close();
@@ -36,56 +39,90 @@ export component CommandPalette inherits Rectangle {
 
         TouchArea {}
 
-        VerticalLayout {
-            padding: 12px;
-            spacing: 8px;
-
-            query := LineEdit {
-                placeholder-text: "Type a command, session, or action…";
-                edited(text) => { root.query-changed(text); }
-                init => { self.focus(); }
-            }
-
-            if root.entries.length == 0: Text {
-                text: "No matches.";
-                font-size: 12px;
-                color: Palette.foreground.transparentize(0.5);
-            }
-
-            ListView {
-                for row[i] in root.entries: Rectangle {
-                    height: 32px;
-                    border-radius: 5px;
-                    background: i == root.selected ? Palette.accent-background.transparentize(0.85) : transparent;
-
-                    HorizontalLayout {
-                        padding-left: 8px;
-                        padding-right: 8px;
-                        spacing: 8px;
-
-                        Text {
-                            text: row.kind == "session" ? "◷" : row.kind == "command" ? "/" : "▸";
-                            font-size: 11px;
-                            color: Palette.foreground.transparentize(0.5);
-                            vertical-alignment: center;
-                        }
-                        Text {
-                            text: row.label;
-                            font-size: 12.5px;
-                            color: Palette.foreground;
-                            overflow: elide;
-                            vertical-alignment: center;
-                            horizontal-stretch: 1;
-                        }
-                        if row.detail != "": Text {
-                            text: row.detail;
-                            font-size: 11px;
-                            color: Palette.foreground.transparentize(0.5);
-                            vertical-alignment: center;
-                        }
+        FocusScope {
+            // Up/Down/Enter/Esc/Cmd+P are ours; everything else (typing)
+            // falls through to the query field.
+            capture-key-pressed(event) => {
+                if (event.modifiers.meta && event.text == "p") {
+                    root.close();
+                    return accept;
+                }
+                if (event.text == Key.Escape) {
+                    root.close();
+                    return accept;
+                }
+                if (event.text == Key.DownArrow) {
+                    if (root.entries.length > 0) {
+                        root.selected = min(root.entries.length - 1, root.selected + 1);
                     }
-                    TouchArea {
-                        clicked => { root.exec(row.id); }
+                    return accept;
+                }
+                if (event.text == Key.UpArrow) {
+                    if (root.entries.length > 0) {
+                        root.selected = max(0, root.selected - 1);
+                    }
+                    return accept;
+                }
+                if (event.text == Key.Return) {
+                    if (root.selected >= 0 && root.selected < root.entries.length) {
+                        root.exec(root.entries[root.selected].id);
+                    }
+                    return accept;
+                }
+                reject
+            }
+
+            VerticalLayout {
+                padding: 12px;
+                spacing: 8px;
+
+                query := LineEdit {
+                    placeholder-text: "Type a command, session, or action…";
+                    edited(text) => { root.selected = 0; root.query-changed(text); }
+                    init => { self.focus(); }
+                }
+
+                if root.entries.length == 0: Text {
+                    text: "No matches.";
+                    font-size: 12px;
+                    color: Palette.foreground.transparentize(0.5);
+                }
+
+                ListView {
+                    for row[i] in root.entries: Rectangle {
+                        height: 32px;
+                        border-radius: 5px;
+                        background: i == root.selected ? Palette.accent-background.transparentize(0.85) : transparent;
+
+                        HorizontalLayout {
+                            padding-left: 8px;
+                            padding-right: 8px;
+                            spacing: 8px;
+
+                            Text {
+                                text: row.kind == "session" ? "◷" : row.kind == "command" ? "/" : "▸";
+                                font-size: 11px;
+                                color: Palette.foreground.transparentize(0.5);
+                                vertical-alignment: center;
+                            }
+                            Text {
+                                text: row.label;
+                                font-size: 12.5px;
+                                color: Palette.foreground;
+                                overflow: elide;
+                                vertical-alignment: center;
+                                horizontal-stretch: 1;
+                            }
+                            if row.detail != "": Text {
+                                text: row.detail;
+                                font-size: 11px;
+                                color: Palette.foreground.transparentize(0.5);
+                                vertical-alignment: center;
+                            }
+                        }
+                        TouchArea {
+                            clicked => { root.selected = i; root.exec(row.id); }
+                        }
                     }
                 }
             }
