@@ -88,6 +88,14 @@ fn main() -> anyhow::Result<()> {
         app.on_sidebar_search_edited(move |query| {
             let _ = tx.send(UiCmd::SidebarSearch(query.to_string()));
         });
+        let tx = cmd_tx.clone();
+        app.on_open_tree(move || {
+            let _ = tx.send(UiCmd::OpenTree);
+        });
+        let tx = cmd_tx.clone();
+        app.on_fork_from(move |entry_id| {
+            let _ = tx.send(UiCmd::ForkFrom(entry_id.to_string()));
+        });
     }
 
     let weak = app.as_weak();
@@ -110,6 +118,8 @@ fn main() -> anyhow::Result<()> {
     spawn_delayed_cmd(&rt, &cmd_tx, "SLINTY_SIDEBAR_SEARCH_AFTER", UiCmd::SidebarSearch);
     spawn_delayed_cmd(&rt, &cmd_tx, "SLINTY_DELETE_SESSION_AFTER", UiCmd::DeleteSession);
     spawn_delayed_cmd(&rt, &cmd_tx, "SLINTY_NEW_SESSION_AFTER", |_| UiCmd::NewSession);
+    spawn_delayed_cmd(&rt, &cmd_tx, "SLINTY_OPEN_TREE_AFTER", |_| UiCmd::OpenTree);
+    spawn_delayed_cmd(&rt, &cmd_tx, "SLINTY_FORK_FROM_AFTER", UiCmd::ForkFrom);
 
     // Keep the highlighter's theme choice and the code-card background in
     // sync with the OS color scheme. Code cards use the syntect theme's own

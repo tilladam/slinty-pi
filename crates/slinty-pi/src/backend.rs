@@ -16,12 +16,12 @@ use slint::{Model, ModelRc, SharedString, StyledText, VecModel, Weak};
 use tokio::sync::mpsc;
 
 use pi_rpc::{
-    content_text, AssistantMessageEvent, Command, Event, ExtensionUiReply, PiClient, PiOptions,
-    ThinkingLevel,
+    content_text, AssistantMessageEvent, Command, Event, ExtensionUiReply, PiClient, PiError,
+    PiOptions, ThinkingLevel,
 };
 
 use crate::segmenter::{segment_markdown, Segment};
-use crate::{highlight, AppWindow, QueueItem, Row, SessionRow};
+use crate::{highlight, AppWindow, QueueItem, Row, SessionRow, TreeRow};
 
 const TEXT_FLUSH: Duration = Duration::from_millis(33);
 const TOOL_FLUSH: Duration = Duration::from_millis(100);
@@ -47,6 +47,10 @@ pub enum UiCmd {
     DeleteSession(String),
     /// Sidebar search box changed; re-filter the session list.
     SidebarSearch(String),
+    /// Fetch and display the active session's branch tree.
+    OpenTree,
+    /// Fork the active session from a prior user message (by entry id).
+    ForkFrom(String),
 }
 
 // ---------------------------------------------------------------------------
@@ -261,6 +265,34 @@ impl Ui {
                 })
                 .collect();
             app.set_sidebar_sessions(ModelRc::new(VecModel::from(rows)));
+        });
+    }
+
+    /// `rows` are `(id, depth, summary, label, can_fork, active)`. Opens the
+    /// overlay once the (freshly-fetched) rows land.
+    fn set_tree(&self, rows: Vec<(String, i32, String, String, bool, bool)>) {
+        self.with_app(move |app| {
+            let rows: Vec<TreeRow> = rows
+                .into_iter()
+                .map(|(id, depth, summary, label, can_fork, active)| TreeRow {
+                    id: id.as_str().into(),
+                    depth,
+                    summary: summary.as_str().into(),
+                    label: label.as_str().into(),
+                    can_fork,
+                    active,
+                })
+                .collect();
+            app.set_tree_rows(ModelRc::new(VecModel::from(rows)));
+            app.set_tree_visible(true);
+        });
+    }
+
+    /// Prefill the composer (used after a fork, which hands back the text of
+    /// the message it forked from instead of keeping it in context).
+    fn set_composer_text(&self, text: String) {
+        self.with_app(move |app| {
+            app.invoke_set_composer_text(text.as_str().into());
         });
     }
 }
@@ -1158,6 +1190,16 @@ async fn run_session(
                         sidebar.query = query;
                         sidebar.refresh_sessions(client, &transcript.ui).await;
                     }
+                    UiCmd::OpenTree => {
+                        match fetch_tree_rows(client).await {
+                            Ok(rows) => transcript.ui.set_tree(rows),
+                            Err(e) => transcript.note("error", format!("could not load tree: {e}")),
+                        }
+                    }
+                    UiCmd::ForkFrom(entry_id) => {
+                        fork_from(client, transcript, &entry_id).await;
+                        sidebar.refresh_sessions(client, &transcript.ui).await;
+                    }
                 }
             }
             event = events.recv() => {
@@ -1230,6 +1272,14 @@ async fn resume_session(client: &PiClient, transcript: &mut Transcript, session_
             return;
         }
     }
+    hydrate_active_session(client, transcript).await;
+}
+
+/// Re-fetch the active child's full message history and replace the
+/// transcript with it. Shared by [`resume_session`] (after `switch_session`)
+/// and [`fork_from`] (after `fork`) — both move the active branch and need
+/// the same reload.
+async fn hydrate_active_session(client: &PiClient, transcript: &mut Transcript) {
     match client.get_messages().await {
         Ok(data) => {
             let messages = data
@@ -1242,6 +1292,286 @@ async fn resume_session(client: &PiClient, transcript: &mut Transcript, session_
             update_stats(client, transcript).await;
         }
         Err(e) => transcript.note("error", format!("could not load session messages: {e}")),
+    }
+}
+
+/// Fork the active session from a prior user message and hydrate the
+/// resulting (now-active) branch.
+async fn fork_from(client: &PiClient, transcript: &mut Transcript, entry_id: &str) {
+    // `fork` rewinds the active branch to *before* entryId and hands back its
+    // text — it does not keep that message in context — so the composer
+    // needs pre-filling, or the user loses the prompt they meant to redo.
+    let prefill = match client.fork(entry_id).await {
+        Ok(data) => {
+            if data.get("cancelled").and_then(|v| v.as_bool()) == Some(true) {
+                transcript.note("info", "fork cancelled by an extension".to_string());
+                return;
+            }
+            data.get("text").and_then(|v| v.as_str()).map(str::to_string)
+        }
+        Err(e) => {
+            transcript.note("error", format!("could not fork: {e}"));
+            return;
+        }
+    };
+    hydrate_active_session(client, transcript).await;
+    if let Some(text) = prefill {
+        transcript.ui.set_composer_text(text);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Tree view: flatten `get_tree`'s nested `{entry, children, label?}` shape
+// into an indented list for the (read-only, no graphical DAG) overlay.
+// ---------------------------------------------------------------------------
+
+struct FlatTreeRow {
+    id: String,
+    depth: i32,
+    summary: String,
+    label: String,
+    can_fork: bool,
+}
+
+/// Fetch and flatten the active child's tree. `(id, depth, summary, label,
+/// can_fork, is_active_branch)` per row, in depth-first display order.
+async fn fetch_tree_rows(
+    client: &PiClient,
+) -> Result<Vec<(String, i32, String, String, bool, bool)>, PiError> {
+    let data = client.get_tree().await?;
+    let leaf_id = data.get("leafId").and_then(|v| v.as_str()).map(str::to_string);
+    let nodes = data.get("tree").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+
+    let mut flat = Vec::new();
+    let mut parents: HashMap<String, String> = HashMap::new();
+    flatten_tree(&nodes, 0, &mut flat, &mut parents);
+
+    let mut active = std::collections::HashSet::new();
+    let mut current = leaf_id;
+    while let Some(id) = current {
+        current = parents.get(&id).cloned();
+        active.insert(id);
+    }
+
+    Ok(flat
+        .into_iter()
+        .map(|r| {
+            let is_active = active.contains(&r.id);
+            (r.id, r.depth, r.summary, r.label, r.can_fork, is_active)
+        })
+        .collect())
+}
+
+fn flatten_tree(
+    nodes: &[serde_json::Value],
+    depth: i32,
+    out: &mut Vec<FlatTreeRow>,
+    parents: &mut HashMap<String, String>,
+) {
+    for node in nodes {
+        let Some(entry) = node.get("entry") else { continue };
+        let Some(id) = entry.get("id").and_then(|v| v.as_str()) else { continue };
+        if let Some(parent_id) = entry.get("parentId").and_then(|v| v.as_str()) {
+            parents.insert(id.to_string(), parent_id.to_string());
+        }
+        let can_fork = entry.get("type").and_then(|v| v.as_str()) == Some("message")
+            && entry.pointer("/message/role").and_then(|v| v.as_str()) == Some("user");
+        let label = node.get("label").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        out.push(FlatTreeRow {
+            id: id.to_string(),
+            depth,
+            summary: tree_node_summary(entry),
+            label,
+            can_fork,
+        });
+        if let Some(children) = node.get("children").and_then(|v| v.as_array()) {
+            flatten_tree(children, depth + 1, out, parents);
+        }
+    }
+}
+
+/// One-line human summary of a session-tree entry (any of the types in
+/// docs/session-format.md), for the tree overlay row text.
+fn tree_node_summary(entry: &serde_json::Value) -> String {
+    let kind = entry.get("type").and_then(|v| v.as_str()).unwrap_or("?");
+    match kind {
+        "message" => {
+            let message = entry.get("message").unwrap_or(&serde_json::Value::Null);
+            match message.get("role").and_then(|v| v.as_str()) {
+                Some("user") => {
+                    let (text, _) = user_content_text(message.get("content").unwrap_or(&serde_json::Value::Null));
+                    elide_oneline(&text)
+                }
+                Some("assistant") => {
+                    let text = message
+                        .get("content")
+                        .and_then(|v| v.as_array())
+                        .and_then(|blocks| {
+                            blocks.iter().find_map(|b| {
+                                (b.get("type").and_then(|v| v.as_str()) == Some("text"))
+                                    .then(|| b.get("text").and_then(|v| v.as_str()))
+                                    .flatten()
+                            })
+                        });
+                    match text {
+                        Some(t) if !t.is_empty() => format!("assistant: {}", elide_oneline(t)),
+                        _ => "assistant".to_string(),
+                    }
+                }
+                Some("toolResult") => {
+                    let name = message.get("toolName").and_then(|v| v.as_str()).unwrap_or("tool");
+                    format!("→ {name}")
+                }
+                Some("bashExecution") => {
+                    format!("$ {}", first_line(message.get("command").and_then(|v| v.as_str()).unwrap_or("")))
+                }
+                Some(role) => role.to_string(),
+                None => "message".to_string(),
+            }
+        }
+        "model_change" => format!(
+            "model → {}/{}",
+            entry.get("provider").and_then(|v| v.as_str()).unwrap_or("?"),
+            entry.get("modelId").and_then(|v| v.as_str()).unwrap_or("?"),
+        ),
+        "thinking_level_change" => format!(
+            "thinking → {}",
+            entry.get("thinkingLevel").and_then(|v| v.as_str()).unwrap_or("?")
+        ),
+        "compaction" => "context compacted".to_string(),
+        "branch_summary" => "branch summary".to_string(),
+        "custom" => match entry.get("customType").and_then(|v| v.as_str()) {
+            Some(t) => format!("custom: {t}"),
+            None => "custom".to_string(),
+        },
+        "custom_message" => "custom message".to_string(),
+        "session_info" => match entry.get("name").and_then(|v| v.as_str()) {
+            Some(name) => format!("renamed: {name}"),
+            None => "session info".to_string(),
+        },
+        other => other.to_string(),
+    }
+}
+
+fn elide_oneline(s: &str) -> String {
+    let collapsed: String = s.split_whitespace().collect::<Vec<_>>().join(" ");
+    if collapsed.chars().count() <= 70 {
+        return collapsed;
+    }
+    let truncated: String = collapsed.chars().take(70).collect();
+    format!("{truncated}…")
+}
+
+#[cfg(test)]
+mod tree_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn node(entry: serde_json::Value, children: Vec<serde_json::Value>) -> serde_json::Value {
+        json!({"entry": entry, "children": children})
+    }
+
+    /// Mirrors get_tree's shape for a session that branched: a user prompt,
+    /// two children off it (the original assistant reply and a
+    /// branch_summary from switching away), each continuing separately.
+    fn sample_tree() -> Vec<serde_json::Value> {
+        vec![node(
+            json!({"type": "message", "id": "u1", "parentId": null, "message": {"role": "user", "content": "refactor the parser"}}),
+            vec![
+                node(
+                    json!({"type": "message", "id": "a1", "parentId": "u1", "message": {"role": "assistant", "content": [{"type": "text", "text": "sure, let's start"}]}}),
+                    vec![],
+                ),
+                node(
+                    json!({"type": "branch_summary", "id": "b1", "parentId": "u1", "fromId": "a1", "summary": "explored a bash approach first"}),
+                    vec![node(
+                        json!({"type": "message", "id": "u2", "parentId": "b1", "message": {"role": "user", "content": "actually skip the shell-out"}}),
+                        vec![],
+                    )],
+                ),
+            ],
+        )]
+    }
+
+    #[test]
+    fn flattens_depth_first_with_correct_depths() {
+        let mut flat = Vec::new();
+        let mut parents = HashMap::new();
+        flatten_tree(&sample_tree(), 0, &mut flat, &mut parents);
+        let ids_and_depths: Vec<(&str, i32)> = flat.iter().map(|r| (r.id.as_str(), r.depth)).collect();
+        assert_eq!(ids_and_depths, vec![("u1", 0), ("a1", 1), ("b1", 1), ("u2", 2)]);
+    }
+
+    #[test]
+    fn only_user_messages_are_forkable() {
+        let mut flat = Vec::new();
+        let mut parents = HashMap::new();
+        flatten_tree(&sample_tree(), 0, &mut flat, &mut parents);
+        let forkable: Vec<&str> = flat.iter().filter(|r| r.can_fork).map(|r| r.id.as_str()).collect();
+        assert_eq!(forkable, vec!["u1", "u2"]);
+    }
+
+    #[test]
+    fn parent_map_enables_active_branch_lookup() {
+        let mut flat = Vec::new();
+        let mut parents = HashMap::new();
+        flatten_tree(&sample_tree(), 0, &mut flat, &mut parents);
+        // Active leaf is u2, on the branch_summary side, not a1.
+        let mut active = std::collections::HashSet::new();
+        let mut current = Some("u2".to_string());
+        while let Some(id) = current {
+            current = parents.get(&id).cloned();
+            active.insert(id);
+        }
+        assert!(active.contains("u2"));
+        assert!(active.contains("b1"));
+        assert!(active.contains("u1"));
+        assert!(!active.contains("a1"));
+    }
+
+    #[test]
+    fn summarizes_every_entry_kind() {
+        assert_eq!(
+            tree_node_summary(&json!({"type": "message", "message": {"role": "user", "content": "hello there"}})),
+            "hello there"
+        );
+        assert_eq!(
+            tree_node_summary(&json!({"type": "message", "message": {"role": "assistant", "content": [{"type": "text", "text": "hi!"}]}})),
+            "assistant: hi!"
+        );
+        assert_eq!(
+            tree_node_summary(&json!({"type": "message", "message": {"role": "assistant", "content": [{"type": "toolCall", "id": "c1", "name": "bash", "arguments": {}}]}})),
+            "assistant"
+        );
+        assert_eq!(
+            tree_node_summary(&json!({"type": "message", "message": {"role": "toolResult", "toolName": "bash"}})),
+            "→ bash"
+        );
+        assert_eq!(
+            tree_node_summary(&json!({"type": "message", "message": {"role": "bashExecution", "command": "cargo test"}})),
+            "$ cargo test"
+        );
+        assert_eq!(
+            tree_node_summary(&json!({"type": "model_change", "provider": "anthropic", "modelId": "claude-sonnet-4-5"})),
+            "model → anthropic/claude-sonnet-4-5"
+        );
+        assert_eq!(
+            tree_node_summary(&json!({"type": "thinking_level_change", "thinkingLevel": "high"})),
+            "thinking → high"
+        );
+        assert_eq!(tree_node_summary(&json!({"type": "compaction"})), "context compacted");
+        assert_eq!(
+            tree_node_summary(&json!({"type": "session_info", "name": "my-feature"})),
+            "renamed: my-feature"
+        );
+    }
+
+    #[test]
+    fn long_user_message_is_elided() {
+        let long = "a ".repeat(60);
+        let summary = tree_node_summary(&json!({"type": "message", "message": {"role": "user", "content": long}}));
+        assert!(summary.ends_with('…'));
+        assert!(summary.chars().count() <= 71);
     }
 }
 

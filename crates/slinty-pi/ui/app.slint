@@ -1,5 +1,6 @@
 import { Button, ComboBox, ListView, Palette, TextEdit, VerticalBox, HorizontalBox } from "std-widgets.slint";
 import { Sidebar, SessionRow } from "sidebar.slint";
+import { TreeOverlay, TreeRow } from "tree.slint";
 
 // One transcript row. Assistant messages are segmented (prose / heading /
 // code) into several rows; user/thinking/tool/info/error are single rows.
@@ -320,6 +321,9 @@ export component AppWindow inherits Window {
     in property <string> current-project-name: "";
     in property <[SessionRow]> sidebar-sessions: [];
 
+    in-out property <bool> tree-visible: false;
+    in property <[TreeRow]> tree-rows: [];
+
     callback send(string);
     callback abort();
     callback copy-text(string);
@@ -332,11 +336,20 @@ export component AppWindow inherits Window {
     callback resume-session(string);
     callback delete-session(string);
     callback sidebar-search-edited(string);
+    callback open-tree();
+    callback fork-from(string);
 
     public function scroll-to-end() {
         list.viewport-y = -max(0px, list.viewport-height - list.height);
     }
     public function focus-input() {
+        input.focus();
+    }
+    // Prefill the composer (used after a fork, which hands back the text of
+    // the forked-from message instead of keeping it in context).
+    public function set-composer-text(text: string) {
+        input.text = text;
+        root.composer-edited(text);
         input.focus();
     }
     function submit() {
@@ -362,9 +375,14 @@ export component AppWindow inherits Window {
         }
 
     FocusScope {
-        // Esc aborts from anywhere, including while the composer has focus.
-        // Cmd+B toggles the sidebar; Cmd+N starts a new session.
+        // Esc closes the tree overlay if open, else aborts from anywhere
+        // (including while the composer has focus). Cmd+B toggles the
+        // sidebar; Cmd+N starts a new session; Cmd+T opens the tree.
         capture-key-pressed(event) => {
+            if (event.text == Key.Escape && root.tree-visible) {
+                root.tree-visible = false;
+                return accept;
+            }
             if (event.text == Key.Escape && root.streaming) {
                 root.abort();
                 return accept;
@@ -375,6 +393,10 @@ export component AppWindow inherits Window {
             }
             if (event.modifiers.meta && event.text == "n") {
                 root.new-session();
+                return accept;
+            }
+            if (event.modifiers.meta && event.text == "t") {
+                root.open-tree();
                 return accept;
             }
             reject
@@ -489,6 +511,22 @@ export component AppWindow inherits Window {
                         }
                         Rectangle { horizontal-stretch: 1; }
 
+                        Rectangle {
+                            width: tree-label.width + 10px;
+                            height: 20px;
+                            border-radius: 5px;
+                            background: tree-touch.has-hover ? Palette.alternate-background : transparent;
+                            tree-label := Text {
+                                text: "tree";
+                                font-size: 11px;
+                                color: Style.faint;
+                                vertical-alignment: center;
+                            }
+                            tree-touch := TouchArea {
+                                clicked => { root.open-tree(); }
+                            }
+                        }
+
                         if root.thinking-list.length > 1: ComboBox {
                             model: root.thinking-list;
                             current-index <=> root.thinking-index;
@@ -513,5 +551,14 @@ export component AppWindow inherits Window {
             }
         }
     }
+    }
+
+    if root.tree-visible: TreeOverlay {
+        rows: root.tree-rows;
+        close => { root.tree-visible = false; }
+        fork-from(id) => {
+            root.tree-visible = false;
+            root.fork-from(id);
+        }
     }
 }

@@ -1,0 +1,157 @@
+import { ListView, Palette } from "std-widgets.slint";
+
+export struct TreeRow {
+    id: string,
+    depth: int,
+    summary: string,
+    label: string,
+    can-fork: bool,
+    active: bool,
+}
+
+component ForkButton inherits Rectangle {
+    callback fork-requested();
+    property <bool> confirming: false;
+
+    width: confirming ? 74px : 46px;
+    height: 20px;
+    border-radius: 5px;
+    border-width: 1px;
+    border-color: Palette.border.transparentize(0.5);
+    background: touch.has-hover ? Palette.alternate-background.darker(10%) : transparent;
+    animate width { duration: 120ms; }
+
+    Text {
+        text: confirming ? "fork here?" : "fork";
+        font-size: 10px;
+        color: confirming ? Palette.accent-background : Palette.foreground.transparentize(0.3);
+    }
+    touch := TouchArea {
+        clicked => {
+            if (root.confirming) {
+                root.fork-requested();
+                root.confirming = false;
+            } else {
+                root.confirming = true;
+                reset.running = true;
+            }
+        }
+    }
+    reset := Timer {
+        interval: 2500ms;
+        running: false;
+        triggered => {
+            root.confirming = false;
+            self.running = false;
+        }
+    }
+}
+
+component TreeNodeItem inherits Rectangle {
+    in property <TreeRow> entry;
+    callback fork();
+
+    height: 30px;
+    border-radius: 5px;
+    background: entry.active ? Palette.accent-background.transparentize(0.9) : transparent;
+
+    HorizontalLayout {
+        padding-left: 10px + entry.depth * 16px;
+        padding-right: 8px;
+        spacing: 6px;
+
+        Text {
+            text: entry.active ? "●" : "○";
+            font-size: 9px;
+            color: entry.active ? Palette.accent-background : Palette.foreground.transparentize(0.6);
+            vertical-alignment: center;
+        }
+        Text {
+            text: entry.summary;
+            font-size: 12px;
+            font-weight: entry.active ? 600 : 400;
+            color: Palette.foreground;
+            overflow: elide;
+            vertical-alignment: center;
+        }
+        if entry.label != "": Rectangle {
+            background: Palette.accent-background.transparentize(0.85);
+            border-radius: 4px;
+            HorizontalLayout {
+                padding-left: 5px;
+                padding-right: 5px;
+                Text {
+                    text: entry.label;
+                    font-size: 10px;
+                    color: Palette.accent-background;
+                    vertical-alignment: center;
+                }
+            }
+        }
+        Rectangle { horizontal-stretch: 1; }
+        if entry.can-fork: ForkButton {
+            fork-requested => { root.fork(); }
+        }
+    }
+}
+
+export component TreeOverlay inherits Rectangle {
+    in property <[TreeRow]> rows: [];
+    callback close();
+    callback fork-from(string);
+
+    background: Palette.background.transparentize(0.1);
+
+    TouchArea {
+        // Click the scrim to dismiss.
+        clicked => { root.close(); }
+    }
+
+    Rectangle {
+        width: min(620px, parent.width - 48px);
+        height: min(560px, parent.height - 48px);
+        background: Palette.background;
+        border-radius: 10px;
+        border-width: 1px;
+        border-color: Palette.border.transparentize(0.4);
+        drop-shadow-blur: 24px;
+        drop-shadow-color: #00000055;
+
+        // Swallow clicks so they don't fall through to the scrim.
+        TouchArea {}
+
+        VerticalLayout {
+            padding: 14px;
+            spacing: 8px;
+
+            HorizontalLayout {
+                Text {
+                    text: "Session tree";
+                    font-size: 15px;
+                    font-weight: 700;
+                    color: Palette.foreground;
+                }
+                Rectangle { horizontal-stretch: 1; }
+                Text {
+                    text: "close ✕";
+                    font-size: 11px;
+                    color: Palette.foreground.transparentize(0.4);
+                    TouchArea { clicked => { root.close(); } }
+                }
+            }
+
+            ListView {
+                for entry in root.rows: TreeNodeItem {
+                    entry: entry;
+                    fork => { root.fork-from(entry.id); }
+                }
+            }
+
+            if root.rows.length == 0: Text {
+                text: "No tree data yet.";
+                font-size: 12px;
+                color: Palette.foreground.transparentize(0.5);
+            }
+        }
+    }
+}
