@@ -350,6 +350,13 @@ export component AppWindow inherits Window {
     changed palette-visible => {
         if (root.palette-visible) {
             root.open-palette();
+        } else {
+            // The palette's query field grabs focus on open; closing it
+            // destroys that FocusScope along with the focused element, so
+            // without this the root scope has no focus path left to fire
+            // capture-key-pressed on — every global shortcut would go dead
+            // after the first palette use.
+            root.focus-input();
         }
     }
 
