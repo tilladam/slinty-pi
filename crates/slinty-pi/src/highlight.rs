@@ -39,6 +39,18 @@ fn assets() -> &'static Assets {
     })
 }
 
+/// The background color the active syntect theme was designed against.
+/// Code cards must use this so span colors keep their intended contrast.
+pub fn theme_background(dark: bool) -> (u8, u8, u8) {
+    let assets = assets();
+    let theme = if dark { &assets.dark } else { &assets.light };
+    theme
+        .settings
+        .background
+        .map(|c| (c.r, c.g, c.b))
+        .unwrap_or(if dark { (43, 48, 59) } else { (255, 255, 255) })
+}
+
 /// Highlight `code` into StyledText-compatible colored markdown.
 pub fn code_markdown(code: &str, lang: &str, dark: bool) -> String {
     let assets = assets();
@@ -142,6 +154,16 @@ mod tests {
         let mut s = String::new();
         escape_into(&mut s, "    indented");
         assert!(s.starts_with("\u{00a0}\u{00a0}\u{00a0}\u{00a0}"));
+    }
+
+    #[test]
+    fn theme_backgrounds_differ_by_scheme() {
+        let dark = theme_background(true);
+        let light = theme_background(false);
+        assert_ne!(dark, light);
+        // Dark theme background must actually be dark, light light.
+        assert!((dark.0 as u16 + dark.1 as u16 + dark.2 as u16) < 300);
+        assert!((light.0 as u16 + light.1 as u16 + light.2 as u16) > 600);
     }
 
     #[test]

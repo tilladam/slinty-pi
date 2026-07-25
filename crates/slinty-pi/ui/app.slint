@@ -152,9 +152,10 @@ component HeadingRow inherits HorizontalLayout {
 
 component CodeRow inherits Rectangle {
     in property <Row> entry;
+    in property <color> bg: #2b303b;
     callback copy-requested(string);
 
-    background: Style.code-bg;
+    background: bg;
     border-radius: Style.radius;
     border-width: 1px;
     border-color: Style.hairline;
@@ -306,6 +307,9 @@ export component AppWindow inherits Window {
     in property <string> status-text: "";
     in property <float> context-percent: 0;
     in property <int> composer-lines: 1;
+    // Set from Rust to the syntect theme's own background color, so
+    // highlighted spans keep the contrast they were designed with.
+    in property <color> code-background: #2b303b;
     out property <bool> dark-mode: Palette.color-scheme == ColorScheme.dark;
 
     callback send(string);
@@ -360,6 +364,7 @@ export component AppWindow inherits Window {
                         if entry.kind == "heading": HeadingRow { entry: entry; }
                         if entry.kind == "code": CodeRow {
                             entry: entry;
+                            bg: root.code-background;
                             copy-requested(t) => { root.copy-text(t); }
                         }
                         if entry.kind == "thinking": ThinkingRow { entry: entry; }

@@ -78,7 +78,14 @@ fn main() -> anyhow::Result<()> {
         rt.spawn(backend::pi_backend(weak, dark_flag, cmd_rx));
     }
 
-    // Keep the highlighter's theme choice in sync with the OS color scheme.
+    // Keep the highlighter's theme choice and the code-card background in
+    // sync with the OS color scheme. Code cards use the syntect theme's own
+    // background color so span colors keep their designed contrast.
+    let apply_code_theme = |app: &AppWindow| {
+        let (r, g, b) = highlight::theme_background(app.get_dark_mode());
+        app.set_code_background(slint::Color::from_rgb_u8(r, g, b));
+    };
+    apply_code_theme(&app);
     {
         let dark = dark.clone();
         let weak = app.as_weak();
@@ -89,6 +96,7 @@ fn main() -> anyhow::Result<()> {
             move || {
                 if let Some(app) = weak.upgrade() {
                     dark.store(app.get_dark_mode(), Ordering::Relaxed);
+                    apply_code_theme(&app);
                 }
             },
         );
