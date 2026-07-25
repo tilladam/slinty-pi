@@ -1143,6 +1143,9 @@ async fn run_session(
                     }
                     UiCmd::NewSession => {
                         match client.new_session(None).await {
+                            Ok(data) if data.get("cancelled").and_then(|v| v.as_bool()) == Some(true) => {
+                                transcript.note("info", "new session cancelled by an extension".to_string());
+                            }
                             Ok(_) => transcript.reset(),
                             Err(e) => transcript.note("error", format!("could not start a new session: {e}")),
                         }
@@ -1193,6 +1196,8 @@ async fn delete_session(client: &PiClient, transcript: &mut Transcript, sidebar:
     match result {
         Ok(Ok(())) => {
             if is_active {
+                // The file is already gone regardless of what an extension
+                // thinks; reset either way so the UI matches reality.
                 if let Err(e) = client.new_session(None).await {
                     transcript.note(
                         "error",
