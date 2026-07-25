@@ -21,8 +21,8 @@ that drop frames on flagship hardware. Meanwhile the apps users praise unprompte
 
 slinty-pi takes the category-defining UX of those apps, marries it to pi's minimal, transparent
 harness, and delivers it as a small, instant, native binary — with first-class support for running
-**local models** (llama.cpp router, Ollama, LM Studio, vLLM) so the whole loop can run on your own
-machine.
+**local models** (rapid-mlx, llama.cpp router, Ollama; LM Studio/vLLM via OpenAI-compatible
+endpoints) so the whole loop can run on your own machine.
 
 **Positioning in one line:** *the native cockpit for pi — chat-simple on the surface, agent-grade
 underneath, local-first by design.*
@@ -253,6 +253,8 @@ risks: RPC integration fidelity and Slint transcript rendering/performance.
 
 ### M3 — Local models, delightfully
 **Goal: the differentiator — the best local-LLM front door pi has.**
+- rapid-mlx as a first-class target (recommended default on Apple Silicon): detection, managed
+  `serve` lifecycle, alias catalog with pull/serve/switch from the models panel.
 - llama.cpp router panel: connection status, model list with loaded state, one-click load/unload,
   Hugging Face search + download with progress, RAM/VRAM **hardware-honesty labels** ("Fits / May
   be slow / Won't fit"), context-size display.
