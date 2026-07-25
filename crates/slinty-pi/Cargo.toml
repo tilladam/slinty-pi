@@ -1,0 +1,18 @@
+[package]
+name = "slinty-pi"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+description = "Native desktop app for the pi coding agent, built with Slint"
+
+[dependencies]
+pi-rpc = { path = "../pi-rpc" }
+slint = "1"
+tokio.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[build-dependencies]
+slint-build = "1"

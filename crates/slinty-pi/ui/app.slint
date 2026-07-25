@@ -1,0 +1,149 @@
+import { Button, LineEdit, ListView, Palette, VerticalBox, HorizontalBox } from "std-widgets.slint";
+
+export struct TranscriptEntry {
+    // "user" | "assistant" | "thinking" | "tool" | "info" | "error"
+    role: string,
+    text: string,
+}
+
+component Bubble inherits Rectangle {
+    in property <TranscriptEntry> entry;
+
+    property <bool> is-user: entry.role == "user";
+    property <bool> is-meta: entry.role == "thinking" || entry.role == "tool"
+        || entry.role == "info" || entry.role == "error";
+
+    background: is-user ? Palette.accent-background.transparentize(0.85)
+        : entry.role == "error" ? #d3545422
+        : is-meta ? Palette.alternate-background
+        : Palette.control-background;
+    border-radius: 10px;
+    border-width: is-meta ? 0px : 1px;
+    border-color: Palette.border.transparentize(0.5);
+
+    HorizontalLayout {
+        padding: 12px;
+        Text {
+            text: entry.text;
+            wrap: word-wrap;
+            font-size: entry.role == "thinking" || entry.role == "tool" ? 12px : 14px;
+            font-italic: entry.role == "thinking";
+            color: is-meta
+                ? Palette.foreground.transparentize(0.35)
+                : Palette.foreground;
+            horizontal-alignment: left;
+        }
+    }
+}
+
+export component AppWindow inherits Window {
+    title: "slinty-pi";
+    preferred-width: 920px;
+    preferred-height: 720px;
+    min-width: 480px;
+    min-height: 400px;
+    background: Palette.background;
+
+    in property <[TranscriptEntry]> transcript: [];
+    in property <string> model-name: "…";
+    in property <string> status-text: "";
+    in property <bool> streaming: false;
+
+    callback send(string);
+    callback abort();
+
+    public function scroll-to-end() {
+        list.viewport-y = -max(0px, list.viewport-height - list.height);
+    }
+
+    public function focus-input() {
+        input.focus();
+    }
+
+    VerticalBox {
+        spacing: 8px;
+
+        Rectangle {
+            vertical-stretch: 1;
+
+            list := ListView {
+                // Delegate width is fixed by the ListView, so wrapping works
+                // without width bindings to ancestors (which loop layoutinfo).
+                for entry in transcript: HorizontalLayout {
+                    padding: 6px;
+                    spacing: 8px;
+                    // Stretch spacers hug user messages right, others left,
+                    // and cap bubble width at delegate width minus 64px.
+                    if entry.role == "user": Rectangle {
+                        horizontal-stretch: 1;
+                        min-width: 64px;
+                    }
+                    Bubble {
+                        entry: entry;
+                    }
+                    if entry.role != "user": Rectangle {
+                        horizontal-stretch: 1;
+                        min-width: 64px;
+                    }
+                }
+            }
+
+            if transcript.length == 0: Text {
+                text: "Ask pi anything.";
+                color: Palette.foreground.transparentize(0.6);
+                font-size: 15px;
+            }
+        }
+
+        HorizontalBox {
+            spacing: 8px;
+            padding: 0;
+
+            input := LineEdit {
+                horizontal-stretch: 1;
+                placeholder-text: streaming ? "Steer the agent…" : "Message pi…";
+                accepted(text) => {
+                    if (text != "") {
+                        root.send(text);
+                        self.text = "";
+                    }
+                }
+            }
+            if streaming: Button {
+                text: "Stop";
+                clicked => { root.abort(); }
+            }
+            if !streaming: Button {
+                text: "Send";
+                primary: true;
+                clicked => {
+                    if (input.text != "") {
+                        root.send(input.text);
+                        input.text = "";
+                    }
+                }
+            }
+        }
+
+        HorizontalBox {
+            padding: 0;
+            spacing: 8px;
+            Text {
+                text: root.model-name;
+                font-size: 11px;
+                color: Palette.foreground.transparentize(0.4);
+            }
+            Rectangle { horizontal-stretch: 1; }
+            if streaming: Text {
+                text: "streaming…";
+                font-size: 11px;
+                color: Palette.accent-background;
+            }
+            Text {
+                text: root.status-text;
+                font-size: 11px;
+                color: Palette.foreground.transparentize(0.4);
+            }
+        }
+    }
+}

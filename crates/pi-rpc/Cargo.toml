@@ -1,0 +1,13 @@
+[package]
+name = "pi-rpc"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+description = "Typed client for the pi coding agent's RPC mode (JSONL over stdin/stdout)"
+
+[dependencies]
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
