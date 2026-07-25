@@ -7,6 +7,7 @@
 //! count to address rows it appended without reading UI state back.
 
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -33,6 +34,11 @@ pub enum UiCmd {
     Abort,
     SetModel(usize),
     SetThinking(usize),
+    /// Load a different session file within the *same* project (no respawn).
+    SwitchSession(String),
+    /// Change the working directory: the current child is aborted and
+    /// killed, a new `pi --mode rpc` is spawned in the new cwd.
+    SwitchProject(PathBuf),
 }
 
 // ---------------------------------------------------------------------------
@@ -806,6 +812,14 @@ struct ModelEntry {
     id: String,
 }
 
+/// One `pi --mode rpc` child's lifetime ends either because the app is
+/// closing, or because the user switched projects and needs a new child
+/// spawned in the new cwd (`switch_session` only works within a cwd).
+enum SessionOutcome {
+    SwitchProject(PathBuf),
+    Exit,
+}
+
 pub async fn pi_backend(
     weak: Weak<AppWindow>,
     dark: Arc<AtomicBool>,
@@ -813,40 +827,87 @@ pub async fn pi_backend(
 ) {
     let ui = Ui::new(weak, dark);
     let mut transcript = Transcript::new(ui);
-
-    let opts = PiOptions {
-        cwd: std::env::current_dir().ok(),
-        ..Default::default()
-    };
-    let (client, mut events) = match PiClient::spawn(opts).await {
-        Ok(pair) => pair,
-        Err(e) => {
-            transcript.note(
-                "error",
-                format!(
-                    "Failed to start pi: {e}\nIs `pi` on your PATH? \
-                     Install: npm install -g @earendil-works/pi-coding-agent"
-                ),
-            );
-            return;
-        }
-    };
-
+    let mut cwd = std::env::current_dir().ok();
     // A session picker lands with the sidebar (M2); until then, resuming a
-    // specific session is reachable for testing/scripting via env var, the
-    // same way `SLINTY_DEMO*` gates the demo backend.
-    if let Ok(path) = std::env::var("SLINTY_RESUME_SESSION") {
-        resume_session(&client, &mut transcript, &path).await;
-    }
+    // specific session on startup is reachable for testing/scripting via env
+    // var, the same way `SLINTY_DEMO*` gates the demo backend. Only applies
+    // to the very first child: it names a session under the *initial* cwd,
+    // which a later project switch would leave behind.
+    let mut resume_on_first_spawn = std::env::var("SLINTY_RESUME_SESSION").ok();
 
-    let models = refresh_models(&client, &mut transcript).await;
-    let mut thinking_levels = refresh_thinking(&client, &mut transcript).await;
+    loop {
+        let opts = PiOptions {
+            cwd: cwd.clone(),
+            ..Default::default()
+        };
+        let (client, events) = match PiClient::spawn(opts).await {
+            Ok(pair) => pair,
+            Err(e) => {
+                let where_ = cwd
+                    .as_ref()
+                    .map(|c| format!(" in {}", c.display()))
+                    .unwrap_or_default();
+                transcript.note(
+                    "error",
+                    format!(
+                        "Failed to start pi{where_}: {e}\nIs `pi` on your PATH? \
+                         Install: npm install -g @earendil-works/pi-coding-agent"
+                    ),
+                );
+                match wait_for_project_switch(&mut cmd_rx).await {
+                    Some(path) => {
+                        cwd = Some(path);
+                        continue;
+                    }
+                    None => return,
+                }
+            }
+        };
+
+        if let Some(path) = resume_on_first_spawn.take() {
+            resume_session(&client, &mut transcript, &path).await;
+        }
+
+        match run_session(&client, events, &mut cmd_rx, &mut transcript).await {
+            SessionOutcome::SwitchProject(path) => {
+                cwd = Some(path);
+            }
+            SessionOutcome::Exit => return,
+        }
+        // `client` drops here; `kill_on_drop` reaps the old child before the
+        // next loop iteration spawns its replacement.
+    }
+}
+
+/// Drain commands while there is no running child (e.g. spawn failed),
+/// looking for a project switch to retry with. Anything else sent in this
+/// state (there's no agent to send it to) is dropped.
+async fn wait_for_project_switch(cmd_rx: &mut mpsc::UnboundedReceiver<UiCmd>) -> Option<PathBuf> {
+    while let Some(cmd) = cmd_rx.recv().await {
+        if let UiCmd::SwitchProject(path) = cmd {
+            return Some(path);
+        }
+    }
+    None
+}
+
+/// Run one `pi --mode rpc` child to completion: either the app is closing
+/// (`SessionOutcome::Exit`) or the user asked to switch projects, which this
+/// child can't do for itself (`SessionOutcome::SwitchProject`).
+async fn run_session(
+    client: &PiClient,
+    mut events: mpsc::UnboundedReceiver<Event>,
+    cmd_rx: &mut mpsc::UnboundedReceiver<UiCmd>,
+    transcript: &mut Transcript,
+) -> SessionOutcome {
+    let models = refresh_models(client, transcript).await;
+    let mut thinking_levels = refresh_thinking(client, transcript).await;
     let mut streaming = false;
 
     loop {
         tokio::select! {
             cmd = cmd_rx.recv() => {
-                let Some(cmd) = cmd else { break };
+                let Some(cmd) = cmd else { return SessionOutcome::Exit };
                 match cmd {
                     UiCmd::Send(text) => {
                         transcript.user_prompt(&text, streaming);
@@ -871,7 +932,7 @@ pub async fn pi_backend(
                             match client.set_model(&entry.provider, &entry.id).await {
                                 Ok(_) => {
                                     thinking_levels =
-                                        refresh_thinking(&client, &mut transcript).await;
+                                        refresh_thinking(client, transcript).await;
                                 }
                                 Err(e) => transcript.note("error", e.to_string()),
                             }
@@ -884,13 +945,26 @@ pub async fn pi_backend(
                             }
                         }
                     }
+                    UiCmd::SwitchSession(path) => {
+                        resume_session(client, transcript, &path).await;
+                    }
+                    UiCmd::SwitchProject(path) => {
+                        if streaming {
+                            // Best-effort; the child is about to be killed
+                            // regardless, so a failed abort isn't fatal.
+                            let _ = client.abort().await;
+                        }
+                        transcript.reset();
+                        transcript.note("info", format!("switching to {}…", path.display()));
+                        return SessionOutcome::SwitchProject(path);
+                    }
                 }
             }
             event = events.recv() => {
                 let Some(event) = event else {
                     transcript.note("error", "pi exited.");
                     transcript.ui.set_streaming(false);
-                    break;
+                    return SessionOutcome::Exit;
                 };
                 match &event {
                     Event::AgentStart => streaming = true,
@@ -901,10 +975,10 @@ pub async fn pi_backend(
                 }
                 transcript.apply(&event);
                 if matches!(event, Event::AgentSettled) {
-                    update_stats(&client, &transcript).await;
+                    update_stats(client, transcript).await;
                 }
                 if let Event::ExtensionUiRequest(req) = &event {
-                    handle_extension_ui(&client, &mut transcript, req);
+                    handle_extension_ui(client, transcript, req);
                 }
             }
         }

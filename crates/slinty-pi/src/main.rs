@@ -78,6 +78,34 @@ fn main() -> anyhow::Result<()> {
         rt.spawn(backend::pi_backend(weak, dark_flag, cmd_rx));
     }
 
+    // The sidebar (M2) will send SwitchProject/SwitchSession from real UI
+    // actions; until then, both are reachable for testing/scripting via env
+    // var, same "<delay_ms>:<path>" shape.
+    if let Ok(spec) = std::env::var("SLINTY_SWITCH_PROJECT_AFTER") {
+        if let Some((delay_ms, path)) = spec.split_once(':') {
+            if let Ok(delay_ms) = delay_ms.parse::<u64>() {
+                let path = std::path::PathBuf::from(path);
+                let tx = cmd_tx.clone();
+                rt.spawn(async move {
+                    tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
+                    let _ = tx.send(UiCmd::SwitchProject(path));
+                });
+            }
+        }
+    }
+    if let Ok(spec) = std::env::var("SLINTY_SWITCH_SESSION_AFTER") {
+        if let Some((delay_ms, path)) = spec.split_once(':') {
+            if let Ok(delay_ms) = delay_ms.parse::<u64>() {
+                let path = path.to_string();
+                let tx = cmd_tx.clone();
+                rt.spawn(async move {
+                    tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
+                    let _ = tx.send(UiCmd::SwitchSession(path));
+                });
+            }
+        }
+    }
+
     // Keep the highlighter's theme choice and the code-card background in
     // sync with the OS color scheme. Code cards use the syntect theme's own
     // background color so span colors keep their designed contrast.
