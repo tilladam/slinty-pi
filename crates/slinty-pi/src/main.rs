@@ -68,6 +68,26 @@ fn main() -> anyhow::Result<()> {
                 app.set_composer_lines(text.chars().filter(|c| *c == '\n').count() as i32 + 1);
             }
         });
+        let tx = cmd_tx.clone();
+        app.on_project_selected(move |path| {
+            let _ = tx.send(UiCmd::SwitchProject(std::path::PathBuf::from(path.as_str())));
+        });
+        let tx = cmd_tx.clone();
+        app.on_new_session(move || {
+            let _ = tx.send(UiCmd::NewSession);
+        });
+        let tx = cmd_tx.clone();
+        app.on_resume_session(move |path| {
+            let _ = tx.send(UiCmd::SwitchSession(path.to_string()));
+        });
+        let tx = cmd_tx.clone();
+        app.on_delete_session(move |path| {
+            let _ = tx.send(UiCmd::DeleteSession(path.to_string()));
+        });
+        let tx = cmd_tx.clone();
+        app.on_sidebar_search_edited(move |query| {
+            let _ = tx.send(UiCmd::SidebarSearch(query.to_string()));
+        });
     }
 
     let weak = app.as_weak();

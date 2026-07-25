@@ -9,8 +9,8 @@ mod tree;
 pub mod types;
 
 pub use scan::{
-    decode_project_dir, default_sessions_root, list_projects, list_sessions, parse_meta, search,
-    MetaCache, Project, SessionMeta,
+    decode_project_dir, default_sessions_root, encode_project_dir, list_projects, list_sessions,
+    parse_meta, project_session_dir, search, MetaCache, Project, SessionMeta,
 };
 pub use tree::{load_session, SessionTree};
 pub use types::{EntryKind, SessionEntry, SessionHeader};

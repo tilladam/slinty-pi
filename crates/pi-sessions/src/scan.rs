@@ -60,6 +60,20 @@ pub fn default_sessions_root() -> Option<PathBuf> {
     std::env::home_dir().map(|h| h.join(".pi").join("agent").join("sessions"))
 }
 
+/// Encode a cwd into pi's `--<cwd-with-slashes-as-dashes>--` session
+/// directory name. Exact, unlike [`decode_project_dir`]: replacing every `/`
+/// with `-` loses no information going forward, only when read back.
+pub fn encode_project_dir(cwd: &Path) -> String {
+    format!("--{}--", cwd.to_string_lossy().trim_start_matches('/').replace('/', "-"))
+}
+
+/// The session-storage directory pi would use for `cwd`, without scanning
+/// the sessions root — for jumping straight to "the current project's
+/// sessions" (e.g. the sidebar) rather than enumerating every project.
+pub fn project_session_dir(sessions_root: &Path, cwd: &Path) -> PathBuf {
+    sessions_root.join(encode_project_dir(cwd))
+}
+
 /// Decode a `--<cwd-with-slashes-as-dashes>--` directory name back into a
 /// path. **Lossy**: a project directory whose real name contains a literal
 /// `-` is indistinguishable from a path separator here. Never treat this as
@@ -289,6 +303,22 @@ mod tests {
             decode_project_dir("--Users-dev-example--"),
             "/Users/dev/example"
         );
+    }
+
+    #[test]
+    fn encode_project_dir_matches_pi_on_disk() {
+        // The real directory name for this repo, observed on disk.
+        assert_eq!(
+            encode_project_dir(Path::new("/Users/till/Code/Rust/slint/slinty-pi")),
+            "--Users-till-Code-Rust-slint-slinty-pi--"
+        );
+    }
+
+    #[test]
+    fn encode_then_decode_round_trips_when_no_literal_dashes() {
+        let cwd = Path::new("/Users/dev/example");
+        let encoded = encode_project_dir(cwd);
+        assert_eq!(decode_project_dir(&encoded), cwd.to_string_lossy());
     }
 
     #[test]

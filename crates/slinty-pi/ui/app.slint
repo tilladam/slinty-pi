@@ -1,4 +1,5 @@
 import { Button, ComboBox, ListView, Palette, TextEdit, VerticalBox, HorizontalBox } from "std-widgets.slint";
+import { Sidebar, SessionRow } from "sidebar.slint";
 
 // One transcript row. Assistant messages are segmented (prose / heading /
 // code) into several rows; user/thinking/tool/info/error are single rows.
@@ -312,6 +313,13 @@ export component AppWindow inherits Window {
     in property <color> code-background: #2b303b;
     out property <bool> dark-mode: Palette.color-scheme == ColorScheme.dark;
 
+    in-out property <bool> sidebar-visible: true;
+    in property <[string]> project-list: [];
+    in property <[string]> project-paths: [];
+    in-out property <int> project-index: -1;
+    in property <string> current-project-name: "";
+    in property <[SessionRow]> sidebar-sessions: [];
+
     callback send(string);
     callback abort();
     callback copy-text(string);
@@ -319,6 +327,11 @@ export component AppWindow inherits Window {
     callback model-selected(int);
     callback thinking-selected(int);
     callback composer-edited(string);
+    callback project-selected(string);
+    callback new-session();
+    callback resume-session(string);
+    callback delete-session(string);
+    callback sidebar-search-edited(string);
 
     public function scroll-to-end() {
         list.viewport-y = -max(0px, list.viewport-height - list.height);
@@ -334,11 +347,34 @@ export component AppWindow inherits Window {
         }
     }
 
+    HorizontalLayout {
+        if root.sidebar-visible: Sidebar {
+            project-list: root.project-list;
+            project-paths: root.project-paths;
+            project-index <=> root.project-index;
+            current-project-name: root.current-project-name;
+            sessions: root.sidebar-sessions;
+            project-selected(path) => { root.project-selected(path); }
+            new-session => { root.new-session(); }
+            resume-session(path) => { root.resume-session(path); }
+            delete-session(path) => { root.delete-session(path); }
+            search-edited(q) => { root.sidebar-search-edited(q); }
+        }
+
     FocusScope {
         // Esc aborts from anywhere, including while the composer has focus.
+        // Cmd+B toggles the sidebar; Cmd+N starts a new session.
         capture-key-pressed(event) => {
             if (event.text == Key.Escape && root.streaming) {
                 root.abort();
+                return accept;
+            }
+            if (event.modifiers.meta && event.text == "b") {
+                root.sidebar-visible = !root.sidebar-visible;
+                return accept;
+            }
+            if (event.modifiers.meta && event.text == "n") {
+                root.new-session();
                 return accept;
             }
             reject
@@ -476,5 +512,6 @@ export component AppWindow inherits Window {
                 }
             }
         }
+    }
     }
 }

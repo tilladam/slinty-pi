@@ -21,7 +21,7 @@ use pi_rpc::{
 };
 
 use crate::segmenter::{segment_markdown, Segment};
-use crate::{highlight, AppWindow, QueueItem, Row};
+use crate::{highlight, AppWindow, QueueItem, Row, SessionRow};
 
 const TEXT_FLUSH: Duration = Duration::from_millis(33);
 const TOOL_FLUSH: Duration = Duration::from_millis(100);
@@ -39,6 +39,14 @@ pub enum UiCmd {
     /// Change the working directory: the current child is aborted and
     /// killed, a new `pi --mode rpc` is spawned in the new cwd.
     SwitchProject(PathBuf),
+    /// Start a fresh session in the current project (same child, no respawn).
+    NewSession,
+    /// Move a session file to the OS trash and refresh the sidebar. If it's
+    /// the currently-open session, starts a new one so the child keeps
+    /// working against a file that still exists.
+    DeleteSession(String),
+    /// Sidebar search box changed; re-filter the session list.
+    SidebarSearch(String),
 }
 
 // ---------------------------------------------------------------------------
@@ -223,6 +231,36 @@ impl Ui {
             let labels: Vec<SharedString> = labels.iter().map(|l| l.as_str().into()).collect();
             app.set_thinking_list(ModelRc::new(VecModel::from(labels)));
             app.set_thinking_index(index);
+        });
+    }
+
+    /// `labels`/`paths` are parallel arrays (projects other than the current
+    /// one); Slint resolves the picked label back to a path itself, so
+    /// there's no index bookkeeping to keep in sync on the Rust side.
+    fn set_projects(&self, labels: Vec<String>, paths: Vec<String>, current_name: String) {
+        self.with_app(move |app| {
+            let label_model: Vec<SharedString> = labels.iter().map(|l| l.as_str().into()).collect();
+            let path_model: Vec<SharedString> = paths.iter().map(|p| p.as_str().into()).collect();
+            app.set_project_list(ModelRc::new(VecModel::from(label_model)));
+            app.set_project_paths(ModelRc::new(VecModel::from(path_model)));
+            app.set_project_index(-1);
+            app.set_current_project_name(SharedString::from(current_name));
+        });
+    }
+
+    /// `rows` are `(path, title, relative_time, active)`.
+    fn set_sidebar_sessions(&self, rows: Vec<(String, String, String, bool)>) {
+        self.with_app(move |app| {
+            let rows: Vec<SessionRow> = rows
+                .into_iter()
+                .map(|(path, title, relative_time, active)| SessionRow {
+                    path: path.as_str().into(),
+                    title: title.as_str().into(),
+                    relative_time: relative_time.as_str().into(),
+                    active,
+                })
+                .collect();
+            app.set_sidebar_sessions(ModelRc::new(VecModel::from(rows)));
         });
     }
 }
@@ -820,6 +858,142 @@ enum SessionOutcome {
     Exit,
 }
 
+/// Sidebar state that outlives any one child process: the session-metadata
+/// cache is worth keeping warm across a project switch (a project you switch
+/// back to re-hits it), and the current project/search query need to survive
+/// the respawn that a project switch triggers.
+struct Sidebar {
+    sessions_root: Option<PathBuf>,
+    meta_cache: pi_sessions::MetaCache,
+    cwd: Option<PathBuf>,
+    query: String,
+    /// Parallel to what's pushed as `project-paths`; not read back, just
+    /// documents that Slint (not Rust) resolves a picked label to a path.
+    other_projects: Vec<pi_sessions::Project>,
+}
+
+impl Sidebar {
+    fn new() -> Self {
+        Self {
+            sessions_root: pi_sessions::default_sessions_root(),
+            meta_cache: pi_sessions::MetaCache::new(),
+            cwd: None,
+            query: String::new(),
+            other_projects: Vec::new(),
+        }
+    }
+
+    fn session_dir(&self) -> Option<PathBuf> {
+        Some(pi_sessions::project_session_dir(
+            self.sessions_root.as_ref()?,
+            self.cwd.as_ref()?,
+        ))
+    }
+
+    fn refresh_projects(&mut self, ui: &Ui) {
+        let Some(root) = self.sessions_root.clone() else {
+            return;
+        };
+        let cwd_display = self.cwd.as_ref().map(|c| c.display().to_string());
+        let all = pi_sessions::list_projects(&root).unwrap_or_default();
+        self.other_projects = all
+            .into_iter()
+            .filter(|p| Some(&p.display_path) != cwd_display.as_ref())
+            .collect();
+        let labels: Vec<String> = self
+            .other_projects
+            .iter()
+            .map(|p| p.display_path.clone())
+            .collect();
+        let paths = labels.clone();
+        let current_name = self
+            .cwd
+            .as_ref()
+            .and_then(|c| c.file_name())
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "untitled".to_string());
+        ui.set_projects(labels, paths, current_name);
+    }
+
+    async fn refresh_sessions(&self, client: &PiClient, ui: &Ui) {
+        let Some(dir) = self.session_dir() else {
+            ui.set_sidebar_sessions(Vec::new());
+            return;
+        };
+        let active = active_session_path(client).await;
+        let all = self.meta_cache.list_sessions(&dir).unwrap_or_default();
+        let filtered: Vec<&pi_sessions::SessionMeta> = if self.query.is_empty() {
+            all.iter().collect()
+        } else {
+            pi_sessions::search(&all, &self.query)
+        };
+        let rows = filtered
+            .into_iter()
+            .map(|m| {
+                let path = m.path.to_string_lossy().into_owned();
+                let is_active = active.as_deref() == Some(path.as_str());
+                (path, m.title().to_string(), relative_time(&m.last_timestamp), is_active)
+            })
+            .collect();
+        ui.set_sidebar_sessions(rows);
+    }
+}
+
+/// pi's `sessionFile` from `get_state`, or `None` if it can't be fetched.
+async fn active_session_path(client: &PiClient) -> Option<String> {
+    client
+        .get_state()
+        .await
+        .ok()?
+        .get("sessionFile")
+        .and_then(|v| v.as_str())
+        .map(str::to_string)
+}
+
+fn relative_time(iso_timestamp: &str) -> String {
+    let Ok(then) = chrono::DateTime::parse_from_rfc3339(iso_timestamp) else {
+        return String::new();
+    };
+    let secs = chrono::Utc::now()
+        .signed_duration_since(then.with_timezone(&chrono::Utc))
+        .num_seconds();
+    if secs < 60 {
+        "just now".to_string()
+    } else if secs < 3600 {
+        format!("{}m", secs / 60)
+    } else if secs < 86400 {
+        format!("{}h", secs / 3600)
+    } else if secs < 86400 * 7 {
+        format!("{}d", secs / 86400)
+    } else {
+        format!("{}w", secs / (86400 * 7))
+    }
+}
+
+#[cfg(test)]
+mod relative_time_tests {
+    use super::relative_time;
+    use chrono::{Duration, Utc};
+
+    fn iso(ago: Duration) -> String {
+        (Utc::now() - ago).to_rfc3339()
+    }
+
+    #[test]
+    fn buckets_by_magnitude() {
+        assert_eq!(relative_time(&iso(Duration::seconds(10))), "just now");
+        assert_eq!(relative_time(&iso(Duration::minutes(5))), "5m");
+        assert_eq!(relative_time(&iso(Duration::hours(3))), "3h");
+        assert_eq!(relative_time(&iso(Duration::days(2))), "2d");
+        assert_eq!(relative_time(&iso(Duration::days(15))), "2w");
+    }
+
+    #[test]
+    fn unparseable_timestamp_yields_empty_string() {
+        assert_eq!(relative_time("not a timestamp"), "");
+    }
+}
+
 pub async fn pi_backend(
     weak: Weak<AppWindow>,
     dark: Arc<AtomicBool>,
@@ -827,6 +1001,7 @@ pub async fn pi_backend(
 ) {
     let ui = Ui::new(weak, dark);
     let mut transcript = Transcript::new(ui);
+    let mut sidebar = Sidebar::new();
     let mut cwd = std::env::current_dir().ok();
     // A session picker lands with the sidebar (M2); until then, resuming a
     // specific session on startup is reachable for testing/scripting via env
@@ -836,6 +1011,9 @@ pub async fn pi_backend(
     let mut resume_on_first_spawn = std::env::var("SLINTY_RESUME_SESSION").ok();
 
     loop {
+        sidebar.cwd = cwd.clone();
+        sidebar.query.clear();
+
         let opts = PiOptions {
             cwd: cwd.clone(),
             ..Default::default()
@@ -868,7 +1046,10 @@ pub async fn pi_backend(
             resume_session(&client, &mut transcript, &path).await;
         }
 
-        match run_session(&client, events, &mut cmd_rx, &mut transcript).await {
+        sidebar.refresh_projects(&transcript.ui);
+        sidebar.refresh_sessions(&client, &transcript.ui).await;
+
+        match run_session(&client, events, &mut cmd_rx, &mut transcript, &mut sidebar).await {
             SessionOutcome::SwitchProject(path) => {
                 cwd = Some(path);
             }
@@ -899,6 +1080,7 @@ async fn run_session(
     mut events: mpsc::UnboundedReceiver<Event>,
     cmd_rx: &mut mpsc::UnboundedReceiver<UiCmd>,
     transcript: &mut Transcript,
+    sidebar: &mut Sidebar,
 ) -> SessionOutcome {
     let models = refresh_models(client, transcript).await;
     let mut thinking_levels = refresh_thinking(client, transcript).await;
@@ -947,6 +1129,7 @@ async fn run_session(
                     }
                     UiCmd::SwitchSession(path) => {
                         resume_session(client, transcript, &path).await;
+                        sidebar.refresh_sessions(client, &transcript.ui).await;
                     }
                     UiCmd::SwitchProject(path) => {
                         if streaming {
@@ -957,6 +1140,20 @@ async fn run_session(
                         transcript.reset();
                         transcript.note("info", format!("switching to {}…", path.display()));
                         return SessionOutcome::SwitchProject(path);
+                    }
+                    UiCmd::NewSession => {
+                        match client.new_session(None).await {
+                            Ok(_) => transcript.reset(),
+                            Err(e) => transcript.note("error", format!("could not start a new session: {e}")),
+                        }
+                        sidebar.refresh_sessions(client, &transcript.ui).await;
+                    }
+                    UiCmd::DeleteSession(path) => {
+                        delete_session(client, transcript, sidebar, &path).await;
+                    }
+                    UiCmd::SidebarSearch(query) => {
+                        sidebar.query = query;
+                        sidebar.refresh_sessions(client, &transcript.ui).await;
                     }
                 }
             }
@@ -976,6 +1173,7 @@ async fn run_session(
                 transcript.apply(&event);
                 if matches!(event, Event::AgentSettled) {
                     update_stats(client, transcript).await;
+                    sidebar.refresh_sessions(client, &transcript.ui).await;
                 }
                 if let Event::ExtensionUiRequest(req) = &event {
                     handle_extension_ui(client, transcript, req);
@@ -983,6 +1181,31 @@ async fn run_session(
             }
         }
     }
+}
+
+/// Move a session file to the OS trash. If it was the currently-open
+/// session, starts a fresh one so the child keeps working against a file
+/// that still exists, then refreshes the sidebar either way.
+async fn delete_session(client: &PiClient, transcript: &mut Transcript, sidebar: &Sidebar, path: &str) {
+    let is_active = active_session_path(client).await.as_deref() == Some(path);
+    let target = PathBuf::from(path);
+    let result = tokio::task::spawn_blocking(move || trash::delete(&target)).await;
+    match result {
+        Ok(Ok(())) => {
+            if is_active {
+                if let Err(e) = client.new_session(None).await {
+                    transcript.note(
+                        "error",
+                        format!("deleted the open session but could not start a new one: {e}"),
+                    );
+                }
+                transcript.reset();
+            }
+        }
+        Ok(Err(e)) => transcript.note("error", format!("could not delete session: {e}")),
+        Err(e) => transcript.note("error", format!("delete task failed: {e}")),
+    }
+    sidebar.refresh_sessions(client, &transcript.ui).await;
 }
 
 /// Switch the running child to a different session file and hydrate the
