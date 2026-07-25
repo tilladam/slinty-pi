@@ -7,6 +7,7 @@
 mod attach;
 mod backend;
 mod density;
+mod demo_sessions;
 mod highlight;
 mod palette;
 mod segmenter;

@@ -21,6 +21,7 @@ use pi_rpc::{
 };
 
 use crate::attach;
+use crate::demo_sessions;
 use crate::palette;
 use crate::segmenter::{segment_markdown, Segment};
 use crate::{highlight, AppWindow, PaletteRow, QueueItem, Row, SessionRow, TreeRow};
@@ -1009,11 +1010,18 @@ impl Sidebar {
     }
 
     async fn refresh_sessions(&self, client: &PiClient, ui: &Ui) {
+        let active = active_session_path(client).await;
+        self.refresh_sessions_with_active(active.as_deref(), ui);
+    }
+
+    /// The synchronous part of `refresh_sessions`, split out so demo mode
+    /// (no `PiClient` to ask `get_state` for the active session) can drive
+    /// it with a locally-tracked path instead.
+    fn refresh_sessions_with_active(&self, active: Option<&str>, ui: &Ui) {
         let Some(dir) = self.session_dir() else {
             ui.set_sidebar_sessions(Vec::new());
             return;
         };
-        let active = active_session_path(client).await;
         let all = self.meta_cache.list_sessions(&dir).unwrap_or_default();
         let filtered: Vec<&pi_sessions::SessionMeta> = if self.query.is_empty() {
             all.iter().collect()
@@ -1024,7 +1032,7 @@ impl Sidebar {
             .into_iter()
             .map(|m| {
                 let path = m.path.to_string_lossy().into_owned();
-                let is_active = active.as_deref() == Some(path.as_str());
+                let is_active = active == Some(path.as_str());
                 (path, m.title().to_string(), relative_time(&m.last_timestamp), is_active)
             })
             .collect();
@@ -1884,6 +1892,24 @@ pub async fn demo_backend(
         .ui
         .set_models(vec!["demo model · synthetic".into()], 0);
 
+    // Sessions/hydration are demoable without pi: the sidebar lists
+    // pi-sessions' own test fixtures (guaranteed to match the real on-disk
+    // format), and switching between them loads directly off disk via
+    // `pi_sessions::load_session` instead of a `get_messages` RPC call,
+    // since there's no child process here to serve one.
+    let demo_project = demo_sessions::setup();
+    tracing::debug!(
+        sessions_root = %demo_project.sessions_root.display(),
+        cwd = %demo_project.cwd.display(),
+        "demo: synthesized session dir"
+    );
+    let mut sidebar = Sidebar::new();
+    sidebar.sessions_root = Some(demo_project.sessions_root.clone());
+    sidebar.cwd = Some(demo_project.cwd.clone());
+    sidebar.refresh_projects(&transcript.ui);
+    let mut current_session: Option<String> = None;
+    sidebar.refresh_sessions_with_active(current_session.as_deref(), &transcript.ui);
+
     let rate: u64 = std::env::var("SLINTY_DEMO_RATE")
         .ok()
         .and_then(|v| v.parse().ok())
@@ -1902,7 +1928,28 @@ pub async fn demo_backend(
                 None => break,
             },
         };
-        let UiCmd::Send(text) = cmd else { continue };
+        let text = match cmd {
+            UiCmd::Send(text) => text,
+            UiCmd::SwitchSession(path) => {
+                let messages = demo_sessions::hydrate_messages(Path::new(&path));
+                tracing::debug!(messages = messages.len(), "demo: switched session");
+                transcript.reset();
+                transcript.hydrate(&messages);
+                current_session = Some(path);
+                sidebar.refresh_sessions_with_active(current_session.as_deref(), &transcript.ui);
+                continue;
+            }
+            UiCmd::SidebarSearch(query) => {
+                sidebar.query = query;
+                sidebar.refresh_sessions_with_active(current_session.as_deref(), &transcript.ui);
+                continue;
+            }
+            UiCmd::NewSession | UiCmd::SwitchProject(_) | UiCmd::DeleteSession(_) => {
+                transcript.note("info", "not available in demo mode");
+                continue;
+            }
+            _ => continue,
+        };
 
         transcript.user_prompt(&text, false);
         transcript.apply(&Event::AgentStart);
