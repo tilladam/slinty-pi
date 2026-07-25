@@ -7,7 +7,7 @@ description = "Native desktop app for the pi coding agent, built with Slint"
 
 [dependencies]
 pi-rpc = { path = "../pi-rpc" }
-slint = "1"
+slint = "=1.17.1"
 tokio.workspace = true
 serde_json.workspace = true
 anyhow.workspace = true
@@ -23,6 +23,12 @@ directories = "6.0.0"
 nucleo-matcher = "0.3.1"
 base64 = "0.23.0"
 rfd = "0.17.2"
+# Internal Slint crate (not semver-stable, pinned exactly to match `slint`);
+# only used to install a CustomApplicationHandler so we can see winit's
+# WindowEvent::DroppedFile before Slint silently discards it. See
+# crates/slinty-pi/src/main.rs's platform setup and attach.rs's doc comment.
+i-slint-backend-winit = "=1.17.1"
+winit = "0.30"
 
 [build-dependencies]
 slint-build = "1"

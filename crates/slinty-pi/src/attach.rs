@@ -5,8 +5,12 @@
 //! Slint 1.17's `DropArea`/`DragArea` are intra-UI drag primitives (see
 //! `DropEvent { mime_type, data, position }` in slint-core) — winit's
 //! `WindowEvent::DroppedFile` isn't consumed anywhere in Slint's winit
-//! backend, so real Finder-drag-into-window has nowhere to surface. This
-//! module backs the attach *button* (native file picker) only.
+//! backend, so a real Finder-drag-into-window has no path through Slint's
+//! own event handling. `main.rs` works around this by installing an
+//! `i_slint_backend_winit::CustomApplicationHandler`, which sees winit's
+//! `WindowEvent`s before Slint's event loop does and forwards
+//! `DroppedFile` paths in as `UiCmd::AttachPath` — the same command the
+//! attach button already sends per picked file.
 
 use std::path::Path;
 

@@ -23,6 +23,31 @@ use backend::UiCmd;
 
 slint::include_modules!();
 
+/// Forwards winit's `WindowEvent::DroppedFile` (real Finder/Explorer/file-manager
+/// drops) into the same `UiCmd::AttachPath` the attach button sends per picked
+/// file. Slint's own winit event loop never surfaces this event (see
+/// `attach.rs`), so this hook is the only way to see it — it runs before
+/// Slint's handling and only ever forwards, never suppresses.
+struct DropFileHandler {
+    tx: mpsc::UnboundedSender<UiCmd>,
+}
+
+impl i_slint_backend_winit::CustomApplicationHandler for DropFileHandler {
+    fn window_event(
+        &mut self,
+        _event_loop: &winit::event_loop::ActiveEventLoop,
+        _window_id: winit::window::WindowId,
+        _winit_window: Option<&winit::window::Window>,
+        _slint_window: Option<&slint::Window>,
+        event: &winit::event::WindowEvent,
+    ) -> i_slint_backend_winit::EventResult {
+        if let winit::event::WindowEvent::DroppedFile(path) = event {
+            let _ = self.tx.send(UiCmd::AttachPath(path.clone()));
+        }
+        i_slint_backend_winit::EventResult::Propagate
+    }
+}
+
 fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
@@ -30,14 +55,22 @@ fn main() -> anyhow::Result<()> {
         )
         .init();
 
+    let rt = tokio::runtime::Runtime::new()?;
+    let (cmd_tx, cmd_rx) = mpsc::unbounded_channel::<UiCmd>();
+
+    // Must run before any Slint window is created (AppWindow::new() below
+    // lazily picks the default platform otherwise).
+    let backend = i_slint_backend_winit::Backend::builder()
+        .with_custom_application_handler(Box::new(DropFileHandler { tx: cmd_tx.clone() }))
+        .build()?;
+    slint::platform::set_platform(Box::new(backend))
+        .map_err(|e| anyhow::anyhow!("failed to install winit platform: {e}"))?;
+
     let app = AppWindow::new()?;
     let transcript: Rc<VecModel<Row>> = Rc::new(VecModel::default());
     app.set_transcript(ModelRc::from(transcript.clone()));
 
     let dark = Arc::new(AtomicBool::new(app.get_dark_mode()));
-
-    let rt = tokio::runtime::Runtime::new()?;
-    let (cmd_tx, cmd_rx) = mpsc::unbounded_channel::<UiCmd>();
 
     {
         let tx = cmd_tx.clone();

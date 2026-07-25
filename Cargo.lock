@@ -4688,6 +4688,7 @@ dependencies = [
  "base64 0.23.0",
  "chrono",
  "directories",
+ "i-slint-backend-winit",
  "nucleo-matcher",
  "pi-rpc",
  "pi-sessions",
@@ -4701,6 +4702,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "trash",
+ "winit",
 ]
 
 [[package]]
