@@ -144,6 +144,32 @@ impl Ui {
         });
     }
 
+    /// Append many rows in a handful of event-loop hops instead of one per
+    /// row, so hydrating a large session stays responsive.
+    fn push_all(&mut self, specs: Vec<RowSpec>) {
+        const BATCH: usize = 100;
+        self.rows += specs.len();
+        let mut iter = specs.into_iter().peekable();
+        while iter.peek().is_some() {
+            let chunk: Vec<RowSpec> = iter.by_ref().take(BATCH).collect();
+            self.with_transcript(move |app, model| {
+                for spec in &chunk {
+                    model.push(spec.to_row());
+                }
+                app.invoke_scroll_to_end();
+            });
+        }
+    }
+
+    fn clear(&mut self) {
+        self.rows = 0;
+        self.with_transcript(|_, model| {
+            while model.row_count() > 0 {
+                model.remove(model.row_count() - 1);
+            }
+        });
+    }
+
     fn truncate(&mut self, len: usize) {
         self.rows = len;
         self.with_transcript(move |_, model| {
@@ -243,6 +269,26 @@ impl Transcript {
         }
     }
 
+    /// Drop all live-stream/tool state and clear the transcript, in
+    /// preparation for hydrating a different session.
+    pub fn reset(&mut self) {
+        self.stream = None;
+        self.thinking = None;
+        self.tools.clear();
+        self.pending_first = false;
+        self.ui.clear();
+    }
+
+    /// Render a session's full message history (as returned by `get_messages`
+    /// after a `switch_session`) without replaying events. Appends to
+    /// whatever is already in the transcript — call [`Transcript::reset`]
+    /// first when switching sessions.
+    pub fn hydrate(&mut self, messages: &[serde_json::Value]) {
+        let dark = self.ui.dark.load(Ordering::Relaxed);
+        let specs = hydrate_rowspecs(messages, dark);
+        self.ui.push_all(specs);
+    }
+
     pub fn user_prompt(&mut self, text: &str, steering: bool) {
         let display = if steering {
             format!("↪ {text}")
@@ -259,34 +305,6 @@ impl Transcript {
         self.ui.push(RowSpec::note(kind, text));
     }
 
-    fn spec_for_segment(&self, segment: &Segment, first: bool) -> RowSpec {
-        let dark = self.ui.dark.load(Ordering::Relaxed);
-        match segment {
-            Segment::Prose(md) => RowSpec {
-                kind: "prose",
-                markdown: Some(md.clone()),
-                first,
-                ..RowSpec::default()
-            },
-            Segment::Heading { level, text } => RowSpec {
-                kind: "heading",
-                text: text.clone(),
-                level: *level as i32,
-                first,
-                ..RowSpec::default()
-            },
-            Segment::Code { lang, code } => RowSpec {
-                kind: "code",
-                markdown: Some(highlight::code_markdown(code, lang, dark)),
-                fallback: Some(code.clone()),
-                text: code.clone(),
-                lang: lang.clone(),
-                first,
-                ..RowSpec::default()
-            },
-        }
-    }
-
     fn flush_stream(&mut self, force: bool) {
         let Some(region) = self.stream.take() else {
             return;
@@ -296,12 +314,13 @@ impl Transcript {
             self.stream = Some(region);
             return;
         }
+        let dark = self.ui.dark.load(Ordering::Relaxed);
         let segments = segment_markdown(&region.buffer);
         for (i, segment) in segments.iter().enumerate() {
             if region.prev.get(i) == Some(segment) {
                 continue;
             }
-            let spec = self.spec_for_segment(segment, region.first && i == 0);
+            let spec = spec_for_segment(segment, region.first && i == 0, dark);
             let index = region.start + i;
             if index < self.ui.rows {
                 self.ui.set(index, spec);
@@ -527,6 +546,36 @@ impl Transcript {
     }
 }
 
+/// Shared by the live streaming path (`flush_stream`) and hydration
+/// (`hydrate_rowspecs`): a markdown [`Segment`] always maps to the same row,
+/// whether it arrived as deltas or as a complete historical message.
+fn spec_for_segment(segment: &Segment, first: bool, dark: bool) -> RowSpec {
+    match segment {
+        Segment::Prose(md) => RowSpec {
+            kind: "prose",
+            markdown: Some(md.clone()),
+            first,
+            ..RowSpec::default()
+        },
+        Segment::Heading { level, text } => RowSpec {
+            kind: "heading",
+            text: text.clone(),
+            level: *level as i32,
+            first,
+            ..RowSpec::default()
+        },
+        Segment::Code { lang, code } => RowSpec {
+            kind: "code",
+            markdown: Some(highlight::code_markdown(code, lang, dark)),
+            fallback: Some(code.clone()),
+            text: code.clone(),
+            lang: lang.clone(),
+            first,
+            ..RowSpec::default()
+        },
+    }
+}
+
 fn tool_summary(tool_name: &str, args: &serde_json::Value) -> String {
     let detail = match tool_name {
         "bash" => args.get("command").and_then(|v| v.as_str()),
@@ -569,6 +618,184 @@ fn format_elapsed(d: Duration) -> String {
 }
 
 // ---------------------------------------------------------------------------
+// Hydration: turn a `get_messages` payload (`AgentMessage[]`, per
+// docs/session-format.md) into RowSpecs. Same building blocks as the live
+// streaming path (`spec_for_segment`, `tool_summary`, `content_text`),
+// applied to complete historical messages instead of deltas — so a resumed
+// transcript and a freshly-streamed one render identically.
+// ---------------------------------------------------------------------------
+
+fn hydrate_rowspecs(messages: &[serde_json::Value], dark: bool) -> Vec<RowSpec> {
+    let mut specs: Vec<RowSpec> = Vec::new();
+    let mut tool_rows: HashMap<String, usize> = HashMap::new();
+    let mut tool_summaries: HashMap<String, String> = HashMap::new();
+    let mut pending_first = false;
+
+    for message in messages {
+        let role = message.get("role").and_then(|v| v.as_str()).unwrap_or("");
+        // Every top-level message starts a new visual group, same as a
+        // `message_start` event on the live path — except `toolResult`,
+        // which never produces its own row (it updates the matching
+        // `toolCall` row in place).
+        if role != "toolResult" {
+            pending_first = true;
+        }
+        match role {
+            "user" => {
+                let content = message.get("content").unwrap_or(&serde_json::Value::Null);
+                let (text, images) = user_content_text(content);
+                let display = if images > 0 {
+                    format!("{text}\n[{images} image{}]", if images == 1 { "" } else { "s" })
+                } else {
+                    text
+                };
+                let mut spec = RowSpec::note("user", display);
+                spec.first = std::mem::take(&mut pending_first);
+                specs.push(spec);
+            }
+            "assistant" => {
+                let Some(blocks) = message.get("content").and_then(|v| v.as_array()) else {
+                    continue;
+                };
+                for block in blocks {
+                    match block.get("type").and_then(|v| v.as_str()) {
+                        Some("thinking") => {
+                            let thinking =
+                                block.get("thinking").and_then(|v| v.as_str()).unwrap_or("");
+                            let first = std::mem::take(&mut pending_first);
+                            specs.push(RowSpec {
+                                kind: "thinking",
+                                text: thinking.to_string(),
+                                running: false,
+                                first,
+                                ..RowSpec::default()
+                            });
+                        }
+                        Some("text") => {
+                            let text = block.get("text").and_then(|v| v.as_str()).unwrap_or("");
+                            if text.is_empty() {
+                                continue;
+                            }
+                            for (i, segment) in segment_markdown(text).iter().enumerate() {
+                                let first = i == 0 && std::mem::take(&mut pending_first);
+                                specs.push(spec_for_segment(segment, first, dark));
+                            }
+                        }
+                        Some("toolCall") => {
+                            let id =
+                                block.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                            let name = block.get("name").and_then(|v| v.as_str()).unwrap_or("");
+                            let args = block.get("arguments").cloned().unwrap_or_default();
+                            let summary = tool_summary(name, &args);
+                            let args_pretty = serde_json::to_string_pretty(&args).unwrap_or_default();
+                            let index = specs.len();
+                            specs.push(RowSpec {
+                                kind: "tool",
+                                text: format!("⚙ {summary}"),
+                                detail: args_pretty,
+                                running: true,
+                                first: std::mem::take(&mut pending_first),
+                                ..RowSpec::default()
+                            });
+                            if !id.is_empty() {
+                                tool_rows.insert(id.clone(), index);
+                                tool_summaries.insert(id, summary);
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            "toolResult" => {
+                let id = message.get("toolCallId").and_then(|v| v.as_str()).unwrap_or("");
+                let Some(&index) = tool_rows.get(id) else {
+                    continue;
+                };
+                let Some(spec) = specs.get_mut(index) else {
+                    continue;
+                };
+                let is_error = message.get("isError").and_then(|v| v.as_bool()).unwrap_or(false);
+                let output = tail(&content_text(message), TOOL_DETAIL_LIMIT);
+                let mark = if is_error { "✗" } else { "✓" };
+                let summary = tool_summaries.get(id).cloned().unwrap_or_default();
+                spec.text = format!("{mark} {summary}");
+                spec.running = false;
+                if !output.is_empty() {
+                    spec.detail = format!("{}\n───\n{output}", spec.detail);
+                }
+            }
+            "bashExecution" => {
+                let command = message.get("command").and_then(|v| v.as_str()).unwrap_or("");
+                let output = message.get("output").and_then(|v| v.as_str()).unwrap_or("");
+                let mark = match message.get("exitCode").and_then(|v| v.as_i64()) {
+                    Some(0) => "✓",
+                    Some(_) => "✗",
+                    None => "⚙",
+                };
+                specs.push(RowSpec {
+                    kind: "tool",
+                    text: format!("{mark} bash  {}", first_line(command)),
+                    detail: tail(output, TOOL_DETAIL_LIMIT),
+                    first: std::mem::take(&mut pending_first),
+                    ..RowSpec::default()
+                });
+            }
+            "compactionSummary" => {
+                let tokens_before =
+                    message.get("tokensBefore").and_then(|v| v.as_u64()).unwrap_or(0);
+                let mut spec = RowSpec::note(
+                    "info",
+                    format!("context compacted · {} tokens before", format_tokens(tokens_before)),
+                );
+                spec.first = std::mem::take(&mut pending_first);
+                specs.push(spec);
+            }
+            "branchSummary" => {
+                let summary = message.get("summary").and_then(|v| v.as_str()).unwrap_or("");
+                let mut spec = RowSpec::note("info", format!("branched · {summary}"));
+                spec.first = std::mem::take(&mut pending_first);
+                specs.push(spec);
+            }
+            "custom" if message.get("display").and_then(|v| v.as_bool()).unwrap_or(false) => {
+                let content = message.get("content").unwrap_or(&serde_json::Value::Null);
+                let (text, _) = user_content_text(content);
+                let mut spec = RowSpec::note("info", text);
+                spec.first = std::mem::take(&mut pending_first);
+                specs.push(spec);
+            }
+            _ => {}
+        }
+    }
+    specs
+}
+
+/// Join `TextContent` blocks and count `ImageContent` blocks in a
+/// `UserMessage`/`CustomMessage`-shaped `content` field (bare string or
+/// `(TextContent | ImageContent)[]`).
+fn user_content_text(content: &serde_json::Value) -> (String, usize) {
+    match content {
+        serde_json::Value::String(s) => (s.clone(), 0),
+        serde_json::Value::Array(items) => {
+            let mut text = Vec::new();
+            let mut images = 0;
+            for item in items {
+                match item.get("type").and_then(|v| v.as_str()) {
+                    Some("text") => {
+                        if let Some(t) = item.get("text").and_then(|v| v.as_str()) {
+                            text.push(t.to_string());
+                        }
+                    }
+                    Some("image") => images += 1,
+                    _ => {}
+                }
+            }
+            (text.join("\n"), images)
+        }
+        _ => (String::new(), 0),
+    }
+}
+
+// ---------------------------------------------------------------------------
 // pi backend
 // ---------------------------------------------------------------------------
 
@@ -602,6 +829,13 @@ pub async fn pi_backend(
             return;
         }
     };
+
+    // A session picker lands with the sidebar (M2); until then, resuming a
+    // specific session is reachable for testing/scripting via env var, the
+    // same way `SLINTY_DEMO*` gates the demo backend.
+    if let Ok(path) = std::env::var("SLINTY_RESUME_SESSION") {
+        resume_session(&client, &mut transcript, &path).await;
+    }
 
     let models = refresh_models(&client, &mut transcript).await;
     let mut thinking_levels = refresh_thinking(&client, &mut transcript).await;
@@ -672,6 +906,37 @@ pub async fn pi_backend(
                 }
             }
         }
+    }
+}
+
+/// Switch the running child to a different session file and hydrate the
+/// transcript from its full history. Same-process only — pi's `switch_session`
+/// requires the session to live under the child's current cwd; changing
+/// project requires killing and respawning the child instead (M2 item 3).
+async fn resume_session(client: &PiClient, transcript: &mut Transcript, session_path: &str) {
+    match client.switch_session(session_path).await {
+        Ok(data) => {
+            if data.get("cancelled").and_then(|v| v.as_bool()) == Some(true) {
+                transcript.note("info", "session switch cancelled by an extension".to_string());
+                return;
+            }
+        }
+        Err(e) => {
+            transcript.note("error", format!("could not switch session: {e}"));
+            return;
+        }
+    }
+    match client.get_messages().await {
+        Ok(data) => {
+            let messages = data
+                .get("messages")
+                .and_then(|m| m.as_array())
+                .cloned()
+                .unwrap_or_default();
+            transcript.reset();
+            transcript.hydrate(&messages);
+        }
+        Err(e) => transcript.note("error", format!("could not load session messages: {e}")),
     }
 }
 
@@ -953,4 +1218,155 @@ fn chunks(s: &str, n: usize) -> Vec<&str> {
         out.push(&s[start..]);
     }
     out
+}
+
+#[cfg(test)]
+mod hydrate_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn hydrates_user_and_assistant_text() {
+        let messages = vec![
+            json!({"role": "user", "content": [{"type": "text", "text": "hello"}]}),
+            json!({
+                "role": "assistant",
+                "content": [
+                    {"type": "thinking", "thinking": "pondering"},
+                    {"type": "text", "text": "hi there"}
+                ]
+            }),
+        ];
+        let specs = hydrate_rowspecs(&messages, false);
+        let kinds: Vec<&str> = specs.iter().map(|s| s.kind).collect();
+        assert_eq!(kinds, vec!["user", "thinking", "prose"]);
+        assert!(specs[0].first, "user row starts a new group");
+        assert!(specs[1].first, "thinking row starts the assistant group");
+        assert!(!specs[2].first);
+        assert_eq!(specs[0].text, "hello");
+        assert_eq!(specs[1].text, "pondering");
+        assert!(!specs[1].running, "hydrated thinking is never still-running");
+    }
+
+    #[test]
+    fn matches_tool_call_to_its_result() {
+        let messages = vec![
+            json!({"role": "user", "content": "run tests"}),
+            json!({
+                "role": "assistant",
+                "content": [{"type": "toolCall", "id": "call_1", "name": "bash", "arguments": {"command": "cargo test"}}]
+            }),
+            json!({
+                "role": "toolResult",
+                "toolCallId": "call_1",
+                "toolName": "bash",
+                "content": [{"type": "text", "text": "test result: ok"}],
+                "isError": false
+            }),
+        ];
+        let specs = hydrate_rowspecs(&messages, false);
+        let tool = specs.iter().find(|s| s.kind == "tool").expect("tool row");
+        assert!(!tool.running);
+        assert!(tool.text.starts_with('✓'), "text was {:?}", tool.text);
+        assert!(tool.detail.contains("test result: ok"));
+    }
+
+    #[test]
+    fn tool_error_result_marks_the_row_failed() {
+        let messages = vec![
+            json!({
+                "role": "assistant",
+                "content": [{"type": "toolCall", "id": "call_e", "name": "bash", "arguments": {"command": "false"}}]
+            }),
+            json!({
+                "role": "toolResult",
+                "toolCallId": "call_e",
+                "toolName": "bash",
+                "content": [{"type": "text", "text": "exit 1"}],
+                "isError": true
+            }),
+        ];
+        let specs = hydrate_rowspecs(&messages, false);
+        assert!(specs[0].text.starts_with('✗'));
+    }
+
+    #[test]
+    fn unmatched_tool_call_stays_running() {
+        // An interrupted session: the call was made but pi never got a result.
+        let messages = vec![json!({
+            "role": "assistant",
+            "content": [{"type": "toolCall", "id": "call_2", "name": "bash", "arguments": {"command": "sleep 100"}}]
+        })];
+        let specs = hydrate_rowspecs(&messages, false);
+        assert!(specs[0].running);
+    }
+
+    #[test]
+    fn maps_bash_execution_and_summaries() {
+        let messages = vec![
+            json!({"role": "bashExecution", "command": "ls", "output": "a.txt", "exitCode": 0, "cancelled": false, "truncated": false}),
+            json!({"role": "compactionSummary", "summary": "…", "tokensBefore": 48000}),
+            json!({"role": "branchSummary", "summary": "explored X first", "fromId": "abc"}),
+        ];
+        let specs = hydrate_rowspecs(&messages, false);
+        assert_eq!(specs[0].kind, "tool");
+        assert!(specs[0].text.starts_with('✓'));
+        assert_eq!(specs[1].kind, "info");
+        assert!(specs[1].text.contains("compacted"));
+        assert_eq!(specs[2].kind, "info");
+        assert!(specs[2].text.contains("explored X first"));
+    }
+
+    #[test]
+    fn skips_non_displayed_custom_messages() {
+        let messages = vec![
+            json!({"role": "custom", "customType": "x", "content": "hidden", "display": false}),
+            json!({"role": "custom", "customType": "x", "content": "shown", "display": true}),
+        ];
+        let specs = hydrate_rowspecs(&messages, false);
+        assert_eq!(specs.len(), 1);
+        assert_eq!(specs[0].text, "shown");
+    }
+
+    #[test]
+    fn counts_images_in_user_content() {
+        let messages = vec![json!({
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "look"},
+                {"type": "image", "data": "..", "mimeType": "image/png"}
+            ]
+        })];
+        let specs = hydrate_rowspecs(&messages, false);
+        assert!(specs[0].text.contains("1 image"), "text was {:?}", specs[0].text);
+    }
+
+    #[test]
+    fn multi_turn_session_round_trips_in_order() {
+        // Mirrors a real session on disk: user -> assistant(thinking+toolCall)
+        // -> toolResult -> assistant(text).
+        let messages = vec![
+            json!({"role": "user", "content": [{"type": "text", "text": "do you have access to my mcp?"}]}),
+            json!({
+                "role": "assistant",
+                "content": [
+                    {"type": "thinking", "thinking": "let's check"},
+                    {"type": "toolCall", "id": "call_x", "name": "mcp", "arguments": {"server": "obsidian"}}
+                ]
+            }),
+            json!({
+                "role": "toolResult",
+                "toolCallId": "call_x",
+                "toolName": "mcp",
+                "content": [{"type": "text", "text": "obsidian (17 tools)"}],
+                "isError": false
+            }),
+            json!({"role": "assistant", "content": [{"type": "text", "text": "Yes, I can interact with it."}]}),
+        ];
+        let specs = hydrate_rowspecs(&messages, false);
+        let kinds: Vec<&str> = specs.iter().map(|s| s.kind).collect();
+        assert_eq!(kinds, vec!["user", "thinking", "tool", "prose"]);
+        assert!(!specs[2].running);
+        assert!(specs[3].first, "second assistant message starts a new group");
+    }
 }

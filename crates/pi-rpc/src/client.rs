@@ -297,6 +297,64 @@ impl PiClient {
             .await?
             .unwrap_or_default())
     }
+
+    pub async fn get_messages(&self) -> Result<Value, PiError> {
+        Ok(self.request(Command::GetMessages).await?.unwrap_or_default())
+    }
+
+    /// Load a different session file (the child stays the same process; only
+    /// valid within the same cwd — a project change requires a respawn).
+    pub async fn switch_session(&self, session_path: impl Into<String>) -> Result<Value, PiError> {
+        Ok(self
+            .request(Command::SwitchSession {
+                session_path: session_path.into(),
+            })
+            .await?
+            .unwrap_or_default())
+    }
+
+    pub async fn new_session(&self, parent_session: Option<String>) -> Result<Value, PiError> {
+        Ok(self
+            .request(Command::NewSession { parent_session })
+            .await?
+            .unwrap_or_default())
+    }
+
+    /// Fork from a previous user message on the active branch. Returns the
+    /// forked-from prompt text.
+    pub async fn fork(&self, entry_id: impl Into<String>) -> Result<Value, PiError> {
+        Ok(self
+            .request(Command::Fork {
+                entry_id: entry_id.into(),
+            })
+            .await?
+            .unwrap_or_default())
+    }
+
+    pub async fn clone_session(&self) -> Result<Value, PiError> {
+        Ok(self.request(Command::Clone).await?.unwrap_or_default())
+    }
+
+    pub async fn get_fork_messages(&self) -> Result<Value, PiError> {
+        Ok(self
+            .request(Command::GetForkMessages)
+            .await?
+            .unwrap_or_default())
+    }
+
+    pub async fn get_tree(&self) -> Result<Value, PiError> {
+        Ok(self.request(Command::GetTree).await?.unwrap_or_default())
+    }
+
+    pub async fn set_session_name(&self, name: impl Into<String>) -> Result<(), PiError> {
+        self.request(Command::SetSessionName { name: name.into() })
+            .await
+            .map(drop)
+    }
+
+    pub async fn get_commands(&self) -> Result<Value, PiError> {
+        Ok(self.request(Command::GetCommands).await?.unwrap_or_default())
+    }
 }
 
 fn command_name(value: &Value) -> String {
