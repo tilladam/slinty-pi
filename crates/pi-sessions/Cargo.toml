@@ -1,0 +1,10 @@
+[package]
+name = "pi-sessions"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+description = "Read-only index over pi's on-disk session JSONL tree (~/.pi/agent/sessions)"
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
