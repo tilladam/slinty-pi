@@ -80,6 +80,12 @@ struct RowSpec {
     running: bool,
     elapsed: String,
     first: bool,
+    /// The full original markdown of this row's enclosing message/text
+    /// block, shared by every row segmented out of it — used for the
+    /// per-message copy affordance, which copies the source text rather
+    /// than any one rendered/segmented piece of it. Empty where a group
+    /// copy isn't offered (thinking/tool/info rows).
+    raw: String,
 }
 
 impl RowSpec {
@@ -109,6 +115,7 @@ impl RowSpec {
             running: self.running,
             elapsed: self.elapsed.as_str().into(),
             first: self.first,
+            raw: self.raw.as_str().into(),
         }
     }
 }
@@ -395,8 +402,9 @@ impl Transcript {
         } else {
             text.to_string()
         };
-        let mut spec = RowSpec::note("user", display);
+        let mut spec = RowSpec::note("user", display.clone());
         spec.first = true;
+        spec.raw = display;
         self.ui.push(spec);
         self.pending_first = true;
     }
@@ -420,7 +428,7 @@ impl Transcript {
             if region.prev.get(i) == Some(segment) {
                 continue;
             }
-            let spec = spec_for_segment(segment, region.first && i == 0, dark);
+            let spec = spec_for_segment(segment, region.first && i == 0, dark, &region.buffer);
             let index = region.start + i;
             if index < self.ui.rows {
                 self.ui.set(index, spec);
@@ -651,12 +659,14 @@ impl Transcript {
 /// Shared by the live streaming path (`flush_stream`) and hydration
 /// (`hydrate_rowspecs`): a markdown [`Segment`] always maps to the same row,
 /// whether it arrived as deltas or as a complete historical message.
-fn spec_for_segment(segment: &Segment, first: bool, dark: bool) -> RowSpec {
+fn spec_for_segment(segment: &Segment, first: bool, dark: bool, raw: &str) -> RowSpec {
+    let raw = raw.to_string();
     match segment {
         Segment::Prose(md) => RowSpec {
             kind: "prose",
             markdown: Some(md.clone()),
             first,
+            raw,
             ..RowSpec::default()
         },
         Segment::Heading { level, text } => RowSpec {
@@ -664,6 +674,7 @@ fn spec_for_segment(segment: &Segment, first: bool, dark: bool) -> RowSpec {
             text: text.clone(),
             level: *level as i32,
             first,
+            raw,
             ..RowSpec::default()
         },
         Segment::Code { lang, code } => RowSpec {
@@ -673,6 +684,7 @@ fn spec_for_segment(segment: &Segment, first: bool, dark: bool) -> RowSpec {
             text: code.clone(),
             lang: lang.clone(),
             first,
+            raw,
             ..RowSpec::default()
         },
     }
@@ -751,8 +763,9 @@ fn hydrate_rowspecs(messages: &[serde_json::Value], dark: bool) -> Vec<RowSpec> 
                 } else {
                     text
                 };
-                let mut spec = RowSpec::note("user", display);
+                let mut spec = RowSpec::note("user", display.clone());
                 spec.first = std::mem::take(&mut pending_first);
+                spec.raw = display;
                 specs.push(spec);
             }
             "assistant" => {
@@ -780,7 +793,7 @@ fn hydrate_rowspecs(messages: &[serde_json::Value], dark: bool) -> Vec<RowSpec> 
                             }
                             for (i, segment) in segment_markdown(text).iter().enumerate() {
                                 let first = i == 0 && std::mem::take(&mut pending_first);
-                                specs.push(spec_for_segment(segment, first, dark));
+                                specs.push(spec_for_segment(segment, first, dark, text));
                             }
                         }
                         Some("toolCall") => {
@@ -1933,6 +1946,34 @@ mod hydrate_tests {
         assert_eq!(specs[0].text, "hello");
         assert_eq!(specs[1].text, "pondering");
         assert!(!specs[1].running, "hydrated thinking is never still-running");
+    }
+
+    #[test]
+    fn raw_is_the_original_text_block_shared_by_every_segment() {
+        let text = "intro prose\n\n```rust\nfn f() {}\n```\n\noutro prose";
+        let messages = vec![json!({
+            "role": "assistant",
+            "content": [{"type": "text", "text": text}]
+        })];
+        let specs = hydrate_rowspecs(&messages, false);
+        assert_eq!(specs.len(), 3, "prose, code, prose");
+        assert!(specs.iter().all(|s| s.raw == text), "every segment shares the full block");
+        assert!(specs[0].first);
+        assert!(!specs[1].first);
+        assert!(!specs[2].first);
+    }
+
+    #[test]
+    fn raw_is_empty_for_thinking_and_tool_rows() {
+        let messages = vec![json!({
+            "role": "assistant",
+            "content": [
+                {"type": "thinking", "thinking": "hmm"},
+                {"type": "toolCall", "id": "call_1", "name": "bash", "arguments": {"command": "ls"}}
+            ]
+        })];
+        let specs = hydrate_rowspecs(&messages, false);
+        assert!(specs.iter().all(|s| s.raw.is_empty()));
     }
 
     #[test]

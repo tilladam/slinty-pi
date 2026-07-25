@@ -16,6 +16,9 @@ export struct Row {
     running: bool,       // busy indicator on thinking/tool rows
     elapsed: string,     // tool elapsed label
     first: bool,         // first row of a message: extra top spacing
+    raw: string,         // full source markdown of the enclosing message/text
+                         // block, shared by every row segmented out of it;
+                         // "" where no group copy is offered
 }
 
 export struct QueueItem {
@@ -143,7 +146,8 @@ component UserRow inherits HorizontalLayout {
 component ProseRow inherits HorizontalLayout {
     in property <Row> entry;
     callback open-link(string);
-    padding-right: 48px;
+    callback copy-requested(string);
+    padding-right: 12px;
     StyledText {
         text: entry.styled;
         default-font-size: 14px;
@@ -151,10 +155,16 @@ component ProseRow inherits HorizontalLayout {
         link-color: Palette.accent-background;
         link-clicked(l) => { root.open-link(l); }
     }
+    if entry.first && entry.raw != "": Rectangle { horizontal-stretch: 1; min-width: 8px; }
+    if entry.first && entry.raw != "": CopyButton {
+        payload: entry.raw;
+        copy-requested(t) => { root.copy-requested(t); }
+    }
 }
 
 component HeadingRow inherits HorizontalLayout {
     in property <Row> entry;
+    callback copy-requested(string);
     padding-top: 4px;
     Text {
         text: entry.text;
@@ -162,6 +172,11 @@ component HeadingRow inherits HorizontalLayout {
         font-size: entry.level == 1 ? 19px : entry.level == 2 ? 17px : 15px;
         font-weight: 700;
         color: Palette.foreground;
+    }
+    if entry.first && entry.raw != "": Rectangle { horizontal-stretch: 1; min-width: 8px; }
+    if entry.first && entry.raw != "": CopyButton {
+        payload: entry.raw;
+        copy-requested(t) => { root.copy-requested(t); }
     }
 }
 
@@ -474,8 +489,12 @@ export component AppWindow inherits Window {
                         if row-shown && entry.kind == "prose": ProseRow {
                             entry: entry;
                             open-link(l) => { root.open-link(l); }
+                            copy-requested(t) => { root.copy-text(t); }
                         }
-                        if row-shown && entry.kind == "heading": HeadingRow { entry: entry; }
+                        if row-shown && entry.kind == "heading": HeadingRow {
+                            entry: entry;
+                            copy-requested(t) => { root.copy-text(t); }
+                        }
                         if row-shown && entry.kind == "code": CodeRow {
                             entry: entry;
                             bg: root.code-background;
