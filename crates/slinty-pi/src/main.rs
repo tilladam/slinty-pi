@@ -7,6 +7,7 @@
 mod backend;
 mod density;
 mod highlight;
+mod palette;
 mod segmenter;
 
 use std::rc::Rc;
@@ -98,6 +99,49 @@ fn main() -> anyhow::Result<()> {
             let _ = tx.send(UiCmd::ForkFrom(entry_id.to_string()));
         });
         app.on_density_changed(density::save);
+        let tx = cmd_tx.clone();
+        app.on_open_palette(move || {
+            let _ = tx.send(UiCmd::OpenPalette);
+        });
+        let tx = cmd_tx.clone();
+        app.on_palette_query(move |query| {
+            let _ = tx.send(UiCmd::PaletteQuery(query.to_string()));
+        });
+        let tx = cmd_tx.clone();
+        let weak = app.as_weak();
+        app.on_palette_exec(move |id| {
+            let id = id.as_str();
+            tracing::debug!(id, "palette: exec");
+            if let Some(path) = id.strip_prefix("session:") {
+                let _ = tx.send(UiCmd::SwitchSession(path.to_string()));
+            } else if let Some(name) = id.strip_prefix("command:") {
+                let _ = tx.send(UiCmd::Send(format!("/{name}")));
+            } else if let Some(action) = id.strip_prefix("action:") {
+                match action {
+                    "new-session" => {
+                        let _ = tx.send(UiCmd::NewSession);
+                    }
+                    "open-tree" => {
+                        let _ = tx.send(UiCmd::OpenTree);
+                    }
+                    "abort" => {
+                        let _ = tx.send(UiCmd::Abort);
+                    }
+                    "cycle-density" => {
+                        if let Some(app) = weak.upgrade() {
+                            app.invoke_cycle_density();
+                        }
+                    }
+                    "toggle-sidebar" => {
+                        if let Some(app) = weak.upgrade() {
+                            let visible = app.get_sidebar_visible();
+                            app.set_sidebar_visible(!visible);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        });
     }
     app.set_density(density::load());
 
@@ -123,9 +167,17 @@ fn main() -> anyhow::Result<()> {
     spawn_delayed_cmd(&rt, &cmd_tx, "SLINTY_NEW_SESSION_AFTER", |_| UiCmd::NewSession);
     spawn_delayed_cmd(&rt, &cmd_tx, "SLINTY_OPEN_TREE_AFTER", |_| UiCmd::OpenTree);
     spawn_delayed_cmd(&rt, &cmd_tx, "SLINTY_FORK_FROM_AFTER", UiCmd::ForkFrom);
+    spawn_delayed_cmd(&rt, &cmd_tx, "SLINTY_OPEN_PALETTE_AFTER", |_| UiCmd::OpenPalette);
+    spawn_delayed_cmd(&rt, &cmd_tx, "SLINTY_PALETTE_QUERY_AFTER", UiCmd::PaletteQuery);
     // Density is UI-only (no backend command), so it's driven directly via
     // `invoke_cycle_density` rather than through `cmd_tx`.
     spawn_delayed_cycle_density(&rt, app.as_weak());
+    // Palette exec dispatch (session/command/action routing) is also
+    // UI-only until it reaches `cmd_tx` inside `on_palette_exec`, so it's
+    // driven the same way, via the real `palette-exec` callback.
+    spawn_delayed_invoke(&rt, app.as_weak(), "SLINTY_PALETTE_EXEC_AFTER", |app, id| {
+        app.invoke_palette_exec(id.as_str().into());
+    });
 
     // Keep the highlighter's theme choice and the code-card background in
     // sync with the OS color scheme. Code cards use the syntect theme's own
@@ -208,6 +260,32 @@ fn spawn_delayed_cycle_density(rt: &tokio::runtime::Runtime, weak: slint::Weak<A
                 app.invoke_cycle_density();
             });
         }
+    });
+}
+
+/// Parse `env_var` as `"<delay_ms>:<arg>"` and, after that delay, run
+/// `invoke(app, arg)` on the UI thread. No-op if unset or malformed. Used
+/// for test hooks that need to fire a real Slint callback (as opposed to
+/// `spawn_delayed_cmd`, which sends straight to the backend).
+fn spawn_delayed_invoke(
+    rt: &tokio::runtime::Runtime,
+    weak: slint::Weak<AppWindow>,
+    env_var: &str,
+    invoke: impl FnOnce(&AppWindow, String) + Send + 'static,
+) {
+    let Ok(spec) = std::env::var(env_var) else {
+        return;
+    };
+    let Some((delay_ms, arg)) = spec.split_once(':') else {
+        return;
+    };
+    let Ok(delay_ms) = delay_ms.parse::<u64>() else {
+        return;
+    };
+    let arg = arg.to_string();
+    rt.spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
+        let _ = weak.upgrade_in_event_loop(move |app| invoke(&app, arg));
     });
 }
 

@@ -20,8 +20,9 @@ use pi_rpc::{
     PiOptions, ThinkingLevel,
 };
 
+use crate::palette;
 use crate::segmenter::{segment_markdown, Segment};
-use crate::{highlight, AppWindow, QueueItem, Row, SessionRow, TreeRow};
+use crate::{highlight, AppWindow, PaletteRow, QueueItem, Row, SessionRow, TreeRow};
 
 const TEXT_FLUSH: Duration = Duration::from_millis(33);
 const TOOL_FLUSH: Duration = Duration::from_millis(100);
@@ -51,6 +52,14 @@ pub enum UiCmd {
     OpenTree,
     /// Fork the active session from a prior user message (by entry id).
     ForkFrom(String),
+    /// Build the full palette entry list (sessions + pi commands; app
+    /// actions are static and added client-side) and rank it against an
+    /// empty query. Execution is dispatched directly in `main.rs`, not
+    /// through this channel — most palette actions are UI-only or already
+    /// map onto an existing `UiCmd`.
+    OpenPalette,
+    /// Palette query box changed; re-rank the already-built entry list.
+    PaletteQuery(String),
 }
 
 // ---------------------------------------------------------------------------
@@ -285,6 +294,21 @@ impl Ui {
                 .collect();
             app.set_tree_rows(ModelRc::new(VecModel::from(rows)));
             app.set_tree_visible(true);
+        });
+    }
+
+    fn set_palette_entries(&self, entries: Vec<palette::PaletteEntry>) {
+        self.with_app(move |app| {
+            let rows: Vec<PaletteRow> = entries
+                .into_iter()
+                .map(|e| PaletteRow {
+                    id: e.id.as_str().into(),
+                    kind: e.kind.into(),
+                    label: e.label.as_str().into(),
+                    detail: e.detail.as_str().into(),
+                })
+                .collect();
+            app.set_palette_entries(ModelRc::new(VecModel::from(rows)));
         });
     }
 
@@ -1117,6 +1141,7 @@ async fn run_session(
     let models = refresh_models(client, transcript).await;
     let mut thinking_levels = refresh_thinking(client, transcript).await;
     let mut streaming = false;
+    let mut palette_entries: Vec<palette::PaletteEntry> = Vec::new();
 
     loop {
         tokio::select! {
@@ -1199,6 +1224,31 @@ async fn run_session(
                     UiCmd::ForkFrom(entry_id) => {
                         fork_from(client, transcript, &entry_id).await;
                         sidebar.refresh_sessions(client, &transcript.ui).await;
+                    }
+                    UiCmd::OpenPalette => {
+                        let sessions = sidebar
+                            .session_dir()
+                            .and_then(|dir| sidebar.meta_cache.list_sessions(&dir).ok())
+                            .unwrap_or_default();
+                        let commands = client
+                            .get_commands()
+                            .await
+                            .ok()
+                            .and_then(|d| d.get("commands").and_then(|v| v.as_array()).cloned())
+                            .unwrap_or_default();
+                        palette_entries = palette::build_entries(&sessions, &commands);
+                        tracing::debug!(entries = palette_entries.len(), "palette: built entries");
+                        transcript.ui.set_palette_entries(palette::rank(&palette_entries, ""));
+                    }
+                    UiCmd::PaletteQuery(query) => {
+                        let ranked = palette::rank(&palette_entries, &query);
+                        tracing::debug!(
+                            query,
+                            matches = ranked.len(),
+                            top = ranked.first().map(|e| e.id.as_str()),
+                            "palette: ranked query"
+                        );
+                        transcript.ui.set_palette_entries(ranked);
                     }
                 }
             }

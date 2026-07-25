@@ -1,0 +1,94 @@
+import { ListView, LineEdit, Palette } from "std-widgets.slint";
+
+export struct PaletteRow {
+    id: string,
+    kind: string, // "action" | "session" | "command"
+    label: string,
+    detail: string,
+}
+
+// Purely presentational: the selected index and the ranked entry list are
+// both owned by AppWindow (see `palette-selected`/`palette-move` there),
+// since keyboard nav is driven from the root FocusScope's capture phase,
+// which can't reach into a component nested behind `if palette-visible:`.
+export component CommandPalette inherits Rectangle {
+    in property <[PaletteRow]> entries: [];
+    in property <int> selected: 0;
+    callback query-changed(string);
+    callback exec(string);
+    callback close();
+
+    background: Palette.background.transparentize(0.1);
+
+    TouchArea {
+        clicked => { root.close(); }
+    }
+
+    Rectangle {
+        width: min(560px, parent.width - 48px);
+        height: min(460px, parent.height - 48px);
+        background: Palette.background;
+        border-radius: 10px;
+        border-width: 1px;
+        border-color: Palette.border.transparentize(0.4);
+        drop-shadow-blur: 24px;
+        drop-shadow-color: #00000055;
+
+        TouchArea {}
+
+        VerticalLayout {
+            padding: 12px;
+            spacing: 8px;
+
+            query := LineEdit {
+                placeholder-text: "Type a command, session, or action…";
+                edited(text) => { root.query-changed(text); }
+                init => { self.focus(); }
+            }
+
+            if root.entries.length == 0: Text {
+                text: "No matches.";
+                font-size: 12px;
+                color: Palette.foreground.transparentize(0.5);
+            }
+
+            ListView {
+                for row[i] in root.entries: Rectangle {
+                    height: 32px;
+                    border-radius: 5px;
+                    background: i == root.selected ? Palette.accent-background.transparentize(0.85) : transparent;
+
+                    HorizontalLayout {
+                        padding-left: 8px;
+                        padding-right: 8px;
+                        spacing: 8px;
+
+                        Text {
+                            text: row.kind == "session" ? "◷" : row.kind == "command" ? "/" : "▸";
+                            font-size: 11px;
+                            color: Palette.foreground.transparentize(0.5);
+                            vertical-alignment: center;
+                        }
+                        Text {
+                            text: row.label;
+                            font-size: 12.5px;
+                            color: Palette.foreground;
+                            overflow: elide;
+                            vertical-alignment: center;
+                            horizontal-stretch: 1;
+                        }
+                        if row.detail != "": Text {
+                            text: row.detail;
+                            font-size: 11px;
+                            color: Palette.foreground.transparentize(0.5);
+                            vertical-alignment: center;
+                        }
+                    }
+                    TouchArea {
+                        clicked => { root.exec(row.id); }
+                    }
+                }
+            }
+        }
+    }
+}

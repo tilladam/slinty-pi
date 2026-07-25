@@ -1,6 +1,7 @@
 import { Button, ComboBox, ListView, Palette, TextEdit, VerticalBox, HorizontalBox } from "std-widgets.slint";
 import { Sidebar, SessionRow } from "sidebar.slint";
 import { TreeOverlay, TreeRow } from "tree.slint";
+import { CommandPalette, PaletteRow } from "palette.slint";
 
 // One transcript row. Assistant messages are segmented (prose / heading /
 // code) into several rows; user/thinking/tool/info/error are single rows.
@@ -344,6 +345,16 @@ export component AppWindow inherits Window {
     in-out property <int> density: 1;
     changed density => { root.density-changed(root.density); }
 
+    in-out property <bool> palette-visible: false;
+    in property <[PaletteRow]> palette-entries: [];
+    in-out property <int> palette-selected: 0;
+    changed palette-visible => {
+        if (root.palette-visible) {
+            root.palette-selected = 0;
+            root.open-palette();
+        }
+    }
+
     callback send(string);
     callback abort();
     callback copy-text(string);
@@ -359,6 +370,9 @@ export component AppWindow inherits Window {
     callback open-tree();
     callback fork-from(string);
     callback density-changed(int);
+    callback open-palette();
+    callback palette-query(string);
+    callback palette-exec(string);
 
     public function scroll-to-end() {
         list.viewport-y = -max(0px, list.viewport-height - list.height);
@@ -368,6 +382,18 @@ export component AppWindow inherits Window {
     }
     public function cycle-density() {
         root.density = root.density >= 2 ? 0 : root.density + 1;
+    }
+    public function palette-move(delta: int) {
+        if (root.palette-entries.length == 0) {
+            return;
+        }
+        root.palette-selected = max(0, min(root.palette-entries.length - 1, root.palette-selected + delta));
+    }
+    public function palette-exec-selected() {
+        if (root.palette-selected >= 0 && root.palette-selected < root.palette-entries.length) {
+            root.palette-exec(root.palette-entries[root.palette-selected].id);
+            root.palette-visible = false;
+        }
     }
     // Prefill the composer (used after a fork, which hands back the text of
     // the forked-from message instead of keeping it in context).
@@ -399,10 +425,37 @@ export component AppWindow inherits Window {
         }
 
     FocusScope {
-        // Esc closes the tree overlay if open, else aborts from anywhere
-        // (including while the composer has focus). Cmd+B toggles the
-        // sidebar; Cmd+N starts a new session; Cmd+T opens the tree.
+        // Cmd+P toggles the command palette from anywhere. While it's open,
+        // Up/Down/Enter/Esc are its own (everything else falls through to
+        // its query field for typing) and the other global shortcuts below
+        // are disabled so they can't fire mid-query. Esc otherwise closes
+        // the tree overlay if open, else aborts from anywhere (including
+        // while the composer has focus). Cmd+B toggles the sidebar; Cmd+N
+        // starts a new session; Cmd+T opens the tree; Ctrl+O cycles density.
         capture-key-pressed(event) => {
+            if (event.modifiers.meta && event.text == "p") {
+                root.palette-visible = !root.palette-visible;
+                return accept;
+            }
+            if (root.palette-visible) {
+                if (event.text == Key.Escape) {
+                    root.palette-visible = false;
+                    return accept;
+                }
+                if (event.text == Key.DownArrow) {
+                    root.palette-move(1);
+                    return accept;
+                }
+                if (event.text == Key.UpArrow) {
+                    root.palette-move(-1);
+                    return accept;
+                }
+                if (event.text == Key.Return) {
+                    root.palette-exec-selected();
+                    return accept;
+                }
+                return reject;
+            }
             if (event.text == Key.Escape && root.tree-visible) {
                 root.tree-visible = false;
                 return accept;
@@ -604,6 +657,17 @@ export component AppWindow inherits Window {
         fork-from(id) => {
             root.tree-visible = false;
             root.fork-from(id);
+        }
+    }
+
+    if root.palette-visible: CommandPalette {
+        entries: root.palette-entries;
+        selected: root.palette-selected;
+        close => { root.palette-visible = false; }
+        query-changed(q) => { root.palette-query(q); }
+        exec(id) => {
+            root.palette-visible = false;
+            root.palette-exec(id);
         }
     }
 }
