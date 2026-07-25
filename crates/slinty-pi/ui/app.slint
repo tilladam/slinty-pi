@@ -31,6 +31,18 @@ global Style {
     out property <brush> code-bg: Palette.color-scheme == ColorScheme.dark
         ? #16181d : #f6f7f9;
     out property <brush> hairline: Palette.border.transparentize(0.5);
+
+    // density: 0 = Verbose, 1 = Normal, 2 = Summary. Errors always show;
+    // Summary additionally hides thinking/tool/info rows.
+    public pure function row-visible(density: int, kind: string) -> bool {
+        if (kind == "error") {
+            return true;
+        }
+        if (density == 2) {
+            return kind == "user" || kind == "prose" || kind == "heading" || kind == "code";
+        }
+        return true;
+    }
 }
 
 component Dots inherits Text {
@@ -230,6 +242,8 @@ component ThinkingRow inherits VerticalLayout {
 
 component ToolRow inherits VerticalLayout {
     in-out property <Row> entry;
+    in property <bool> force-expanded: false;
+    property <bool> effective-expanded: entry.expanded || force-expanded;
     spacing: 4px;
     HorizontalLayout {
         alignment: start;
@@ -264,7 +278,7 @@ component ToolRow inherits VerticalLayout {
         }
         if entry.running: Dots { }
     }
-    if entry.expanded && entry.detail != "": Rectangle {
+    if effective-expanded && entry.detail != "": Rectangle {
         background: Style.code-bg;
         border-radius: 6px;
         HorizontalLayout {
@@ -324,6 +338,12 @@ export component AppWindow inherits Window {
     in-out property <bool> tree-visible: false;
     in property <[TreeRow]> tree-rows: [];
 
+    // 0 = Verbose, 1 = Normal, 2 = Summary. Set from Rust at startup from
+    // the persisted state file; `density-changed` fires on every change
+    // (including that initial set) so Rust can keep the file in sync.
+    in-out property <int> density: 1;
+    changed density => { root.density-changed(root.density); }
+
     callback send(string);
     callback abort();
     callback copy-text(string);
@@ -338,12 +358,16 @@ export component AppWindow inherits Window {
     callback sidebar-search-edited(string);
     callback open-tree();
     callback fork-from(string);
+    callback density-changed(int);
 
     public function scroll-to-end() {
         list.viewport-y = -max(0px, list.viewport-height - list.height);
     }
     public function focus-input() {
         input.focus();
+    }
+    public function cycle-density() {
+        root.density = root.density >= 2 ? 0 : root.density + 1;
     }
     // Prefill the composer (used after a fork, which hands back the text of
     // the forked-from message instead of keeping it in context).
@@ -399,6 +423,10 @@ export component AppWindow inherits Window {
                 root.open-tree();
                 return accept;
             }
+            if (event.modifiers.control && event.text == "o") {
+                root.cycle-density();
+                return accept;
+            }
             reject
         }
 
@@ -410,24 +438,25 @@ export component AppWindow inherits Window {
 
                 list := ListView {
                     for entry in transcript: VerticalLayout {
+                        property <bool> row-shown: Style.row-visible(root.density, entry.kind);
                         padding-left: 10px;
                         padding-right: 10px;
-                        padding-top: entry.first ? 14px : 5px;
+                        padding-top: row-shown ? (entry.first ? 14px : 5px) : 0px;
 
-                        if entry.kind == "user": UserRow { entry: entry; }
-                        if entry.kind == "prose": ProseRow {
+                        if row-shown && entry.kind == "user": UserRow { entry: entry; }
+                        if row-shown && entry.kind == "prose": ProseRow {
                             entry: entry;
                             open-link(l) => { root.open-link(l); }
                         }
-                        if entry.kind == "heading": HeadingRow { entry: entry; }
-                        if entry.kind == "code": CodeRow {
+                        if row-shown && entry.kind == "heading": HeadingRow { entry: entry; }
+                        if row-shown && entry.kind == "code": CodeRow {
                             entry: entry;
                             bg: root.code-background;
                             copy-requested(t) => { root.copy-text(t); }
                         }
-                        if entry.kind == "thinking": ThinkingRow { entry: entry; }
-                        if entry.kind == "tool": ToolRow { entry: entry; }
-                        if entry.kind == "info" || entry.kind == "error": NoteRow { entry: entry; }
+                        if row-shown && entry.kind == "thinking": ThinkingRow { entry: entry; }
+                        if row-shown && entry.kind == "tool": ToolRow { entry: entry; force-expanded: root.density == 0; }
+                        if row-shown && (entry.kind == "info" || entry.kind == "error"): NoteRow { entry: entry; }
                     }
                 }
 
@@ -524,6 +553,22 @@ export component AppWindow inherits Window {
                             }
                             tree-touch := TouchArea {
                                 clicked => { root.open-tree(); }
+                            }
+                        }
+
+                        Rectangle {
+                            width: density-label.width + 10px;
+                            height: 20px;
+                            border-radius: 5px;
+                            background: density-touch.has-hover ? Palette.alternate-background : transparent;
+                            density-label := Text {
+                                text: root.density == 0 ? "verbose" : root.density == 2 ? "summary" : "normal";
+                                font-size: 11px;
+                                color: Style.faint;
+                                vertical-alignment: center;
+                            }
+                            density-touch := TouchArea {
+                                clicked => { root.cycle-density(); }
                             }
                         }
 

@@ -5,6 +5,7 @@
 //! through the same rendering path instead of spawning pi.
 
 mod backend;
+mod density;
 mod highlight;
 mod segmenter;
 
@@ -96,7 +97,9 @@ fn main() -> anyhow::Result<()> {
         app.on_fork_from(move |entry_id| {
             let _ = tx.send(UiCmd::ForkFrom(entry_id.to_string()));
         });
+        app.on_density_changed(density::save);
     }
+    app.set_density(density::load());
 
     let weak = app.as_weak();
     let dark_flag = dark.clone();
@@ -120,6 +123,9 @@ fn main() -> anyhow::Result<()> {
     spawn_delayed_cmd(&rt, &cmd_tx, "SLINTY_NEW_SESSION_AFTER", |_| UiCmd::NewSession);
     spawn_delayed_cmd(&rt, &cmd_tx, "SLINTY_OPEN_TREE_AFTER", |_| UiCmd::OpenTree);
     spawn_delayed_cmd(&rt, &cmd_tx, "SLINTY_FORK_FROM_AFTER", UiCmd::ForkFrom);
+    // Density is UI-only (no backend command), so it's driven directly via
+    // `invoke_cycle_density` rather than through `cmd_tx`.
+    spawn_delayed_cycle_density(&rt, app.as_weak());
 
     // Keep the highlighter's theme choice and the code-card background in
     // sync with the OS color scheme. Code cards use the syntect theme's own
@@ -176,6 +182,32 @@ fn spawn_delayed_cmd(
     rt.spawn(async move {
         tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
         let _ = tx.send(build(arg));
+    });
+}
+
+/// Parse `SLINTY_CYCLE_DENSITY_AFTER` as `"<delay_ms>:<times>"` and, after
+/// each delay, invoke the Slint-side `cycle-density` function `times` times.
+/// No-op if unset or malformed.
+fn spawn_delayed_cycle_density(rt: &tokio::runtime::Runtime, weak: slint::Weak<AppWindow>) {
+    let Ok(spec) = std::env::var("SLINTY_CYCLE_DENSITY_AFTER") else {
+        return;
+    };
+    let Some((delay_ms, times)) = spec.split_once(':') else {
+        return;
+    };
+    let Ok(delay_ms) = delay_ms.parse::<u64>() else {
+        return;
+    };
+    let Ok(times) = times.parse::<u32>() else {
+        return;
+    };
+    rt.spawn(async move {
+        for _ in 0..times {
+            tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
+            let _ = weak.upgrade_in_event_loop(|app| {
+                app.invoke_cycle_density();
+            });
+        }
     });
 }
 
