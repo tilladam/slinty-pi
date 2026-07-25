@@ -484,11 +484,13 @@ impl Transcript {
     fn tool_start(&mut self, id: &str, name: &str, args: &serde_json::Value) {
         let summary = tool_summary(name, args);
         let args_pretty = serde_json::to_string_pretty(args).unwrap_or_default();
+        let first = std::mem::take(&mut self.pending_first);
         let row = self.ui.push(RowSpec {
             kind: "tool",
             text: format!("⚙ {summary}"),
             detail: args_pretty.clone(),
             running: true,
+            first,
             ..RowSpec::default()
         });
         self.tools.insert(
@@ -935,6 +937,7 @@ async fn resume_session(client: &PiClient, transcript: &mut Transcript, session_
                 .unwrap_or_default();
             transcript.reset();
             transcript.hydrate(&messages);
+            update_stats(client, transcript).await;
         }
         Err(e) => transcript.note("error", format!("could not load session messages: {e}")),
     }

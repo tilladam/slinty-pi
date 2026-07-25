@@ -13,10 +13,15 @@ pub struct SessionTree {
     /// Entries in file (append) order.
     pub entries: Vec<SessionEntry>,
     by_id: HashMap<String, usize>,
-    /// The session file is append-only and forking/branching always appends
-    /// new children rather than rewriting history, so the last entry written
-    /// is always on the currently-active branch. Treating it as the leaf is
-    /// therefore exact, not a heuristic, as long as the file wasn't hand-edited.
+    /// Best-effort leaf: the last entry appended to the file. This holds
+    /// whenever the branch you're on gets a new message after you switch to
+    /// it (the common case — appending is what makes a branch visible in the
+    /// file at all). It can be wrong for a session closed right after
+    /// `/tree`-jumping or forking to an earlier point with nothing sent
+    /// afterward, since that only moves pi's in-memory leaf pointer without
+    /// appending anything. A *running* session's true leaf is authoritative
+    /// via RPC (`get_tree`/`get_entries` both return `leafId`) — prefer that
+    /// when a session is live; this is the fallback for reading closed files.
     pub leaf_id: Option<String>,
 }
 
