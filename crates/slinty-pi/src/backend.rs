@@ -1287,6 +1287,7 @@ async fn hydrate_active_session(client: &PiClient, transcript: &mut Transcript) 
                 .and_then(|m| m.as_array())
                 .cloned()
                 .unwrap_or_default();
+            tracing::debug!(messages = messages.len(), "hydrate_active_session");
             transcript.reset();
             transcript.hydrate(&messages);
             update_stats(client, transcript).await;
@@ -1314,6 +1315,7 @@ async fn fork_from(client: &PiClient, transcript: &mut Transcript, entry_id: &st
             return;
         }
     };
+    tracing::debug!(entry_id, prefill = prefill.as_deref(), "fork: got prefill");
     hydrate_active_session(client, transcript).await;
     if let Some(text) = prefill {
         transcript.ui.set_composer_text(text);
