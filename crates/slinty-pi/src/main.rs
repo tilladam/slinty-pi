@@ -98,33 +98,18 @@ fn main() -> anyhow::Result<()> {
         rt.spawn(backend::pi_backend(weak, dark_flag, cmd_rx));
     }
 
-    // The sidebar (M2) will send SwitchProject/SwitchSession from real UI
-    // actions; until then, both are reachable for testing/scripting via env
-    // var, same "<delay_ms>:<path>" shape.
-    if let Ok(spec) = std::env::var("SLINTY_SWITCH_PROJECT_AFTER") {
-        if let Some((delay_ms, path)) = spec.split_once(':') {
-            if let Ok(delay_ms) = delay_ms.parse::<u64>() {
-                let path = std::path::PathBuf::from(path);
-                let tx = cmd_tx.clone();
-                rt.spawn(async move {
-                    tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
-                    let _ = tx.send(UiCmd::SwitchProject(path));
-                });
-            }
-        }
-    }
-    if let Ok(spec) = std::env::var("SLINTY_SWITCH_SESSION_AFTER") {
-        if let Some((delay_ms, path)) = spec.split_once(':') {
-            if let Ok(delay_ms) = delay_ms.parse::<u64>() {
-                let path = path.to_string();
-                let tx = cmd_tx.clone();
-                rt.spawn(async move {
-                    tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
-                    let _ = tx.send(UiCmd::SwitchSession(path));
-                });
-            }
-        }
-    }
+    // The sidebar sends these from real UI actions; each is also reachable
+    // for testing/scripting via env var ("<delay_ms>:<arg>"), which is how
+    // this backend is verified without relying on macOS accessibility
+    // automation (Slint doesn't expose list rows as distinct AX elements,
+    // so row clicks aren't drivable that way).
+    spawn_delayed_cmd(&rt, &cmd_tx, "SLINTY_SWITCH_PROJECT_AFTER", |p| {
+        UiCmd::SwitchProject(std::path::PathBuf::from(p))
+    });
+    spawn_delayed_cmd(&rt, &cmd_tx, "SLINTY_SWITCH_SESSION_AFTER", UiCmd::SwitchSession);
+    spawn_delayed_cmd(&rt, &cmd_tx, "SLINTY_SIDEBAR_SEARCH_AFTER", UiCmd::SidebarSearch);
+    spawn_delayed_cmd(&rt, &cmd_tx, "SLINTY_DELETE_SESSION_AFTER", UiCmd::DeleteSession);
+    spawn_delayed_cmd(&rt, &cmd_tx, "SLINTY_NEW_SESSION_AFTER", |_| UiCmd::NewSession);
 
     // Keep the highlighter's theme choice and the code-card background in
     // sync with the OS color scheme. Code cards use the syntect theme's own
@@ -156,6 +141,32 @@ fn main() -> anyhow::Result<()> {
     app.run()?;
     rt.shutdown_background();
     Ok(())
+}
+
+/// Parse `env_var` as `"<delay_ms>:<arg>"` and, after that delay, send
+/// `build(arg)` on `cmd_tx`. No-op if the var is unset or malformed. `arg` is
+/// ignored (but still required, even if empty) for commands that take none.
+fn spawn_delayed_cmd(
+    rt: &tokio::runtime::Runtime,
+    cmd_tx: &mpsc::UnboundedSender<UiCmd>,
+    env_var: &str,
+    build: impl FnOnce(String) -> UiCmd + Send + 'static,
+) {
+    let Ok(spec) = std::env::var(env_var) else {
+        return;
+    };
+    let Some((delay_ms, arg)) = spec.split_once(':') else {
+        return;
+    };
+    let Ok(delay_ms) = delay_ms.parse::<u64>() else {
+        return;
+    };
+    let arg = arg.to_string();
+    let tx = cmd_tx.clone();
+    rt.spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
+        let _ = tx.send(build(arg));
+    });
 }
 
 fn open_url(url: &str) {
