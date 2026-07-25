@@ -1,148 +1,474 @@
-import { Button, LineEdit, ListView, Palette, VerticalBox, HorizontalBox } from "std-widgets.slint";
+import { Button, ComboBox, ListView, Palette, TextEdit, VerticalBox, HorizontalBox } from "std-widgets.slint";
 
-export struct TranscriptEntry {
-    // "user" | "assistant" | "thinking" | "tool" | "info" | "error"
-    role: string,
+// One transcript row. Assistant messages are segmented (prose / heading /
+// code) into several rows; user/thinking/tool/info/error are single rows.
+export struct Row {
+    kind: string,        // "user"|"prose"|"heading"|"code"|"thinking"|"tool"|"info"|"error"
+    styled: styled-text, // prose and highlighted code content
+    text: string,        // user text / heading text / tool summary / thinking text / raw code (copy source)
+    lang: string,        // code language label
+    level: int,          // heading level
+    expanded: bool,      // thinking & tool rows
+    detail: string,      // tool expanded detail
+    running: bool,       // busy indicator on thinking/tool rows
+    elapsed: string,     // tool elapsed label
+    first: bool,         // first row of a message: extra top spacing
+}
+
+export struct QueueItem {
+    kind: string, // "steer" | "follow-up"
     text: string,
 }
 
-component Bubble inherits Rectangle {
-    in property <TranscriptEntry> entry;
+global Style {
+    out property <length> radius: 9px;
+    out property <string> mono-font: "Menlo";
+    out property <color> dim: Palette.foreground.transparentize(0.45);
+    out property <color> faint: Palette.foreground.transparentize(0.65);
+    out property <brush> card: Palette.control-background;
+    out property <brush> code-bg: Palette.color-scheme == ColorScheme.dark
+        ? #16181d : #f6f7f9;
+    out property <brush> hairline: Palette.border.transparentize(0.5);
+}
 
-    property <bool> is-user: entry.role == "user";
-    property <bool> is-meta: entry.role == "thinking" || entry.role == "tool"
-        || entry.role == "info" || entry.role == "error";
+component Dots inherits Text {
+    // Animated "thinking" ellipsis, driven by animation-tick while visible.
+    property <int> n: Math.floor(Math.mod(animation-tick() / 350ms, 4));
+    text: n == 0 ? "" : n == 1 ? "·" : n == 2 ? "··" : "···";
+    color: Style.dim;
+    font-size: 13px;
+    min-width: 14px;
+}
 
-    background: is-user ? Palette.accent-background.transparentize(0.85)
-        : entry.role == "error" ? #d3545422
-        : is-meta ? Palette.alternate-background
-        : Palette.control-background;
-    border-radius: 10px;
-    border-width: is-meta ? 0px : 1px;
-    border-color: Palette.border.transparentize(0.5);
+component CopyButton inherits Rectangle {
+    in property <string> payload;
+    callback copy-requested(string);
+    property <bool> copied: false;
 
+    width: 34px;
+    height: 20px;
+    border-radius: 5px;
+    background: touch.has-hover ? Palette.alternate-background : transparent;
+
+    touch := TouchArea {
+        clicked => {
+            root.copy-requested(root.payload);
+            root.copied = true;
+            reset.running = true;
+        }
+    }
+    Text {
+        text: root.copied ? "✓" : "copy";
+        font-size: 10px;
+        color: root.copied ? Palette.accent-background : Style.dim;
+    }
+    reset := Timer {
+        interval: 1400ms;
+        running: false;
+        triggered => {
+            root.copied = false;
+            self.running = false;
+        }
+    }
+}
+
+component UsageRing inherits Rectangle {
+    // Context-window usage, 0..100.
+    in property <float> percent: 0;
+    property <float> p: Math.max(0.01, Math.min(0.999, percent / 100));
+    width: 16px;
+    height: 16px;
+
+    Path {
+        // Track.
+        viewbox-width: 24;
+        viewbox-height: 24;
+        stroke: Style.hairline;
+        stroke-width: 3px;
+        MoveTo { x: 12; y: 2; }
+        ArcTo { x: 11.99; y: 2; radius-x: 10; radius-y: 10; large-arc: true; sweep: true; }
+    }
+    Path {
+        // Usage arc, sweeping clockwise from 12 o'clock.
+        viewbox-width: 24;
+        viewbox-height: 24;
+        stroke: percent > 85 ? #d35454 : Palette.accent-background;
+        stroke-width: 3px;
+        MoveTo { x: 12; y: 2; }
+        ArcTo {
+            x: 12 + 10 * Math.sin(p * 360deg);
+            y: 12 - 10 * Math.cos(p * 360deg);
+            radius-x: 10;
+            radius-y: 10;
+            large-arc: p > 0.5;
+            sweep: true;
+        }
+    }
+}
+
+component UserRow inherits HorizontalLayout {
+    in property <Row> entry;
+    alignment: end;
+    Rectangle {
+        background: Palette.accent-background.transparentize(0.88);
+        border-radius: Style.radius;
+        HorizontalLayout {
+            padding: 11px;
+            Text {
+                text: entry.text;
+                wrap: word-wrap;
+                font-size: 14px;
+                color: Palette.foreground;
+            }
+        }
+    }
+    Rectangle { width: 2px; }
+}
+
+component ProseRow inherits HorizontalLayout {
+    in property <Row> entry;
+    callback open-link(string);
+    padding-right: 48px;
+    StyledText {
+        text: entry.styled;
+        default-font-size: 14px;
+        default-color: Palette.foreground;
+        link-color: Palette.accent-background;
+        link-clicked(l) => { root.open-link(l); }
+    }
+}
+
+component HeadingRow inherits HorizontalLayout {
+    in property <Row> entry;
+    padding-top: 4px;
+    Text {
+        text: entry.text;
+        wrap: word-wrap;
+        font-size: entry.level == 1 ? 19px : entry.level == 2 ? 17px : 15px;
+        font-weight: 700;
+        color: Palette.foreground;
+    }
+}
+
+component CodeRow inherits Rectangle {
+    in property <Row> entry;
+    callback copy-requested(string);
+
+    background: Style.code-bg;
+    border-radius: Style.radius;
+    border-width: 1px;
+    border-color: Style.hairline;
+    clip: true;
+
+    VerticalLayout {
+        HorizontalLayout {
+            padding-left: 12px;
+            padding-right: 8px;
+            padding-top: 6px;
+            height: 28px;
+            Text {
+                text: entry.lang == "" ? "code" : entry.lang;
+                font-size: 10px;
+                font-family: Style.mono-font;
+                color: Style.faint;
+                vertical-alignment: center;
+            }
+            Rectangle { horizontal-stretch: 1; }
+            CopyButton {
+                payload: entry.text;
+                copy-requested(t) => { root.copy-requested(t); }
+            }
+        }
+        HorizontalLayout {
+            padding: 12px;
+            padding-top: 2px;
+            StyledText {
+                text: entry.styled;
+                default-font-family: Style.mono-font;
+                default-font-size: 12.5px;
+                default-color: Palette.foreground;
+            }
+        }
+    }
+}
+
+component ThinkingRow inherits VerticalLayout {
+    in-out property <Row> entry;
+    spacing: 4px;
     HorizontalLayout {
-        padding: 12px;
+        spacing: 4px;
+        alignment: start;
+        Rectangle {
+            height: 20px;
+            t := Text {
+                text: entry.expanded ? "▾ thinking" : "▸ thinking";
+                font-size: 12px;
+                color: Style.dim;
+                vertical-alignment: center;
+            }
+            TouchArea {
+                clicked => { entry.expanded = !entry.expanded; }
+            }
+        }
+        if entry.running: Dots { }
+    }
+    if entry.expanded: HorizontalLayout {
+        padding-left: 14px;
+        padding-right: 48px;
         Text {
             text: entry.text;
             wrap: word-wrap;
-            font-size: entry.role == "thinking" || entry.role == "tool" ? 12px : 14px;
-            font-italic: entry.role == "thinking";
-            color: is-meta
-                ? Palette.foreground.transparentize(0.35)
-                : Palette.foreground;
-            horizontal-alignment: left;
+            font-size: 12.5px;
+            font-italic: true;
+            color: Style.dim;
         }
+    }
+}
+
+component ToolRow inherits VerticalLayout {
+    in-out property <Row> entry;
+    spacing: 4px;
+    HorizontalLayout {
+        alignment: start;
+        spacing: 6px;
+        chip := Rectangle {
+            background: Style.card;
+            border-radius: 6px;
+            border-width: 1px;
+            border-color: Style.hairline;
+            HorizontalLayout {
+                padding: 6px;
+                padding-left: 9px;
+                padding-right: 9px;
+                spacing: 6px;
+                Text {
+                    text: entry.text;
+                    font-size: 12px;
+                    font-family: Style.mono-font;
+                    color: Palette.foreground.transparentize(0.2);
+                    overflow: elide;
+                    max-width: 560px;
+                }
+                if entry.elapsed != "": Text {
+                    text: entry.elapsed;
+                    font-size: 11px;
+                    color: Style.faint;
+                }
+            }
+            TouchArea {
+                clicked => { entry.expanded = !entry.expanded; }
+            }
+        }
+        if entry.running: Dots { }
+    }
+    if entry.expanded && entry.detail != "": Rectangle {
+        background: Style.code-bg;
+        border-radius: 6px;
+        HorizontalLayout {
+            padding: 10px;
+            Text {
+                text: entry.detail;
+                wrap: word-wrap;
+                font-size: 11.5px;
+                font-family: Style.mono-font;
+                color: Style.dim;
+            }
+        }
+    }
+}
+
+component NoteRow inherits HorizontalLayout {
+    in property <Row> entry;
+    alignment: start;
+    Text {
+        text: entry.text;
+        wrap: word-wrap;
+        font-size: 12px;
+        color: entry.kind == "error" ? #d35454 : Style.dim;
     }
 }
 
 export component AppWindow inherits Window {
     title: "slinty-pi";
-    preferred-width: 920px;
-    preferred-height: 720px;
-    min-width: 480px;
-    min-height: 400px;
+    preferred-width: 940px;
+    preferred-height: 760px;
+    min-width: 520px;
+    min-height: 420px;
     background: Palette.background;
 
-    in property <[TranscriptEntry]> transcript: [];
-    in property <string> model-name: "…";
-    in property <string> status-text: "";
+    in property <[Row]> transcript: [];
+    in property <[QueueItem]> queue: [];
+    in property <[string]> model-list: [];
+    in-out property <int> model-index: -1;
+    in property <[string]> thinking-list: [];
+    in-out property <int> thinking-index: -1;
     in property <bool> streaming: false;
+    in property <string> status-text: "";
+    in property <float> context-percent: 0;
+    in property <int> composer-lines: 1;
+    out property <bool> dark-mode: Palette.color-scheme == ColorScheme.dark;
 
     callback send(string);
     callback abort();
+    callback copy-text(string);
+    callback open-link(string);
+    callback model-selected(int);
+    callback thinking-selected(int);
+    callback composer-edited(string);
 
     public function scroll-to-end() {
         list.viewport-y = -max(0px, list.viewport-height - list.height);
     }
-
     public function focus-input() {
         input.focus();
     }
+    function submit() {
+        if (input.text != "") {
+            root.send(input.text);
+            input.text = "";
+            root.composer-edited("");
+        }
+    }
 
-    VerticalBox {
-        spacing: 8px;
+    FocusScope {
+        // Esc aborts from anywhere, including while the composer has focus.
+        capture-key-pressed(event) => {
+            if (event.text == Key.Escape && root.streaming) {
+                root.abort();
+                return accept;
+            }
+            reject
+        }
 
-        Rectangle {
-            vertical-stretch: 1;
+        VerticalBox {
+            spacing: 6px;
 
-            list := ListView {
-                // Delegate width is fixed by the ListView, so wrapping works
-                // without width bindings to ancestors (which loop layoutinfo).
-                for entry in transcript: HorizontalLayout {
+            Rectangle {
+                vertical-stretch: 1;
+
+                list := ListView {
+                    for entry in transcript: VerticalLayout {
+                        padding-left: 10px;
+                        padding-right: 10px;
+                        padding-top: entry.first ? 14px : 5px;
+
+                        if entry.kind == "user": UserRow { entry: entry; }
+                        if entry.kind == "prose": ProseRow {
+                            entry: entry;
+                            open-link(l) => { root.open-link(l); }
+                        }
+                        if entry.kind == "heading": HeadingRow { entry: entry; }
+                        if entry.kind == "code": CodeRow {
+                            entry: entry;
+                            copy-requested(t) => { root.copy-text(t); }
+                        }
+                        if entry.kind == "thinking": ThinkingRow { entry: entry; }
+                        if entry.kind == "tool": ToolRow { entry: entry; }
+                        if entry.kind == "info" || entry.kind == "error": NoteRow { entry: entry; }
+                    }
+                }
+
+                if transcript.length == 0: VerticalLayout {
+                    alignment: center;
+                    Text {
+                        text: "Ask pi anything.";
+                        color: Style.faint;
+                        font-size: 15px;
+                        horizontal-alignment: center;
+                    }
+                }
+            }
+
+            if queue.length > 0: HorizontalBox {
+                padding: 0;
+                spacing: 6px;
+                alignment: start;
+                for item in queue: Rectangle {
+                    background: Palette.accent-background.transparentize(0.9);
+                    border-radius: 6px;
+                    HorizontalLayout {
+                        padding: 5px;
+                        padding-left: 8px;
+                        padding-right: 8px;
+                        spacing: 5px;
+                        Text {
+                            text: item.kind == "steer" ? "↪" : "»";
+                            font-size: 11px;
+                            color: Style.dim;
+                        }
+                        Text {
+                            text: item.text;
+                            font-size: 11px;
+                            color: Palette.foreground;
+                            overflow: elide;
+                            max-width: 320px;
+                        }
+                    }
+                }
+            }
+
+            Rectangle {
+                background: Style.card;
+                border-radius: Style.radius;
+                border-width: 1px;
+                border-color: input.has-focus ? Palette.accent-background.transparentize(0.4) : Style.hairline;
+
+                VerticalLayout {
                     padding: 6px;
-                    spacing: 8px;
-                    // Stretch spacers hug user messages right, others left,
-                    // and cap bubble width at delegate width minus 64px.
-                    if entry.role == "user": Rectangle {
-                        horizontal-stretch: 1;
-                        min-width: 64px;
+                    spacing: 4px;
+
+                    input := TextEdit {
+                        height: min(6, max(1, root.composer-lines)) * 21px + 18px;
+                        font-size: 14px;
+                        wrap: word-wrap;
+                        placeholder-text: root.streaming
+                            ? "Steer the agent — Enter queues, Esc stops…"
+                            : "Message pi…  (Enter to send, Shift+Enter for newline)";
+                        edited(text) => { root.composer-edited(text); }
+                        key-pressed(event) => {
+                            if (event.text == Key.Return && !event.modifiers.shift) {
+                                root.submit();
+                                return accept;
+                            }
+                            reject
+                        }
                     }
-                    Bubble {
-                        entry: entry;
-                    }
-                    if entry.role != "user": Rectangle {
-                        horizontal-stretch: 1;
-                        min-width: 64px;
+
+                    HorizontalLayout {
+                        spacing: 8px;
+                        padding-left: 4px;
+                        padding-right: 2px;
+
+                        UsageRing { percent: root.context-percent; }
+                        Text {
+                            text: root.status-text;
+                            font-size: 11px;
+                            color: Style.faint;
+                            vertical-alignment: center;
+                        }
+                        Rectangle { horizontal-stretch: 1; }
+
+                        if root.thinking-list.length > 1: ComboBox {
+                            model: root.thinking-list;
+                            current-index <=> root.thinking-index;
+                            selected => { root.thinking-selected(self.current-index); }
+                        }
+                        ComboBox {
+                            model: root.model-list;
+                            current-index <=> root.model-index;
+                            selected => { root.model-selected(self.current-index); }
+                        }
+                        if root.streaming: Button {
+                            text: "Stop";
+                            clicked => { root.abort(); }
+                        }
+                        if !root.streaming: Button {
+                            text: "Send";
+                            primary: true;
+                            clicked => { root.submit(); }
+                        }
                     }
                 }
-            }
-
-            if transcript.length == 0: Text {
-                text: "Ask pi anything.";
-                color: Palette.foreground.transparentize(0.6);
-                font-size: 15px;
-            }
-        }
-
-        HorizontalBox {
-            spacing: 8px;
-            padding: 0;
-
-            input := LineEdit {
-                horizontal-stretch: 1;
-                placeholder-text: streaming ? "Steer the agent…" : "Message pi…";
-                accepted(text) => {
-                    if (text != "") {
-                        root.send(text);
-                        self.text = "";
-                    }
-                }
-            }
-            if streaming: Button {
-                text: "Stop";
-                clicked => { root.abort(); }
-            }
-            if !streaming: Button {
-                text: "Send";
-                primary: true;
-                clicked => {
-                    if (input.text != "") {
-                        root.send(input.text);
-                        input.text = "";
-                    }
-                }
-            }
-        }
-
-        HorizontalBox {
-            padding: 0;
-            spacing: 8px;
-            Text {
-                text: root.model-name;
-                font-size: 11px;
-                color: Palette.foreground.transparentize(0.4);
-            }
-            Rectangle { horizontal-stretch: 1; }
-            if streaming: Text {
-                text: "streaming…";
-                font-size: 11px;
-                color: Palette.accent-background;
-            }
-            Text {
-                text: root.status-text;
-                font-size: 11px;
-                color: Palette.foreground.transparentize(0.4);
             }
         }
     }

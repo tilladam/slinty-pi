@@ -363,7 +363,10 @@ mod tests {
         let v = serde_json::to_value(Command::GetAvailableModels).unwrap();
         assert_eq!(v["type"], "get_available_models");
 
-        let v = serde_json::to_value(Command::FollowUp { message: "m".into() }).unwrap();
+        let v = serde_json::to_value(Command::FollowUp {
+            message: "m".into(),
+        })
+        .unwrap();
         assert_eq!(v["type"], "follow_up");
     }
 

@@ -10,9 +10,7 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::Command as ProcessCommand;
 use tokio::sync::{mpsc, oneshot};
 
-use crate::types::{
-    Command, Event, ExtensionUiReply, Response, StreamingBehavior, ThinkingLevel,
-};
+use crate::types::{Command, Event, ExtensionUiReply, Response, StreamingBehavior, ThinkingLevel};
 
 #[derive(Debug, thiserror::Error)]
 pub enum PiError {
@@ -68,9 +66,7 @@ pub struct PiClient {
 
 impl PiClient {
     /// Spawn pi and return the client plus the stream of agent events.
-    pub async fn spawn(
-        opts: PiOptions,
-    ) -> Result<(Self, mpsc::UnboundedReceiver<Event>), PiError> {
+    pub async fn spawn(opts: PiOptions) -> Result<(Self, mpsc::UnboundedReceiver<Event>), PiError> {
         let mut cmd = ProcessCommand::new(&opts.binary);
         cmd.arg("--mode")
             .arg("rpc")
@@ -290,7 +286,9 @@ impl PiClient {
     }
 
     pub async fn set_thinking_level(&self, level: ThinkingLevel) -> Result<(), PiError> {
-        self.request(Command::SetThinkingLevel { level }).await.map(drop)
+        self.request(Command::SetThinkingLevel { level })
+            .await
+            .map(drop)
     }
 
     pub async fn get_session_stats(&self) -> Result<Value, PiError> {
