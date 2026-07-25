@@ -7,7 +7,7 @@
 //! count to address rows it appended without reading UI state back.
 
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -16,10 +16,11 @@ use slint::{Model, ModelRc, SharedString, StyledText, VecModel, Weak};
 use tokio::sync::mpsc;
 
 use pi_rpc::{
-    content_text, AssistantMessageEvent, Command, Event, ExtensionUiReply, PiClient, PiError,
-    PiOptions, ThinkingLevel,
+    content_text, AssistantMessageEvent, Command, Event, ExtensionUiReply, ImageContent, PiClient,
+    PiError, PiOptions, ThinkingLevel,
 };
 
+use crate::attach;
 use crate::palette;
 use crate::segmenter::{segment_markdown, Segment};
 use crate::{highlight, AppWindow, PaletteRow, QueueItem, Row, SessionRow, TreeRow};
@@ -60,6 +61,12 @@ pub enum UiCmd {
     OpenPalette,
     /// Palette query box changed; re-rank the already-built entry list.
     PaletteQuery(String),
+    /// Attach button (or, in principle, a future drop handler) picked a
+    /// path. Images are read, base64-encoded, and queued for the next
+    /// `Send`; everything else is appended to the composer as `@path`.
+    AttachPath(PathBuf),
+    /// Remove a queued image attachment by its chip index.
+    RemoveAttachment(usize),
 }
 
 // ---------------------------------------------------------------------------
@@ -324,6 +331,23 @@ impl Ui {
     fn set_composer_text(&self, text: String) {
         self.with_app(move |app| {
             app.invoke_set_composer_text(text.as_str().into());
+        });
+    }
+
+    /// Append `@path` to the composer (non-image attachment); Slint owns
+    /// the spacing, since it has the current text and this doesn't.
+    fn append_composer_text(&self, path: &Path) {
+        let text = format!("@{}", path.display());
+        self.with_app(move |app| {
+            app.invoke_append_to_composer(text.as_str().into());
+        });
+    }
+
+    /// Chip labels (file names) for queued image attachments.
+    fn set_pending_attachments(&self, names: Vec<String>) {
+        self.with_app(move |app| {
+            let rows: Vec<SharedString> = names.into_iter().map(|n| n.as_str().into()).collect();
+            app.set_pending_attachments(ModelRc::new(VecModel::from(rows)));
         });
     }
 }
@@ -1155,6 +1179,9 @@ async fn run_session(
     let mut thinking_levels = refresh_thinking(client, transcript).await;
     let mut streaming = false;
     let mut palette_entries: Vec<palette::PaletteEntry> = Vec::new();
+    // (display name, encoded image) pairs queued for the next non-streaming
+    // `Send`.
+    let mut pending_images: Vec<(String, ImageContent)> = Vec::new();
 
     loop {
         tokio::select! {
@@ -1163,14 +1190,33 @@ async fn run_session(
                 match cmd {
                     UiCmd::Send(text) => {
                         transcript.user_prompt(&text, streaming);
+                        // `prompt_steering` has no images param, so a send
+                        // mid-stream leaves any pending attachments queued
+                        // for the next non-streaming send instead of
+                        // silently dropping them.
                         let result = if streaming {
                             client.prompt_steering(&text).await
                         } else {
-                            client.prompt(&text).await
+                            let images: Vec<ImageContent> =
+                                std::mem::take(&mut pending_images).into_iter().map(|(_, i)| i).collect();
+                            tracing::debug!(images = images.len(), "send: with attachments");
+                            transcript.ui.set_pending_attachments(Vec::new());
+                            client.prompt_with_images(&text, images).await
                         };
                         if let Err(e) = result {
                             transcript.note("error", e.to_string());
                         }
+                    }
+                    UiCmd::AttachPath(path) => {
+                        attach_path(client, transcript, &mut pending_images, path).await;
+                    }
+                    UiCmd::RemoveAttachment(index) => {
+                        if index < pending_images.len() {
+                            pending_images.remove(index);
+                        }
+                        transcript.ui.set_pending_attachments(
+                            pending_images.iter().map(|(name, _)| name.clone()).collect(),
+                        );
                     }
                     UiCmd::Abort => {
                         if streaming {
@@ -1356,6 +1402,45 @@ async fn hydrate_active_session(client: &PiClient, transcript: &mut Transcript) 
             update_stats(client, transcript).await;
         }
         Err(e) => transcript.note("error", format!("could not load session messages: {e}")),
+    }
+}
+
+/// Handle an attach-button (or future drop) pick: images are read,
+/// base64-encoded, and queued as a chip; anything else is appended to the
+/// composer as an `@path` reference. `client` isn't used yet (images are
+/// read straight off disk) but matches the other `UiCmd` handlers' shape and
+/// will be needed if attachment validation ever needs the running session.
+async fn attach_path(
+    _client: &PiClient,
+    transcript: &mut Transcript,
+    pending_images: &mut Vec<(String, ImageContent)>,
+    path: PathBuf,
+) {
+    let Some(mime_type) = attach::image_mime_type(&path) else {
+        tracing::debug!(path = %path.display(), "attach: non-image, appended @path");
+        transcript.ui.append_composer_text(&path);
+        return;
+    };
+    let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    match tokio::fs::read(&path).await {
+        Ok(bytes) => {
+            let data = attach::encode_base64(&bytes);
+            tracing::debug!(
+                name,
+                mime_type,
+                bytes = bytes.len(),
+                b64_len = data.len(),
+                "attach: image queued"
+            );
+            pending_images.push((
+                name,
+                ImageContent { kind: "image".to_string(), data, mime_type: mime_type.to_string() },
+            ));
+            transcript.ui.set_pending_attachments(
+                pending_images.iter().map(|(name, _)| name.clone()).collect(),
+            );
+        }
+        Err(e) => transcript.note("error", format!("could not read {}: {e}", path.display())),
     }
 }
 

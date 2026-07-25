@@ -21,6 +21,8 @@ chrono = { version = "0.4.45", default-features = false, features = ["clock"] }
 pi-sessions = { version = "0.1.0", path = "../pi-sessions" }
 directories = "6.0.0"
 nucleo-matcher = "0.3.1"
+base64 = "0.23.0"
+rfd = "0.17.2"
 
 [build-dependencies]
 slint-build = "1"

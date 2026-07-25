@@ -4,6 +4,7 @@
 //! pi child process (see `backend`). `SLINTY_DEMO=1` runs a synthetic stream
 //! through the same rendering path instead of spawning pi.
 
+mod attach;
 mod backend;
 mod density;
 mod highlight;
@@ -100,6 +101,25 @@ fn main() -> anyhow::Result<()> {
         });
         app.on_density_changed(density::save);
         let tx = cmd_tx.clone();
+        app.on_attach_clicked(move || {
+            // rfd's blocking picker opens a native modal; run it off both the
+            // UI thread and the tokio runtime so neither blocks on it.
+            let tx = tx.clone();
+            std::thread::spawn(move || {
+                if let Some(paths) = rfd::FileDialog::new().pick_files() {
+                    for path in paths {
+                        let _ = tx.send(UiCmd::AttachPath(path));
+                    }
+                }
+            });
+        });
+        let tx = cmd_tx.clone();
+        app.on_remove_attachment(move |index| {
+            if index >= 0 {
+                let _ = tx.send(UiCmd::RemoveAttachment(index as usize));
+            }
+        });
+        let tx = cmd_tx.clone();
         app.on_open_palette(move || {
             let _ = tx.send(UiCmd::OpenPalette);
         });
@@ -169,6 +189,11 @@ fn main() -> anyhow::Result<()> {
     spawn_delayed_cmd(&rt, &cmd_tx, "SLINTY_FORK_FROM_AFTER", UiCmd::ForkFrom);
     spawn_delayed_cmd(&rt, &cmd_tx, "SLINTY_OPEN_PALETTE_AFTER", |_| UiCmd::OpenPalette);
     spawn_delayed_cmd(&rt, &cmd_tx, "SLINTY_PALETTE_QUERY_AFTER", UiCmd::PaletteQuery);
+    // Bypasses the native file dialog, which (like screenshots and
+    // keystrokes) has no display to run against in a headless/test launch.
+    spawn_delayed_cmd(&rt, &cmd_tx, "SLINTY_ATTACH_AFTER", |p| {
+        UiCmd::AttachPath(std::path::PathBuf::from(p))
+    });
     // Density is UI-only (no backend command), so it's driven directly via
     // `invoke_cycle_density` rather than through `cmd_tx`.
     spawn_delayed_cycle_density(&rt, app.as_weak());

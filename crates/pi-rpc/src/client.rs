@@ -10,7 +10,9 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::Command as ProcessCommand;
 use tokio::sync::{mpsc, oneshot};
 
-use crate::types::{Command, Event, ExtensionUiReply, Response, StreamingBehavior, ThinkingLevel};
+use crate::types::{
+    Command, Event, ExtensionUiReply, ImageContent, Response, StreamingBehavior, ThinkingLevel,
+};
 
 #[derive(Debug, thiserror::Error)]
 pub enum PiError {
@@ -243,6 +245,21 @@ impl PiClient {
         self.request(Command::Prompt {
             message: message.into(),
             images: None,
+            streaming_behavior: None,
+        })
+        .await
+        .map(drop)
+    }
+
+    /// Prompt with inline image attachments (composer attach button).
+    pub async fn prompt_with_images(
+        &self,
+        message: impl Into<String>,
+        images: Vec<ImageContent>,
+    ) -> Result<(), PiError> {
+        self.request(Command::Prompt {
+            message: message.into(),
+            images: if images.is_empty() { None } else { Some(images) },
             streaming_behavior: None,
         })
         .await
