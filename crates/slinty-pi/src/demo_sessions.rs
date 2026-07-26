@@ -26,8 +26,14 @@ pub fn setup() -> DemoProject {
     let dir = pi_sessions::project_session_dir(&sessions_root, &cwd);
     let _ = std::fs::create_dir_all(&dir);
     for (name, content) in [
-        ("2026-01-01T10-00-00-000Z_00000000-0000-0000-0000-000000000001.jsonl", FIXTURE_BASIC),
-        ("2026-01-02T11-30-00-000Z_00000000-0000-0000-0000-000000000002.jsonl", FIXTURE_BRANCHING),
+        (
+            "2026-01-01T10-00-00-000Z_00000000-0000-0000-0000-000000000001.jsonl",
+            FIXTURE_BASIC,
+        ),
+        (
+            "2026-01-02T11-30-00-000Z_00000000-0000-0000-0000-000000000002.jsonl",
+            FIXTURE_BRANCHING,
+        ),
     ] {
         let _ = std::fs::write(dir.join(name), content);
     }
@@ -60,7 +66,8 @@ mod tests {
     fn setup_writes_sessions_pi_sessions_can_list() {
         let demo = setup();
         let dir = pi_sessions::project_session_dir(&demo.sessions_root, &demo.cwd);
-        let sessions = pi_sessions::list_sessions(&dir).expect("demo session dir should be listable");
+        let sessions =
+            pi_sessions::list_sessions(&dir).expect("demo session dir should be listable");
         assert_eq!(sessions.len(), 2);
     }
 
@@ -75,7 +82,13 @@ mod tests {
             .expect("basic fixture present");
         let messages = hydrate_messages(&basic.path);
         assert!(!messages.is_empty());
-        assert!(messages.iter().all(|m| m.get("role").is_some()), "every entry is a plain message, not a tree envelope");
-        assert_eq!(messages[0].get("role").and_then(|v| v.as_str()), Some("user"));
+        assert!(
+            messages.iter().all(|m| m.get("role").is_some()),
+            "every entry is a plain message, not a tree envelope"
+        );
+        assert_eq!(
+            messages[0].get("role").and_then(|v| v.as_str()),
+            Some("user")
+        );
     }
 }

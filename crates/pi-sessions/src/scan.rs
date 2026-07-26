@@ -11,7 +11,9 @@ use std::time::SystemTime;
 
 use serde_json::Value;
 
-use crate::types::{content_preview, entry_cost, entry_tokens, EntryKind, SessionEntry, SessionHeader};
+use crate::types::{
+    content_preview, entry_cost, entry_tokens, EntryKind, SessionEntry, SessionHeader,
+};
 
 /// A project is a session-storage directory keyed by pi's `--<cwd>--`
 /// encoding. `dir_name` is the raw, lossless identity; `display_path` is a
@@ -64,7 +66,12 @@ pub fn default_sessions_root() -> Option<PathBuf> {
 /// directory name. Exact, unlike [`decode_project_dir`]: replacing every `/`
 /// with `-` loses no information going forward, only when read back.
 pub fn encode_project_dir(cwd: &Path) -> String {
-    format!("--{}--", cwd.to_string_lossy().trim_start_matches('/').replace('/', "-"))
+    format!(
+        "--{}--",
+        cwd.to_string_lossy()
+            .trim_start_matches('/')
+            .replace('/', "-")
+    )
 }
 
 /// The session-storage directory pi would use for `cwd`, without scanning
@@ -327,7 +334,10 @@ mod tests {
         assert_eq!(meta.id, "019f98a4-83d5-7e2e-9c80-9e9ec0700133");
         assert_eq!(meta.cwd, "/Users/dev/example-project");
         assert_eq!(meta.name.as_deref(), Some("Test run walkthrough"));
-        assert_eq!(meta.first_user_text.as_deref(), Some("hello, which model are you?"));
+        assert_eq!(
+            meta.first_user_text.as_deref(),
+            Some("hello, which model are you?")
+        );
         assert_eq!(meta.entry_count, 9); // all lines after the header
         assert!(meta.total_cost > 0.0);
         assert!(meta.total_tokens > 0);

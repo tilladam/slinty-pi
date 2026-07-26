@@ -40,11 +40,18 @@ pub enum EntryKind {
     /// `message.role` is one of "user" | "assistant" | "toolResult" |
     /// "bashExecution" | "custom" | "branchSummary" | "compactionSummary".
     /// Kept as raw JSON; see `message_role`/`message_text_preview` helpers.
-    Message { message: Value },
+    Message {
+        message: Value,
+    },
     #[serde(rename_all = "camelCase")]
-    ModelChange { provider: String, model_id: String },
+    ModelChange {
+        provider: String,
+        model_id: String,
+    },
     #[serde(rename_all = "camelCase")]
-    ThinkingLevelChange { thinking_level: String },
+    ThinkingLevelChange {
+        thinking_level: String,
+    },
     #[serde(rename_all = "camelCase")]
     Compaction {
         summary: String,
@@ -54,7 +61,10 @@ pub enum EntryKind {
         usage: Option<Value>,
     },
     #[serde(rename_all = "camelCase")]
-    BranchSummary { from_id: String, summary: String },
+    BranchSummary {
+        from_id: String,
+        summary: String,
+    },
     #[serde(rename_all = "camelCase")]
     Custom {
         custom_type: String,
@@ -74,7 +84,9 @@ pub enum EntryKind {
         #[serde(default)]
         label: Option<String>,
     },
-    SessionInfo { name: String },
+    SessionInfo {
+        name: String,
+    },
     #[serde(other)]
     Unknown,
 }

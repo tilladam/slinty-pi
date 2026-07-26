@@ -30,7 +30,10 @@ impl SessionTree {
         self.by_id.get(id).map(|&i| &self.entries[i])
     }
 
-    pub fn children_of<'a>(&'a self, id: Option<&'a str>) -> impl Iterator<Item = &'a SessionEntry> {
+    pub fn children_of<'a>(
+        &'a self,
+        id: Option<&'a str>,
+    ) -> impl Iterator<Item = &'a SessionEntry> {
         self.entries
             .iter()
             .filter(move |e| e.parent_id.as_deref() == id)
@@ -109,7 +112,10 @@ mod tests {
         let tree = load_session(&fixture("branching.jsonl")).unwrap();
         // e1000001 has two children on-disk: e1000002 (the original
         // continuation) and e1000004 (the branch_summary from switching away).
-        let children: Vec<_> = tree.children_of(Some("e1000001")).map(|e| e.id.as_str()).collect();
+        let children: Vec<_> = tree
+            .children_of(Some("e1000001"))
+            .map(|e| e.id.as_str())
+            .collect();
         assert_eq!(children, vec!["e1000002", "e1000004"]);
     }
 

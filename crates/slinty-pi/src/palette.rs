@@ -18,16 +18,31 @@ pub struct PaletteEntry {
 }
 
 const ACTIONS: &[(&str, &str, &str)] = &[
-    ("action:new-session", "New session", "start fresh in this project"),
-    ("action:open-tree", "Open session tree", "browse and fork from any point"),
-    ("action:cycle-density", "Cycle density", "Verbose / Normal / Summary"),
+    (
+        "action:new-session",
+        "New session",
+        "start fresh in this project",
+    ),
+    (
+        "action:open-tree",
+        "Open session tree",
+        "browse and fork from any point",
+    ),
+    (
+        "action:cycle-density",
+        "Cycle density",
+        "Verbose / Normal / Summary",
+    ),
     ("action:toggle-sidebar", "Toggle sidebar", ""),
     ("action:abort", "Abort", "stop the current turn"),
 ];
 
 /// Build the full unranked entry list from the current project's sessions
 /// (already-scanned metadata) and pi's `get_commands` response data.
-pub fn build_entries(sessions: &[pi_sessions::SessionMeta], commands: &[serde_json::Value]) -> Vec<PaletteEntry> {
+pub fn build_entries(
+    sessions: &[pi_sessions::SessionMeta],
+    commands: &[serde_json::Value],
+) -> Vec<PaletteEntry> {
     let mut entries: Vec<PaletteEntry> = ACTIONS
         .iter()
         .map(|(id, label, detail)| PaletteEntry {
@@ -97,12 +112,20 @@ mod tests {
     use super::*;
 
     fn entry(id: &str, kind: &'static str, label: &str) -> PaletteEntry {
-        PaletteEntry { id: id.to_string(), kind, label: label.to_string(), detail: String::new() }
+        PaletteEntry {
+            id: id.to_string(),
+            kind,
+            label: label.to_string(),
+            detail: String::new(),
+        }
     }
 
     #[test]
     fn empty_query_returns_build_order() {
-        let entries = vec![entry("a", "action", "New session"), entry("b", "command", "/compact")];
+        let entries = vec![
+            entry("a", "action", "New session"),
+            entry("b", "command", "/compact"),
+        ];
         assert_eq!(rank(&entries, ""), entries);
     }
 
@@ -139,11 +162,18 @@ mod tests {
             total_tokens: 0,
             parent_session: None,
         }];
-        let commands = vec![serde_json::json!({"name": "compact", "description": "compact context"})];
+        let commands =
+            vec![serde_json::json!({"name": "compact", "description": "compact context"})];
         let entries = build_entries(&sessions, &commands);
 
-        assert!(entries.iter().any(|e| e.kind == "action" && e.id.starts_with("action:")));
-        assert!(entries.iter().any(|e| e.kind == "session" && e.id == "session:/x/y.jsonl"));
-        assert!(entries.iter().any(|e| e.kind == "command" && e.id == "command:compact" && e.label == "/compact"));
+        assert!(entries
+            .iter()
+            .any(|e| e.kind == "action" && e.id.starts_with("action:")));
+        assert!(entries
+            .iter()
+            .any(|e| e.kind == "session" && e.id == "session:/x/y.jsonl"));
+        assert!(entries
+            .iter()
+            .any(|e| e.kind == "command" && e.id == "command:compact" && e.label == "/compact"));
     }
 }

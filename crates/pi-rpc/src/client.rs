@@ -259,7 +259,11 @@ impl PiClient {
     ) -> Result<(), PiError> {
         self.request(Command::Prompt {
             message: message.into(),
-            images: if images.is_empty() { None } else { Some(images) },
+            images: if images.is_empty() {
+                None
+            } else {
+                Some(images)
+            },
             streaming_behavior: None,
         })
         .await
@@ -316,7 +320,10 @@ impl PiClient {
     }
 
     pub async fn get_messages(&self) -> Result<Value, PiError> {
-        Ok(self.request(Command::GetMessages).await?.unwrap_or_default())
+        Ok(self
+            .request(Command::GetMessages)
+            .await?
+            .unwrap_or_default())
     }
 
     /// Load a different session file (the child stays the same process; only
@@ -370,7 +377,10 @@ impl PiClient {
     }
 
     pub async fn get_commands(&self) -> Result<Value, PiError> {
-        Ok(self.request(Command::GetCommands).await?.unwrap_or_default())
+        Ok(self
+            .request(Command::GetCommands)
+            .await?
+            .unwrap_or_default())
     }
 }
 

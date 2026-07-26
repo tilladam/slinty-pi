@@ -784,7 +784,10 @@ fn hydrate_rowspecs(messages: &[serde_json::Value], dark: bool) -> Vec<RowSpec> 
                 let content = message.get("content").unwrap_or(&serde_json::Value::Null);
                 let (text, images) = user_content_text(content);
                 let display = if images > 0 {
-                    format!("{text}\n[{images} image{}]", if images == 1 { "" } else { "s" })
+                    format!(
+                        "{text}\n[{images} image{}]",
+                        if images == 1 { "" } else { "s" }
+                    )
                 } else {
                     text
                 };
@@ -822,12 +825,16 @@ fn hydrate_rowspecs(messages: &[serde_json::Value], dark: bool) -> Vec<RowSpec> 
                             }
                         }
                         Some("toolCall") => {
-                            let id =
-                                block.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                            let id = block
+                                .get("id")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("")
+                                .to_string();
                             let name = block.get("name").and_then(|v| v.as_str()).unwrap_or("");
                             let args = block.get("arguments").cloned().unwrap_or_default();
                             let summary = tool_summary(name, &args);
-                            let args_pretty = serde_json::to_string_pretty(&args).unwrap_or_default();
+                            let args_pretty =
+                                serde_json::to_string_pretty(&args).unwrap_or_default();
                             let index = specs.len();
                             specs.push(RowSpec {
                                 kind: "tool",
@@ -847,14 +854,20 @@ fn hydrate_rowspecs(messages: &[serde_json::Value], dark: bool) -> Vec<RowSpec> 
                 }
             }
             "toolResult" => {
-                let id = message.get("toolCallId").and_then(|v| v.as_str()).unwrap_or("");
+                let id = message
+                    .get("toolCallId")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
                 let Some(&index) = tool_rows.get(id) else {
                     continue;
                 };
                 let Some(spec) = specs.get_mut(index) else {
                     continue;
                 };
-                let is_error = message.get("isError").and_then(|v| v.as_bool()).unwrap_or(false);
+                let is_error = message
+                    .get("isError")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
                 let output = tail(&content_text(message), TOOL_DETAIL_LIMIT);
                 let mark = if is_error { "✗" } else { "✓" };
                 let summary = tool_summaries.get(id).cloned().unwrap_or_default();
@@ -865,7 +878,10 @@ fn hydrate_rowspecs(messages: &[serde_json::Value], dark: bool) -> Vec<RowSpec> 
                 }
             }
             "bashExecution" => {
-                let command = message.get("command").and_then(|v| v.as_str()).unwrap_or("");
+                let command = message
+                    .get("command")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
                 let output = message.get("output").and_then(|v| v.as_str()).unwrap_or("");
                 let mark = match message.get("exitCode").and_then(|v| v.as_i64()) {
                     Some(0) => "✓",
@@ -881,22 +897,35 @@ fn hydrate_rowspecs(messages: &[serde_json::Value], dark: bool) -> Vec<RowSpec> 
                 });
             }
             "compactionSummary" => {
-                let tokens_before =
-                    message.get("tokensBefore").and_then(|v| v.as_u64()).unwrap_or(0);
+                let tokens_before = message
+                    .get("tokensBefore")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0);
                 let mut spec = RowSpec::note(
                     "info",
-                    format!("context compacted · {} tokens before", format_tokens(tokens_before)),
+                    format!(
+                        "context compacted · {} tokens before",
+                        format_tokens(tokens_before)
+                    ),
                 );
                 spec.first = std::mem::take(&mut pending_first);
                 specs.push(spec);
             }
             "branchSummary" => {
-                let summary = message.get("summary").and_then(|v| v.as_str()).unwrap_or("");
+                let summary = message
+                    .get("summary")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
                 let mut spec = RowSpec::note("info", format!("branched · {summary}"));
                 spec.first = std::mem::take(&mut pending_first);
                 specs.push(spec);
             }
-            "custom" if message.get("display").and_then(|v| v.as_bool()).unwrap_or(false) => {
+            "custom"
+                if message
+                    .get("display")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false) =>
+            {
                 let content = message.get("content").unwrap_or(&serde_json::Value::Null);
                 let (text, _) = user_content_text(content);
                 let mut spec = RowSpec::note("info", text);
@@ -1033,7 +1062,12 @@ impl Sidebar {
             .map(|m| {
                 let path = m.path.to_string_lossy().into_owned();
                 let is_active = active == Some(path.as_str());
-                (path, m.title().to_string(), relative_time(&m.last_timestamp), is_active)
+                (
+                    path,
+                    m.title().to_string(),
+                    relative_time(&m.last_timestamp),
+                    is_active,
+                )
             })
             .collect();
         ui.set_sidebar_sessions(rows);
@@ -1348,7 +1382,12 @@ async fn run_session(
 /// Move a session file to the OS trash. If it was the currently-open
 /// session, starts a fresh one so the child keeps working against a file
 /// that still exists, then refreshes the sidebar either way.
-async fn delete_session(client: &PiClient, transcript: &mut Transcript, sidebar: &Sidebar, path: &str) {
+async fn delete_session(
+    client: &PiClient,
+    transcript: &mut Transcript,
+    sidebar: &Sidebar,
+    path: &str,
+) {
     let is_active = active_session_path(client).await.as_deref() == Some(path);
     let target = PathBuf::from(path);
     let result = tokio::task::spawn_blocking(move || trash::delete(&target)).await;
@@ -1380,7 +1419,10 @@ async fn resume_session(client: &PiClient, transcript: &mut Transcript, session_
     match client.switch_session(session_path).await {
         Ok(data) => {
             if data.get("cancelled").and_then(|v| v.as_bool()) == Some(true) {
-                transcript.note("info", "session switch cancelled by an extension".to_string());
+                transcript.note(
+                    "info",
+                    "session switch cancelled by an extension".to_string(),
+                );
                 return;
             }
         }
@@ -1429,7 +1471,10 @@ async fn attach_path(
         transcript.ui.append_composer_text(&path);
         return;
     };
-    let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    let name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
     match tokio::fs::read(&path).await {
         Ok(bytes) => {
             let data = attach::encode_base64(&bytes);
@@ -1442,10 +1487,17 @@ async fn attach_path(
             );
             pending_images.push((
                 name,
-                ImageContent { kind: "image".to_string(), data, mime_type: mime_type.to_string() },
+                ImageContent {
+                    kind: "image".to_string(),
+                    data,
+                    mime_type: mime_type.to_string(),
+                },
             ));
             transcript.ui.set_pending_attachments(
-                pending_images.iter().map(|(name, _)| name.clone()).collect(),
+                pending_images
+                    .iter()
+                    .map(|(name, _)| name.clone())
+                    .collect(),
             );
         }
         Err(e) => transcript.note("error", format!("could not read {}: {e}", path.display())),
@@ -1464,7 +1516,9 @@ async fn fork_from(client: &PiClient, transcript: &mut Transcript, entry_id: &st
                 transcript.note("info", "fork cancelled by an extension".to_string());
                 return;
             }
-            data.get("text").and_then(|v| v.as_str()).map(str::to_string)
+            data.get("text")
+                .and_then(|v| v.as_str())
+                .map(str::to_string)
         }
         Err(e) => {
             transcript.note("error", format!("could not fork: {e}"));
@@ -1497,8 +1551,15 @@ async fn fetch_tree_rows(
     client: &PiClient,
 ) -> Result<Vec<(String, i32, String, String, bool, bool)>, PiError> {
     let data = client.get_tree().await?;
-    let leaf_id = data.get("leafId").and_then(|v| v.as_str()).map(str::to_string);
-    let nodes = data.get("tree").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+    let leaf_id = data
+        .get("leafId")
+        .and_then(|v| v.as_str())
+        .map(str::to_string);
+    let nodes = data
+        .get("tree")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
 
     let mut flat = Vec::new();
     let mut parents: HashMap<String, String> = HashMap::new();
@@ -1527,14 +1588,22 @@ fn flatten_tree(
     parents: &mut HashMap<String, String>,
 ) {
     for node in nodes {
-        let Some(entry) = node.get("entry") else { continue };
-        let Some(id) = entry.get("id").and_then(|v| v.as_str()) else { continue };
+        let Some(entry) = node.get("entry") else {
+            continue;
+        };
+        let Some(id) = entry.get("id").and_then(|v| v.as_str()) else {
+            continue;
+        };
         if let Some(parent_id) = entry.get("parentId").and_then(|v| v.as_str()) {
             parents.insert(id.to_string(), parent_id.to_string());
         }
         let can_fork = entry.get("type").and_then(|v| v.as_str()) == Some("message")
             && entry.pointer("/message/role").and_then(|v| v.as_str()) == Some("user");
-        let label = node.get("label").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        let label = node
+            .get("label")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
         out.push(FlatTreeRow {
             id: id.to_string(),
             depth,
@@ -1557,31 +1626,45 @@ fn tree_node_summary(entry: &serde_json::Value) -> String {
             let message = entry.get("message").unwrap_or(&serde_json::Value::Null);
             match message.get("role").and_then(|v| v.as_str()) {
                 Some("user") => {
-                    let (text, _) = user_content_text(message.get("content").unwrap_or(&serde_json::Value::Null));
+                    let (text, _) = user_content_text(
+                        message.get("content").unwrap_or(&serde_json::Value::Null),
+                    );
                     elide_oneline(&text)
                 }
                 Some("assistant") => {
-                    let text = message
-                        .get("content")
-                        .and_then(|v| v.as_array())
-                        .and_then(|blocks| {
-                            blocks.iter().find_map(|b| {
-                                (b.get("type").and_then(|v| v.as_str()) == Some("text"))
-                                    .then(|| b.get("text").and_then(|v| v.as_str()))
-                                    .flatten()
-                            })
-                        });
+                    let text =
+                        message
+                            .get("content")
+                            .and_then(|v| v.as_array())
+                            .and_then(|blocks| {
+                                blocks.iter().find_map(|b| {
+                                    (b.get("type").and_then(|v| v.as_str()) == Some("text"))
+                                        .then(|| b.get("text").and_then(|v| v.as_str()))
+                                        .flatten()
+                                })
+                            });
                     match text {
                         Some(t) if !t.is_empty() => format!("assistant: {}", elide_oneline(t)),
                         _ => "assistant".to_string(),
                     }
                 }
                 Some("toolResult") => {
-                    let name = message.get("toolName").and_then(|v| v.as_str()).unwrap_or("tool");
+                    let name = message
+                        .get("toolName")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("tool");
                     format!("→ {name}")
                 }
                 Some("bashExecution") => {
-                    format!("$ {}", first_line(message.get("command").and_then(|v| v.as_str()).unwrap_or("")))
+                    format!(
+                        "$ {}",
+                        first_line(
+                            message
+                                .get("command")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("")
+                        )
+                    )
                 }
                 Some(role) => role.to_string(),
                 None => "message".to_string(),
@@ -1589,12 +1672,18 @@ fn tree_node_summary(entry: &serde_json::Value) -> String {
         }
         "model_change" => format!(
             "model → {}/{}",
-            entry.get("provider").and_then(|v| v.as_str()).unwrap_or("?"),
+            entry
+                .get("provider")
+                .and_then(|v| v.as_str())
+                .unwrap_or("?"),
             entry.get("modelId").and_then(|v| v.as_str()).unwrap_or("?"),
         ),
         "thinking_level_change" => format!(
             "thinking → {}",
-            entry.get("thinkingLevel").and_then(|v| v.as_str()).unwrap_or("?")
+            entry
+                .get("thinkingLevel")
+                .and_then(|v| v.as_str())
+                .unwrap_or("?")
         ),
         "compaction" => "context compacted".to_string(),
         "branch_summary" => "branch summary".to_string(),
@@ -1656,8 +1745,12 @@ mod tree_tests {
         let mut flat = Vec::new();
         let mut parents = HashMap::new();
         flatten_tree(&sample_tree(), 0, &mut flat, &mut parents);
-        let ids_and_depths: Vec<(&str, i32)> = flat.iter().map(|r| (r.id.as_str(), r.depth)).collect();
-        assert_eq!(ids_and_depths, vec![("u1", 0), ("a1", 1), ("b1", 1), ("u2", 2)]);
+        let ids_and_depths: Vec<(&str, i32)> =
+            flat.iter().map(|r| (r.id.as_str(), r.depth)).collect();
+        assert_eq!(
+            ids_and_depths,
+            vec![("u1", 0), ("a1", 1), ("b1", 1), ("u2", 2)]
+        );
     }
 
     #[test]
@@ -1665,7 +1758,11 @@ mod tree_tests {
         let mut flat = Vec::new();
         let mut parents = HashMap::new();
         flatten_tree(&sample_tree(), 0, &mut flat, &mut parents);
-        let forkable: Vec<&str> = flat.iter().filter(|r| r.can_fork).map(|r| r.id.as_str()).collect();
+        let forkable: Vec<&str> = flat
+            .iter()
+            .filter(|r| r.can_fork)
+            .map(|r| r.id.as_str())
+            .collect();
         assert_eq!(forkable, vec!["u1", "u2"]);
     }
 
@@ -1690,34 +1787,49 @@ mod tree_tests {
     #[test]
     fn summarizes_every_entry_kind() {
         assert_eq!(
-            tree_node_summary(&json!({"type": "message", "message": {"role": "user", "content": "hello there"}})),
+            tree_node_summary(
+                &json!({"type": "message", "message": {"role": "user", "content": "hello there"}})
+            ),
             "hello there"
         );
         assert_eq!(
-            tree_node_summary(&json!({"type": "message", "message": {"role": "assistant", "content": [{"type": "text", "text": "hi!"}]}})),
+            tree_node_summary(
+                &json!({"type": "message", "message": {"role": "assistant", "content": [{"type": "text", "text": "hi!"}]}})
+            ),
             "assistant: hi!"
         );
         assert_eq!(
-            tree_node_summary(&json!({"type": "message", "message": {"role": "assistant", "content": [{"type": "toolCall", "id": "c1", "name": "bash", "arguments": {}}]}})),
+            tree_node_summary(
+                &json!({"type": "message", "message": {"role": "assistant", "content": [{"type": "toolCall", "id": "c1", "name": "bash", "arguments": {}}]}})
+            ),
             "assistant"
         );
         assert_eq!(
-            tree_node_summary(&json!({"type": "message", "message": {"role": "toolResult", "toolName": "bash"}})),
+            tree_node_summary(
+                &json!({"type": "message", "message": {"role": "toolResult", "toolName": "bash"}})
+            ),
             "→ bash"
         );
         assert_eq!(
-            tree_node_summary(&json!({"type": "message", "message": {"role": "bashExecution", "command": "cargo test"}})),
+            tree_node_summary(
+                &json!({"type": "message", "message": {"role": "bashExecution", "command": "cargo test"}})
+            ),
             "$ cargo test"
         );
         assert_eq!(
-            tree_node_summary(&json!({"type": "model_change", "provider": "anthropic", "modelId": "claude-sonnet-4-5"})),
+            tree_node_summary(
+                &json!({"type": "model_change", "provider": "anthropic", "modelId": "claude-sonnet-4-5"})
+            ),
             "model → anthropic/claude-sonnet-4-5"
         );
         assert_eq!(
             tree_node_summary(&json!({"type": "thinking_level_change", "thinkingLevel": "high"})),
             "thinking → high"
         );
-        assert_eq!(tree_node_summary(&json!({"type": "compaction"})), "context compacted");
+        assert_eq!(
+            tree_node_summary(&json!({"type": "compaction"})),
+            "context compacted"
+        );
         assert_eq!(
             tree_node_summary(&json!({"type": "session_info", "name": "my-feature"})),
             "renamed: my-feature"
@@ -1727,7 +1839,9 @@ mod tree_tests {
     #[test]
     fn long_user_message_is_elided() {
         let long = "a ".repeat(60);
-        let summary = tree_node_summary(&json!({"type": "message", "message": {"role": "user", "content": long}}));
+        let summary = tree_node_summary(
+            &json!({"type": "message", "message": {"role": "user", "content": long}}),
+        );
         assert!(summary.ends_with('…'));
         assert!(summary.chars().count() <= 71);
     }
@@ -2077,7 +2191,10 @@ mod hydrate_tests {
         assert!(!specs[2].first);
         assert_eq!(specs[0].text, "hello");
         assert_eq!(specs[1].text, "pondering");
-        assert!(!specs[1].running, "hydrated thinking is never still-running");
+        assert!(
+            !specs[1].running,
+            "hydrated thinking is never still-running"
+        );
     }
 
     #[test]
@@ -2089,7 +2206,10 @@ mod hydrate_tests {
         })];
         let specs = hydrate_rowspecs(&messages, false);
         assert_eq!(specs.len(), 3, "prose, code, prose");
-        assert!(specs.iter().all(|s| s.raw == text), "every segment shares the full block");
+        assert!(
+            specs.iter().all(|s| s.raw == text),
+            "every segment shares the full block"
+        );
         assert!(specs[0].first);
         assert!(!specs[1].first);
         assert!(!specs[2].first);
@@ -2198,7 +2318,11 @@ mod hydrate_tests {
             ]
         })];
         let specs = hydrate_rowspecs(&messages, false);
-        assert!(specs[0].text.contains("1 image"), "text was {:?}", specs[0].text);
+        assert!(
+            specs[0].text.contains("1 image"),
+            "text was {:?}",
+            specs[0].text
+        );
     }
 
     #[test]
@@ -2227,6 +2351,9 @@ mod hydrate_tests {
         let kinds: Vec<&str> = specs.iter().map(|s| s.kind).collect();
         assert_eq!(kinds, vec!["user", "thinking", "tool", "prose"]);
         assert!(!specs[2].running);
-        assert!(specs[3].first, "second assistant message starts a new group");
+        assert!(
+            specs[3].first,
+            "second assistant message starts a new group"
+        );
     }
 }

@@ -6,8 +6,8 @@
 
 mod attach;
 mod backend;
-mod density;
 mod demo_sessions;
+mod density;
 mod highlight;
 mod palette;
 mod segmenter;
@@ -107,7 +107,9 @@ fn main() -> anyhow::Result<()> {
         });
         let tx = cmd_tx.clone();
         app.on_project_selected(move |path| {
-            let _ = tx.send(UiCmd::SwitchProject(std::path::PathBuf::from(path.as_str())));
+            let _ = tx.send(UiCmd::SwitchProject(std::path::PathBuf::from(
+                path.as_str(),
+            )));
         });
         let tx = cmd_tx.clone();
         app.on_new_session(move || {
@@ -215,16 +217,40 @@ fn main() -> anyhow::Result<()> {
     spawn_delayed_cmd(&rt, &cmd_tx, "SLINTY_SWITCH_PROJECT_AFTER", |p| {
         UiCmd::SwitchProject(std::path::PathBuf::from(p))
     });
-    spawn_delayed_cmd(&rt, &cmd_tx, "SLINTY_SWITCH_SESSION_AFTER", UiCmd::SwitchSession);
-    spawn_delayed_cmd(&rt, &cmd_tx, "SLINTY_SIDEBAR_SEARCH_AFTER", UiCmd::SidebarSearch);
-    spawn_delayed_cmd(&rt, &cmd_tx, "SLINTY_DELETE_SESSION_AFTER", UiCmd::DeleteSession);
-    spawn_delayed_cmd(&rt, &cmd_tx, "SLINTY_NEW_SESSION_AFTER", |_| UiCmd::NewSession);
+    spawn_delayed_cmd(
+        &rt,
+        &cmd_tx,
+        "SLINTY_SWITCH_SESSION_AFTER",
+        UiCmd::SwitchSession,
+    );
+    spawn_delayed_cmd(
+        &rt,
+        &cmd_tx,
+        "SLINTY_SIDEBAR_SEARCH_AFTER",
+        UiCmd::SidebarSearch,
+    );
+    spawn_delayed_cmd(
+        &rt,
+        &cmd_tx,
+        "SLINTY_DELETE_SESSION_AFTER",
+        UiCmd::DeleteSession,
+    );
+    spawn_delayed_cmd(&rt, &cmd_tx, "SLINTY_NEW_SESSION_AFTER", |_| {
+        UiCmd::NewSession
+    });
     spawn_delayed_cmd(&rt, &cmd_tx, "SLINTY_OPEN_TREE_AFTER", |_| UiCmd::OpenTree);
     spawn_delayed_cmd(&rt, &cmd_tx, "SLINTY_FORK_FROM_AFTER", UiCmd::ForkFrom);
     // Same as SLINTY_DEMO_AUTOSEND but for the real (non-demo) backend.
     spawn_delayed_cmd(&rt, &cmd_tx, "SLINTY_SEND_AFTER", UiCmd::Send);
-    spawn_delayed_cmd(&rt, &cmd_tx, "SLINTY_OPEN_PALETTE_AFTER", |_| UiCmd::OpenPalette);
-    spawn_delayed_cmd(&rt, &cmd_tx, "SLINTY_PALETTE_QUERY_AFTER", UiCmd::PaletteQuery);
+    spawn_delayed_cmd(&rt, &cmd_tx, "SLINTY_OPEN_PALETTE_AFTER", |_| {
+        UiCmd::OpenPalette
+    });
+    spawn_delayed_cmd(
+        &rt,
+        &cmd_tx,
+        "SLINTY_PALETTE_QUERY_AFTER",
+        UiCmd::PaletteQuery,
+    );
     // Bypasses the native file dialog, which (like screenshots and
     // keystrokes) has no display to run against in a headless/test launch.
     spawn_delayed_cmd(&rt, &cmd_tx, "SLINTY_ATTACH_AFTER", |p| {
@@ -236,9 +262,14 @@ fn main() -> anyhow::Result<()> {
     // Palette exec dispatch (session/command/action routing) is also
     // UI-only until it reaches `cmd_tx` inside `on_palette_exec`, so it's
     // driven the same way, via the real `palette-exec` callback.
-    spawn_delayed_invoke(&rt, app.as_weak(), "SLINTY_PALETTE_EXEC_AFTER", |app, id| {
-        app.invoke_palette_exec(id.as_str().into());
-    });
+    spawn_delayed_invoke(
+        &rt,
+        app.as_weak(),
+        "SLINTY_PALETTE_EXEC_AFTER",
+        |app, id| {
+            app.invoke_palette_exec(id.as_str().into());
+        },
+    );
 
     // Keep the highlighter's theme choice and the code-card background in
     // sync with the OS color scheme. Code cards use the syntect theme's own
