@@ -12,7 +12,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use slint::{Model, ModelRc, SharedString, StyledText, VecModel, Weak};
+use slint::{Color, Model, ModelRc, SharedString, StyledText, VecModel, Weak};
 use tokio::sync::mpsc;
 
 use pi_rpc::{
@@ -23,8 +23,11 @@ use pi_rpc::{
 use crate::attach;
 use crate::demo_sessions;
 use crate::palette;
-use crate::segmenter::{segment_markdown, Segment};
-use crate::{highlight, AppWindow, PaletteRow, QueueItem, Row, SessionRow, TreeRow};
+use crate::segmenter::{self, segment_markdown, Segment};
+use crate::{
+    highlight, AppWindow, CodeLine, ColoredSpan, PaletteRow, QueueItem, Row, SessionRow, TableCell,
+    TableColumn, TreeRow,
+};
 
 const TEXT_FLUSH: Duration = Duration::from_millis(33);
 const TOOL_FLUSH: Duration = Duration::from_millis(100);
@@ -77,10 +80,9 @@ pub enum UiCmd {
 #[derive(Debug, Clone, Default)]
 struct RowSpec {
     kind: &'static str,
-    /// Markdown for the styled field (prose, or colored code markdown).
+    /// Markdown for the styled field (prose only; code and tables render
+    /// through `code_lines`/`table_columns` instead).
     markdown: Option<String>,
-    /// Plain-text fallback if `markdown` fails to parse (raw code).
-    fallback: Option<String>,
     text: String,
     lang: String,
     level: i32,
@@ -94,6 +96,10 @@ struct RowSpec {
     /// than any one rendered/segmented piece of it. Empty where a group
     /// copy isn't offered (thinking/tool/info rows).
     raw: String,
+    /// "code" rows: per-line, per-span highlighted content.
+    code_lines: Vec<highlight::CodeLine>,
+    /// "table" rows: column-major cells.
+    table_columns: Vec<segmenter::TableColumn>,
 }
 
 impl RowSpec {
@@ -107,11 +113,45 @@ impl RowSpec {
 
     fn to_row(&self) -> Row {
         let styled = match &self.markdown {
-            Some(md) => StyledText::from_markdown(md).unwrap_or_else(|_| {
-                StyledText::from_plain_text(self.fallback.as_deref().unwrap_or(md))
-            }),
+            Some(md) => {
+                StyledText::from_markdown(md).unwrap_or_else(|_| StyledText::from_plain_text(md))
+            }
             None => StyledText::default(),
         };
+        let code_lines: Vec<CodeLine> = self
+            .code_lines
+            .iter()
+            .map(|line| {
+                let spans: Vec<ColoredSpan> = line
+                    .spans
+                    .iter()
+                    .map(|s| ColoredSpan {
+                        text: s.text.as_str().into(),
+                        color: Color::from_rgb_u8(s.color.0, s.color.1, s.color.2),
+                    })
+                    .collect();
+                CodeLine {
+                    spans: ModelRc::new(VecModel::from(spans)),
+                }
+            })
+            .collect();
+        let table_columns: Vec<TableColumn> = self
+            .table_columns
+            .iter()
+            .map(|col| {
+                let cells: Vec<TableCell> = col
+                    .cells
+                    .iter()
+                    .map(|c| TableCell {
+                        text: c.text.as_str().into(),
+                        header: c.header,
+                    })
+                    .collect();
+                TableColumn {
+                    cells: ModelRc::new(VecModel::from(cells)),
+                }
+            })
+            .collect();
         Row {
             kind: self.kind.into(),
             styled,
@@ -124,6 +164,8 @@ impl RowSpec {
             elapsed: self.elapsed.as_str().into(),
             first: self.first,
             raw: self.raw.as_str().into(),
+            code_lines: ModelRc::new(VecModel::from(code_lines)),
+            table_columns: ModelRc::new(VecModel::from(table_columns)),
         }
     }
 }
@@ -704,10 +746,16 @@ fn spec_for_segment(segment: &Segment, first: bool, dark: bool, raw: &str) -> Ro
         },
         Segment::Code { lang, code } => RowSpec {
             kind: "code",
-            markdown: Some(highlight::code_markdown(code, lang, dark)),
-            fallback: Some(code.clone()),
+            code_lines: highlight::highlight_lines(code, lang, dark),
             text: code.clone(),
             lang: lang.clone(),
+            first,
+            raw,
+            ..RowSpec::default()
+        },
+        Segment::Table(columns) => RowSpec {
+            kind: "table",
+            table_columns: columns.clone(),
             first,
             raw,
             ..RowSpec::default()
@@ -2049,8 +2097,13 @@ fn main() {\n\
     println!(\"{greeting}\");\n\
 }\n\
 ```\n\n\
-And a closing paragraph after the code block to verify segment ordering \
-holds up while chunks arrive mid-token. ";
+A paragraph between the code block and a table, to verify segment ordering \
+holds up while chunks arrive mid-token.\n\n\
+| Language | Highlight |\n\
+| --- | --- |\n\
+| Rust | syntect spans |\n\
+| Markdown | tables |\n\n\
+And a closing paragraph after the table. ";
 
 pub async fn demo_backend(
     weak: Weak<AppWindow>,

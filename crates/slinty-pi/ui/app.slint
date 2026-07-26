@@ -3,11 +3,30 @@ import { Sidebar, SessionRow } from "sidebar.slint";
 import { TreeOverlay, TreeRow } from "tree.slint";
 import { CommandPalette, PaletteRow } from "palette.slint";
 
+export struct TableCell {
+    text: string,
+    header: bool,
+}
+
+export struct TableColumn {
+    cells: [TableCell],
+}
+
+export struct ColoredSpan {
+    text: string,
+    color: color,
+}
+
+export struct CodeLine {
+    spans: [ColoredSpan],
+}
+
 // One transcript row. Assistant messages are segmented (prose / heading /
-// code) into several rows; user/thinking/tool/info/error are single rows.
+// code / table) into several rows; user/thinking/tool/info/error are single
+// rows.
 export struct Row {
-    kind: string,        // "user"|"prose"|"heading"|"code"|"thinking"|"tool"|"info"|"error"
-    styled: styled-text, // prose and highlighted code content
+    kind: string,        // "user"|"prose"|"heading"|"code"|"table"|"thinking"|"tool"|"info"|"error"
+    styled: styled-text, // prose content
     text: string,        // user text / heading text / tool summary / thinking text / raw code (copy source)
     lang: string,        // code language label
     level: int,          // heading level
@@ -19,6 +38,8 @@ export struct Row {
     raw: string,         // full source markdown of the enclosing message/text
                          // block, shared by every row segmented out of it;
                          // "" where no group copy is offered
+    code-lines: [CodeLine],       // "code" rows: per-line, per-span highlighted content
+    table-columns: [TableColumn], // "table" rows: column-major cells
 }
 
 export struct QueueItem {
@@ -43,7 +64,7 @@ global Style {
             return true;
         }
         if (density == 2) {
-            return kind == "user" || kind == "prose" || kind == "heading" || kind == "code";
+            return kind == "user" || kind == "prose" || kind == "heading" || kind == "code" || kind == "table";
         }
         return true;
     }
@@ -210,14 +231,58 @@ component CodeRow inherits Rectangle {
                 copy-requested(t) => { root.copy-requested(t); }
             }
         }
-        HorizontalLayout {
+        VerticalLayout {
             padding: 12px;
             padding-top: 2px;
-            StyledText {
-                text: entry.styled;
-                default-font-family: Style.mono-font;
-                default-font-size: 12.5px;
-                default-color: Palette.foreground;
+            for line in entry.code-lines: HorizontalLayout {
+                alignment: start;
+                // Keeps blank lines at full line-height instead of collapsing.
+                if line.spans.length == 0: Text {
+                    text: " ";
+                    font-family: Style.mono-font;
+                    font-size: 12.5px;
+                }
+                for span in line.spans: Text {
+                    text: span.text;
+                    color: span.color;
+                    font-family: Style.mono-font;
+                    font-size: 12.5px;
+                }
+            }
+        }
+    }
+}
+
+component TableBlock inherits Rectangle {
+    in property <[TableColumn]> columns;
+
+    background: Style.card;
+    border-radius: Style.radius;
+    border-width: 1px;
+    border-color: Style.hairline;
+    clip: true;
+
+    HorizontalLayout {
+        padding: 1px;
+        spacing: 1px;
+        for column in columns: Rectangle {
+            horizontal-stretch: 1;
+            background: Style.hairline;
+            VerticalLayout {
+                spacing: 1px;
+                for cell in column.cells: Rectangle {
+                    background: cell.header ? Style.card.darker(4%) : Style.card;
+                    VerticalLayout {
+                        padding: 8px;
+                        Text {
+                            text: cell.text;
+                            font-size: 12.5px;
+                            font-weight: cell.header ? 700 : 400;
+                            color: Palette.foreground;
+                            wrap: word-wrap;
+                        }
+                    }
+                }
             }
         }
     }
@@ -509,6 +574,9 @@ export component AppWindow inherits Window {
                             entry: entry;
                             bg: root.code-background;
                             copy-requested(t) => { root.copy-text(t); }
+                        }
+                        if row-shown && entry.kind == "table": TableBlock {
+                            columns: entry.table-columns;
                         }
                         if row-shown && entry.kind == "thinking": ThinkingRow { entry: entry; }
                         if row-shown && entry.kind == "tool": ToolRow { entry: entry; force-expanded: root.density == 0; }
