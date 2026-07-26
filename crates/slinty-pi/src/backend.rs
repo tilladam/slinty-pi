@@ -51,6 +51,10 @@ pub enum UiCmd {
     /// the currently-open session, starts a new one so the child keeps
     /// working against a file that still exists.
     DeleteSession(String),
+    /// Set the active session's display name (`set_session_name` has no
+    /// path argument — it always applies to the session the single live
+    /// child currently has open).
+    RenameSession(String),
     /// Sidebar search box changed; re-filter the session list.
     SidebarSearch(String),
     /// Fetch and display the active session's branch tree.
@@ -318,16 +322,17 @@ impl Ui {
         });
     }
 
-    /// `rows` are `(path, title, relative_time, active)`.
-    fn set_sidebar_sessions(&self, rows: Vec<(String, String, String, bool)>) {
+    /// `rows` are `(path, title, relative_time, active, cost)`.
+    fn set_sidebar_sessions(&self, rows: Vec<(String, String, String, bool, String)>) {
         self.with_app(move |app| {
             let rows: Vec<SessionRow> = rows
                 .into_iter()
-                .map(|(path, title, relative_time, active)| SessionRow {
+                .map(|(path, title, relative_time, active, cost)| SessionRow {
                     path: path.as_str().into(),
                     title: title.as_str().into(),
                     relative_time: relative_time.as_str().into(),
                     active,
+                    cost: cost.as_str().into(),
                 })
                 .collect();
             app.set_sidebar_sessions(ModelRc::new(VecModel::from(rows)));
@@ -1115,6 +1120,7 @@ impl Sidebar {
                     m.title().to_string(),
                     relative_time(&m.last_timestamp),
                     is_active,
+                    format_cost(m.total_cost),
                 )
             })
             .collect();
@@ -1131,6 +1137,16 @@ async fn active_session_path(client: &PiClient) -> Option<String> {
         .get("sessionFile")
         .and_then(|v| v.as_str())
         .map(str::to_string)
+}
+
+/// Sidebar cost label, e.g. "$0.0231". `""` (rendered as no label at all)
+/// below half a cent — mainly for local models, where cost is always 0.
+fn format_cost(total_cost: f64) -> String {
+    if total_cost < 0.005 {
+        String::new()
+    } else {
+        format!("${total_cost:.2}")
+    }
 }
 
 fn relative_time(iso_timestamp: &str) -> String {
@@ -1150,6 +1166,23 @@ fn relative_time(iso_timestamp: &str) -> String {
         format!("{}d", secs / 86400)
     } else {
         format!("{}w", secs / (86400 * 7))
+    }
+}
+
+#[cfg(test)]
+mod format_cost_tests {
+    use super::format_cost;
+
+    #[test]
+    fn zero_and_near_zero_cost_yields_empty_label() {
+        assert_eq!(format_cost(0.0), "");
+        assert_eq!(format_cost(0.001), "");
+    }
+
+    #[test]
+    fn non_trivial_cost_is_formatted_as_dollars() {
+        assert_eq!(format_cost(0.0231), "$0.02");
+        assert_eq!(format_cost(1.5), "$1.50");
     }
 }
 
@@ -1405,6 +1438,12 @@ async fn run_session(
                     }
                     UiCmd::DeleteSession(path) => {
                         delete_session(client, transcript, sidebar, &path).await;
+                    }
+                    UiCmd::RenameSession(name) => {
+                        if let Err(e) = client.set_session_name(name).await {
+                            transcript.note("error", format!("could not rename session: {e}"));
+                        }
+                        sidebar.refresh_sessions(client, &transcript.ui).await;
                     }
                     UiCmd::SidebarSearch(query) => {
                         sidebar.query = query;
@@ -2168,7 +2207,10 @@ pub async fn demo_backend(
                 sidebar.refresh_sessions_with_active(current_session.as_deref(), &transcript.ui);
                 continue;
             }
-            UiCmd::NewSession | UiCmd::SwitchProject(_) | UiCmd::DeleteSession(_) => {
+            UiCmd::NewSession
+            | UiCmd::SwitchProject(_)
+            | UiCmd::DeleteSession(_)
+            | UiCmd::RenameSession(_) => {
                 transcript.note("info", "not available in demo mode");
                 continue;
             }

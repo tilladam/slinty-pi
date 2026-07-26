@@ -453,6 +453,7 @@ export component AppWindow inherits Window {
     callback new-session();
     callback resume-session(string);
     callback delete-session(string);
+    callback rename-session(string);
     callback sidebar-search-edited(string);
     callback open-tree();
     callback fork-from(string);
@@ -500,10 +501,12 @@ export component AppWindow inherits Window {
             project-index <=> root.project-index;
             current-project-name: root.current-project-name;
             sessions: root.sidebar-sessions;
+            streaming: root.streaming;
             project-selected(path) => { root.project-selected(path); }
             new-session => { root.new-session(); }
             resume-session(path) => { root.resume-session(path); }
             delete-session(path) => { root.delete-session(path); }
+            rename-session(name) => { root.rename-session(name); }
             search-edited(q) => { root.sidebar-search-edited(q); }
         }
 

@@ -124,6 +124,10 @@ fn main() -> anyhow::Result<()> {
             let _ = tx.send(UiCmd::DeleteSession(path.to_string()));
         });
         let tx = cmd_tx.clone();
+        app.on_rename_session(move |name| {
+            let _ = tx.send(UiCmd::RenameSession(name.to_string()));
+        });
+        let tx = cmd_tx.clone();
         app.on_sidebar_search_edited(move |query| {
             let _ = tx.send(UiCmd::SidebarSearch(query.to_string()));
         });
@@ -234,6 +238,12 @@ fn main() -> anyhow::Result<()> {
         &cmd_tx,
         "SLINTY_DELETE_SESSION_AFTER",
         UiCmd::DeleteSession,
+    );
+    spawn_delayed_cmd(
+        &rt,
+        &cmd_tx,
+        "SLINTY_RENAME_SESSION_AFTER",
+        UiCmd::RenameSession,
     );
     spawn_delayed_cmd(&rt, &cmd_tx, "SLINTY_NEW_SESSION_AFTER", |_| {
         UiCmd::NewSession

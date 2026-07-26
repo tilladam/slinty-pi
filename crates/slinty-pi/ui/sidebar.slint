@@ -5,6 +5,7 @@ export struct SessionRow {
     title: string,
     relative-time: string,
     active: bool,
+    cost: string,
 }
 
 component DeleteButton inherits Rectangle {
@@ -43,10 +44,45 @@ component DeleteButton inherits Rectangle {
     }
 }
 
+component RenameButton inherits Rectangle {
+    callback clicked();
+
+    width: 20px;
+    height: 20px;
+    border-radius: 5px;
+    background: touch.has-hover ? Palette.alternate-background.darker(10%) : transparent;
+
+    Text {
+        text: "✎";
+        font-size: 11px;
+        color: Palette.foreground.transparentize(0.4);
+    }
+    touch := TouchArea {
+        clicked => { root.clicked(); }
+    }
+}
+
+// Pulsing dot marking the sidebar row of the one session that can ever be
+// "live" in v1's single-child process model (see PRODUCT_PLAN's process
+// model note): the active session while it's streaming a turn.
+component LiveDot inherits Rectangle {
+    width: 6px;
+    height: 6px;
+    border-radius: 3px;
+    background: Palette.accent-background;
+    opacity: 0.35 + 0.65 * Math.abs(Math.sin((animation-tick() / 900ms) * 360deg));
+}
+
 component SessionRowItem inherits Rectangle {
     in property <SessionRow> entry;
+    in property <bool> live: false;
+    property <bool> renaming: false;
     callback resume();
     callback delete();
+    // Only ever fired for the active row: `set_session_name` (like `clone`)
+    // has no path argument, it renames whatever session the single live
+    // child currently has open.
+    callback rename(string);
 
     height: 38px;
     border-radius: 6px;
@@ -54,7 +90,7 @@ component SessionRowItem inherits Rectangle {
         : touch.has-hover ? Palette.alternate-background : transparent;
 
     touch := TouchArea {
-        clicked => { root.resume(); }
+        clicked => { if (!root.renaming) { root.resume(); } }
     }
     HorizontalLayout {
         padding-left: 9px;
@@ -63,17 +99,50 @@ component SessionRowItem inherits Rectangle {
         VerticalLayout {
             alignment: center;
             spacing: 1px;
-            Text {
-                text: entry.title == "" ? "(untitled)" : entry.title;
-                font-size: 12.5px;
-                font-weight: entry.active ? 700 : 400;
-                color: Palette.foreground;
-                overflow: elide;
+            HorizontalLayout {
+                spacing: 5px;
+                alignment: start;
+                if root.live: LiveDot { }
+                if !root.renaming: Text {
+                    text: entry.title == "" ? "(untitled)" : entry.title;
+                    font-size: 12.5px;
+                    font-weight: entry.active ? 700 : 400;
+                    color: Palette.foreground;
+                    overflow: elide;
+                }
+                if root.renaming: LineEdit {
+                    text: entry.title;
+                    font-size: 12.5px;
+                    horizontal-stretch: 1;
+                    init => { self.select-all(); self.focus(); }
+                    accepted(text) => {
+                        root.renaming = false;
+                        if (text != "" && text != entry.title) {
+                            root.rename(text);
+                        }
+                    }
+                    changed has-focus => {
+                        if (!self.has-focus) {
+                            root.renaming = false;
+                        }
+                    }
+                }
+                if entry.active && !root.renaming && touch.has-hover: RenameButton {
+                    clicked => { root.renaming = true; }
+                }
             }
-            Text {
-                text: entry.relative-time;
-                font-size: 10px;
-                color: Palette.foreground.transparentize(0.5);
+            HorizontalLayout {
+                spacing: 4px;
+                Text {
+                    text: entry.relative-time;
+                    font-size: 10px;
+                    color: Palette.foreground.transparentize(0.5);
+                }
+                if entry.cost != "": Text {
+                    text: "· " + entry.cost;
+                    font-size: 10px;
+                    color: Palette.foreground.transparentize(0.5);
+                }
             }
         }
         Rectangle { horizontal-stretch: 1; }
@@ -89,11 +158,13 @@ export component Sidebar inherits Rectangle {
     in-out property <int> project-index: -1;
     in property <string> current-project-name: "";
     in property <[SessionRow]> sessions: [];
+    in property <bool> streaming: false;
 
     callback project-selected(string);
     callback new-session();
     callback resume-session(string);
     callback delete-session(string);
+    callback rename-session(string);
     callback search-edited(string);
 
     width: 240px;
@@ -139,8 +210,10 @@ export component Sidebar inherits Rectangle {
             ListView {
                 for entry in root.sessions: SessionRowItem {
                     entry: entry;
+                    live: entry.active && root.streaming;
                     resume => { root.resume-session(entry.path); }
                     delete => { root.delete-session(entry.path); }
+                    rename(name) => { root.rename-session(name); }
                 }
             }
             if root.sessions.length == 0: Text {
