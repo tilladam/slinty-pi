@@ -1137,6 +1137,9 @@ pub async fn pi_backend(
     let ui = Ui::new(weak, dark);
     let mut transcript = Transcript::new(ui);
     let mut sidebar = Sidebar::new();
+    // Started once for the app's lifetime: the sessions root doesn't change
+    // across project switches, only `cwd` does.
+    let mut sessions_changed = spawn_sessions_watcher(sidebar.sessions_root.as_deref());
     let mut cwd = std::env::current_dir().ok();
     // A session picker lands with the sidebar (M2); until then, resuming a
     // specific session on startup is reachable for testing/scripting via env
@@ -1184,7 +1187,16 @@ pub async fn pi_backend(
         sidebar.refresh_projects(&transcript.ui);
         sidebar.refresh_sessions(&client, &transcript.ui).await;
 
-        match run_session(&client, events, &mut cmd_rx, &mut transcript, &mut sidebar).await {
+        match run_session(
+            &client,
+            events,
+            &mut cmd_rx,
+            &mut sessions_changed,
+            &mut transcript,
+            &mut sidebar,
+        )
+        .await
+        {
             SessionOutcome::SwitchProject(path) => {
                 cwd = Some(path);
             }
@@ -1193,6 +1205,35 @@ pub async fn pi_backend(
         // `client` drops here; `kill_on_drop` reaps the old child before the
         // next loop iteration spawns its replacement.
     }
+}
+
+/// Bridges `pi_sessions::watch`'s blocking `std::sync::mpsc` channel onto the
+/// tokio runtime, so `run_session`'s `select!` can treat "something changed
+/// on disk" like any other event source (a dedicated OS thread just forwards
+/// each signal). Returns a receiver that never fires if `root` is `None` or
+/// the watcher fails to start (e.g. exhausted OS watch handles) — sessions
+/// still refresh on every UI-driven action, so this is a liveness nicety,
+/// not a correctness requirement.
+fn spawn_sessions_watcher(root: Option<&Path>) -> mpsc::UnboundedReceiver<()> {
+    let (tx, rx) = mpsc::unbounded_channel();
+    let Some(root) = root.map(Path::to_path_buf) else {
+        return rx;
+    };
+    std::thread::spawn(move || {
+        let Some(watcher) = pi_sessions::watch(&root) else {
+            tracing::warn!(
+                root = %root.display(),
+                "could not start a sessions-directory watcher; sidebar won't auto-refresh on sessions created by other processes"
+            );
+            return;
+        };
+        while watcher.changed.recv().is_ok() {
+            if tx.send(()).is_err() {
+                break;
+            }
+        }
+    });
+    rx
 }
 
 /// Drain commands while there is no running child (e.g. spawn failed),
@@ -1214,6 +1255,7 @@ async fn run_session(
     client: &PiClient,
     mut events: mpsc::UnboundedReceiver<Event>,
     cmd_rx: &mut mpsc::UnboundedReceiver<UiCmd>,
+    sessions_changed: &mut mpsc::UnboundedReceiver<()>,
     transcript: &mut Transcript,
     sidebar: &mut Sidebar,
 ) -> SessionOutcome {
@@ -1224,6 +1266,10 @@ async fn run_session(
     // (display name, encoded image) pairs queued for the next non-streaming
     // `Send`.
     let mut pending_images: Vec<(String, ImageContent)> = Vec::new();
+    // Guards the `sessions_changed` branch below: an unbounded receiver keeps
+    // returning `Ready(None)` forever once its sender drops, which would
+    // otherwise spin the select loop hot.
+    let mut watcher_alive = true;
 
     loop {
         tokio::select! {
@@ -1374,6 +1420,17 @@ async fn run_session(
                 if let Event::ExtensionUiRequest(req) = &event {
                     handle_extension_ui(client, transcript, req);
                 }
+            }
+            changed = sessions_changed.recv(), if watcher_alive => {
+                if changed.is_none() {
+                    watcher_alive = false;
+                    continue;
+                }
+                // Picks up sessions created or renamed by other processes
+                // (most notably pi's own TUI) sharing this sessions root.
+                tracing::debug!("sessions watcher: change detected, refreshing sidebar");
+                sidebar.refresh_projects(&transcript.ui);
+                sidebar.refresh_sessions(client, &transcript.ui).await;
             }
         }
     }

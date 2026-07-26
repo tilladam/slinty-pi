@@ -7,6 +7,7 @@
 mod scan;
 mod tree;
 pub mod types;
+mod watch;
 
 pub use scan::{
     decode_project_dir, default_sessions_root, encode_project_dir, list_projects, list_sessions,
@@ -14,3 +15,4 @@ pub use scan::{
 };
 pub use tree::{load_session, SessionTree};
 pub use types::{EntryKind, SessionEntry, SessionHeader};
+pub use watch::{watch, SessionsWatcher};
