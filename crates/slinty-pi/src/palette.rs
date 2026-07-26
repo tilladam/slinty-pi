@@ -29,6 +29,11 @@ const ACTIONS: &[(&str, &str, &str)] = &[
         "browse and fork from any point",
     ),
     (
+        "action:clone-session",
+        "Clone session",
+        "duplicate this session at the current point",
+    ),
+    (
         "action:cycle-density",
         "Cycle density",
         "Verbose / Normal / Summary",

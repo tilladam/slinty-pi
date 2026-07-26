@@ -61,6 +61,9 @@ pub enum UiCmd {
     OpenTree,
     /// Fork the active session from a prior user message (by entry id).
     ForkFrom(String),
+    /// Duplicate the active session's active branch into a new session file
+    /// at the current point, and switch the live child to it.
+    CloneSession,
     /// Build the full palette entry list (sessions + pi commands; app
     /// actions are static and added client-side) and rank it against an
     /// empty query. Execution is dispatched directly in `main.rs`, not
@@ -1459,6 +1462,10 @@ async fn run_session(
                         fork_from(client, transcript, &entry_id).await;
                         sidebar.refresh_sessions(client, &transcript.ui).await;
                     }
+                    UiCmd::CloneSession => {
+                        clone_session(client, transcript).await;
+                        sidebar.refresh_sessions(client, &transcript.ui).await;
+                    }
                     UiCmd::OpenPalette => {
                         let sessions = sidebar
                             .session_dir()
@@ -1572,6 +1579,26 @@ async fn resume_session(client: &PiClient, transcript: &mut Transcript, session_
         }
         Err(e) => {
             transcript.note("error", format!("could not switch session: {e}"));
+            return;
+        }
+    }
+    hydrate_active_session(client, transcript).await;
+}
+
+/// Duplicate the active session's active branch into a new session file at
+/// the current point. pi rebinds the running child to the new file on
+/// success (same as `switch_session`), so this hydrates from it just like
+/// [`resume_session`] does.
+async fn clone_session(client: &PiClient, transcript: &mut Transcript) {
+    match client.clone_session().await {
+        Ok(data) => {
+            if data.get("cancelled").and_then(|v| v.as_bool()) == Some(true) {
+                transcript.note("info", "clone cancelled by an extension".to_string());
+                return;
+            }
+        }
+        Err(e) => {
+            transcript.note("error", format!("could not clone session: {e}"));
             return;
         }
     }
@@ -2210,7 +2237,8 @@ pub async fn demo_backend(
             UiCmd::NewSession
             | UiCmd::SwitchProject(_)
             | UiCmd::DeleteSession(_)
-            | UiCmd::RenameSession(_) => {
+            | UiCmd::RenameSession(_)
+            | UiCmd::CloneSession => {
                 transcript.note("info", "not available in demo mode");
                 continue;
             }

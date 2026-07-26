@@ -184,6 +184,9 @@ fn main() -> anyhow::Result<()> {
                     "open-tree" => {
                         let _ = tx.send(UiCmd::OpenTree);
                     }
+                    "clone-session" => {
+                        let _ = tx.send(UiCmd::CloneSession);
+                    }
                     "abort" => {
                         let _ = tx.send(UiCmd::Abort);
                     }
