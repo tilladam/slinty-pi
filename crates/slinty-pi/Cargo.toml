@@ -44,6 +44,10 @@ rfd = "0.17.2"
 # attach.rs's doc comment.
 i-slint-backend-winit = { path = "/Users/till/Code/Rust/slint/slint/internal/backends/winit" }
 winit = "0.30"
+reqwest = { version = "0.13.4", default-features = false, features = ["json", "rustls", "stream", "query"] }
+sysinfo = "0.39.6"
+serde = { workspace = true, features = ["derive"] }
+thiserror.workspace = true
 
 [build-dependencies]
 # Must match the `slint` runtime's source exactly (same reasoning as above) —

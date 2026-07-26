@@ -9,6 +9,8 @@ mod backend;
 mod demo_sessions;
 mod density;
 mod highlight;
+#[allow(dead_code)] // foundation landed ahead of the models panel that will use it
+mod local;
 mod palette;
 mod segmenter;
 

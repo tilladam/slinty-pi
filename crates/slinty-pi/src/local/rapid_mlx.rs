@@ -1,0 +1,594 @@
+//! Integration with [rapid-mlx](https://rapidmlx.com) (Apache-2.0, Apple
+//! Silicon M1+/macOS 14+): detection, CLI catalog parsing, and a managed
+//! `serve` child process lifecycle.
+//!
+//! Management is CLI-first, not HTTP: there is no documented `--json` flag
+//! (`rapid-mlx models --help` / `info --help` confirm no such option as of
+//! 0.11.0), so `models`, `models --cached`, `ps`, and `info <alias>` are
+//! parsed from rich-formatted human text. To stay robust against the
+//! renderer's column padding (verified live: a long alias can push a row's
+//! later columns past their header-aligned start, e.g.
+//! `qwen3-4b-instruct-2507-4bit` overflowing the `Alias` column in
+//! `models --cached`), every parser here counts whitespace-separated tokens
+//! rather than slicing by character column — every field in these tables is
+//! either a single token or, for `Size`/`Modified`, a token whose *count* is
+//! fixed (`"4.2 GiB"`, `"2d ago"`) even though its *position* isn't. Rows
+//! that don't fit the expected token count are skipped rather than
+//! misparsed; that's the tradeoff the M3 plan calls out for CLI-scraping.
+
+use std::collections::BTreeMap;
+use std::process::Stdio;
+use std::time::Duration;
+
+use tokio::io::{AsyncBufReadExt, BufReader, Lines};
+use tokio::process::{Child, ChildStdout, Command};
+
+pub const DEFAULT_BINARY: &str = "rapid-mlx";
+
+#[derive(Debug, thiserror::Error)]
+pub enum RapidMlxError {
+    #[error("failed to run rapid-mlx: {0}")]
+    Io(#[from] std::io::Error),
+    #[error("rapid-mlx command failed: {0}")]
+    Command(String),
+    #[error("rapid-mlx exited before its server became ready")]
+    ExitedBeforeReady,
+    #[error("timed out waiting for rapid-mlx to become ready")]
+    ReadyTimeout,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RunningServer {
+    pub pid: u32,
+    pub port: u16,
+    pub model: String,
+    pub uptime: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CatalogEntry {
+    pub alias: String,
+    pub tool_format: Option<String>,
+    pub reasoning_parser: Option<String>,
+    pub spec_decode: bool,
+    pub hybrid: bool,
+    pub suffix_tier: Option<String>,
+    pub dflash: Option<String>,
+    pub ddtree: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CachedModel {
+    pub alias: String,
+    pub hf_repo: String,
+    pub size_bytes: u64,
+    pub modified: String,
+}
+
+/// Per-alias profile from `rapid-mlx info <alias>` — only the first
+/// (top-level) box, keyed by its raw field labels ("Tool format",
+/// "Reasoning parser", "Spec decode", ...). The DFlash/DDTree eligibility
+/// boxes that follow share several of the same field labels, so parsing
+/// stops at the first box's closing rule to avoid overwriting them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AliasProfile {
+    pub model_path: Option<String>,
+    pub fields: BTreeMap<String, String>,
+}
+
+impl AliasProfile {
+    pub fn field(&self, key: &str) -> Option<&str> {
+        self.fields.get(key).map(String::as_str)
+    }
+
+    pub fn tool_format(&self) -> Option<&str> {
+        self.field("Tool format")
+    }
+
+    pub fn reasoning_parser(&self) -> Option<&str> {
+        self.field("Reasoning parser")
+    }
+
+    /// Fields here lead with a `✓`/`✗` glyph (e.g. `"✗ disabled (no
+    /// MTP/drafter trained)"`); `true` iff the glyph is `✓`.
+    pub fn spec_decode_enabled(&self) -> bool {
+        self.field("Spec decode")
+            .map(|v| v.trim_start().starts_with('✓'))
+            .unwrap_or(false)
+    }
+}
+
+pub struct RapidMlx {
+    binary: String,
+}
+
+impl Default for RapidMlx {
+    fn default() -> Self {
+        Self::new(DEFAULT_BINARY)
+    }
+}
+
+impl RapidMlx {
+    pub fn new(binary: impl Into<String>) -> Self {
+        Self {
+            binary: binary.into(),
+        }
+    }
+
+    /// `rapid-mlx --version`, e.g. `"rapid-mlx 0.11.0"`. `None` means the
+    /// binary isn't on PATH (or isn't rapid-mlx).
+    pub async fn version(&self) -> Option<String> {
+        let output = Command::new(&self.binary)
+            .arg("--version")
+            .output()
+            .await
+            .ok()?;
+        if !output.status.success() {
+            return None;
+        }
+        Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    }
+
+    pub async fn running_servers(&self) -> Result<Vec<RunningServer>, RapidMlxError> {
+        Ok(parse_ps(&self.run(&["ps"]).await?))
+    }
+
+    pub async fn catalog(&self) -> Result<Vec<CatalogEntry>, RapidMlxError> {
+        Ok(parse_catalog(&self.run(&["models"]).await?))
+    }
+
+    pub async fn cached_models(&self) -> Result<Vec<CachedModel>, RapidMlxError> {
+        Ok(parse_cached(&self.run(&["models", "--cached"]).await?))
+    }
+
+    pub async fn info(&self, alias: &str) -> Result<AliasProfile, RapidMlxError> {
+        let text = self.run(&["info", alias]).await?;
+        parse_info(&text)
+            .ok_or_else(|| RapidMlxError::Command(format!("unparseable `info` output for {alias}")))
+    }
+
+    async fn run(&self, args: &[&str]) -> Result<String, RapidMlxError> {
+        let output = Command::new(&self.binary).args(args).output().await?;
+        if !output.status.success() {
+            return Err(RapidMlxError::Command(
+                String::from_utf8_lossy(&output.stderr).trim().to_string(),
+            ));
+        }
+        Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+    }
+}
+
+fn is_rule(line: &str) -> bool {
+    let t = line.trim();
+    !t.is_empty() && t.chars().all(|c| c == '─' || c == '-')
+}
+
+fn none_if_dash(s: &str) -> Option<String> {
+    if s == "—" || s == "-" {
+        None
+    } else {
+        Some(s.to_string())
+    }
+}
+
+/// Lines between the line containing `header_marker` (the table's header
+/// row) and the next blank/rule line, skipping one rule line right after
+/// the header if present.
+fn extract_table_rows<'a>(output: &'a str, header_marker: &str) -> Vec<&'a str> {
+    let mut lines = output.lines();
+    for line in &mut lines {
+        if line.contains(header_marker) {
+            break;
+        }
+    }
+    let mut rest: Vec<&str> = lines.collect();
+    if rest.first().is_some_and(|l| is_rule(l)) {
+        rest.remove(0);
+    }
+    rest.into_iter()
+        .take_while(|l| !l.trim().is_empty() && !is_rule(l))
+        .collect()
+}
+
+fn parse_ps(output: &str) -> Vec<RunningServer> {
+    extract_table_rows(output, "PORT")
+        .into_iter()
+        .filter_map(|line| {
+            let mut tok = line.split_whitespace();
+            let pid = tok.next()?.parse().ok()?;
+            let port = tok.next()?.parse().ok()?;
+            let model = tok.next()?.to_string();
+            let uptime = tok.next().unwrap_or_default().to_string();
+            Some(RunningServer {
+                pid,
+                port,
+                model,
+                uptime,
+            })
+        })
+        .collect()
+}
+
+fn parse_catalog(output: &str) -> Vec<CatalogEntry> {
+    extract_table_rows(output, "Spec-Decode")
+        .into_iter()
+        .filter_map(|line| {
+            let tokens: Vec<&str> = line.split_whitespace().collect();
+            if tokens.len() != 7 && tokens.len() != 8 {
+                return None;
+            }
+            let hybrid = tokens.len() == 8;
+            Some(CatalogEntry {
+                alias: tokens[0].to_string(),
+                tool_format: none_if_dash(tokens[1]),
+                reasoning_parser: none_if_dash(tokens[2]),
+                spec_decode: tokens[3] == "✓",
+                hybrid,
+                suffix_tier: none_if_dash(tokens[4 + hybrid as usize]),
+                dflash: none_if_dash(tokens[tokens.len() - 2]),
+                ddtree: none_if_dash(tokens[tokens.len() - 1]),
+            })
+        })
+        .collect()
+}
+
+fn size_to_bytes(value: f64, unit: &str) -> Option<u64> {
+    let mult: f64 = match unit {
+        "B" => 1.0,
+        "KiB" => 1024.0,
+        "MiB" => 1024.0 * 1024.0,
+        "GiB" => 1024.0 * 1024.0 * 1024.0,
+        "TiB" => 1024.0 * 1024.0 * 1024.0 * 1024.0,
+        _ => return None,
+    };
+    Some((value * mult) as u64)
+}
+
+fn parse_cached(output: &str) -> Vec<CachedModel> {
+    extract_table_rows(output, "HF repo")
+        .into_iter()
+        .filter_map(|line| {
+            let tokens: Vec<&str> = line.split_whitespace().collect();
+            if tokens.len() != 6 || tokens[5] != "ago" {
+                return None;
+            }
+            let size_bytes = size_to_bytes(tokens[2].parse().ok()?, tokens[3])?;
+            Some(CachedModel {
+                alias: tokens[0].to_string(),
+                hf_repo: tokens[1].to_string(),
+                size_bytes,
+                modified: format!("{} {}", tokens[4], tokens[5]),
+            })
+        })
+        .collect()
+}
+
+fn parse_info(output: &str) -> Option<AliasProfile> {
+    let mut model_path = None;
+    let mut fields = BTreeMap::new();
+    let mut in_box = false;
+    for raw in output.lines() {
+        let line = raw.trim();
+        if line.starts_with('┌') {
+            in_box = true;
+            continue;
+        }
+        if line.starts_with('└') {
+            break; // only the first box; later boxes reuse field labels
+        }
+        if !in_box {
+            continue;
+        }
+        let Some(inner) = line.strip_prefix('│').and_then(|s| s.strip_suffix('│')) else {
+            continue;
+        };
+        let inner = inner.trim();
+        if inner.is_empty() || inner.chars().all(|c| c == '─') {
+            continue;
+        }
+        if let Some(rest) = inner.strip_prefix("Model:") {
+            model_path = Some(rest.trim().to_string());
+            continue;
+        }
+        if let Some((key, value)) = inner.split_once(':') {
+            fields.insert(key.trim().to_string(), value.trim().to_string());
+        }
+    }
+    if fields.is_empty() {
+        None
+    } else {
+        Some(AliasProfile { model_path, fields })
+    }
+}
+
+/// A supervised `rapid-mlx serve <model>` child (one model per process, per
+/// upstream's design — no hot-swap). Owning the process lets the app switch
+/// models by restarting it and surfacing that honestly as a restart, not a
+/// hot swap (see M3 plan risks).
+pub struct ManagedServer {
+    child: Child,
+    stdout_lines: Lines<BufReader<ChildStdout>>,
+}
+
+impl ManagedServer {
+    pub fn spawn(binary: &str, model: &str, port: u16) -> Result<Self, RapidMlxError> {
+        let mut child = Command::new(binary)
+            .arg("serve")
+            .arg(model)
+            .arg("--port")
+            .arg(port.to_string())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .kill_on_drop(true)
+            .spawn()?;
+        let stdout = child.stdout.take().expect("stdout piped");
+        Ok(Self {
+            child,
+            stdout_lines: BufReader::new(stdout).lines(),
+        })
+    }
+
+    /// Reads stdout lines until the `  Ready: http://...` marker (confirmed
+    /// against a live `rapid-mlx serve` run — it follows an earlier
+    /// "Starting server on ... (warming up)" line that is NOT the ready
+    /// signal), the process exits, or `timeout` elapses.
+    pub async fn wait_ready(&mut self, timeout: Duration) -> Result<(), RapidMlxError> {
+        let lines = &mut self.stdout_lines;
+        tokio::time::timeout(timeout, async move {
+            loop {
+                match lines.next_line().await? {
+                    Some(line) if line.trim_start().starts_with("Ready:") => return Ok(()),
+                    Some(_) => continue,
+                    None => return Err(RapidMlxError::ExitedBeforeReady),
+                }
+            }
+        })
+        .await
+        .unwrap_or(Err(RapidMlxError::ReadyTimeout))
+    }
+
+    /// Continue reading server log lines after `wait_ready` returns.
+    pub async fn next_log_line(&mut self) -> std::io::Result<Option<String>> {
+        self.stdout_lines.next_line().await
+    }
+
+    pub async fn shutdown(mut self) -> std::io::Result<()> {
+        self.child.start_kill()?;
+        self.child.wait().await?;
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const PS_FIXTURE: &str = "\
+  PID     PORT    MODEL                                   UPTIME
+  ------------------------------------------------------------------
+  26101   8000    mlx-community/Qwen3.6-35B-A3B-8bit      2h11m
+";
+
+    const CATALOG_FIXTURE: &str = "\
+  Available models (165 aliases)
+  ──────────────────────────────────────────────────────────────────────────────────────────────────────
+  Alias                             Tools            Reasoning    Spec-Decode Suffix Tier DFlash  DDTree
+  ──────────────────────────────────────────────────────────────────────────────────────────────────────
+  bonsai-1.7b-2bit                  hermes           —            ✗          unknown     —       —
+  bonsai-27b-2bit                   hermes           qwen3        ✗          unknown     —       —
+  deepseek-coder-v2-lite-16b-4bit   deepseek_v3      —            ✓          unknown     —       —
+  diffusion-gemma-26b-4bit          gemma4           —            ✗ hybrid   n/a         —       —
+  vibethinker-1.5b-4bit             hermes           vibethinker  ✓          unknown     —       —
+  ──────────────────────────────────────────────────────────────────────────────────────────────────────
+
+  Audio models (26 aliases)
+  ──────────────────────────────────────────────────────────────────────────────────────────────────────
+  Alias                    Kind       Family       HF id
+  ──────────────────────────────────────────────────────────────────────────────────────────────────────
+  kokoro-82m                tts        kokoro       mlx-community/Kokoro-82M-bf16
+";
+
+    const CACHED_FIXTURE: &str = "\
+  Cached models (4 on disk)
+  ────────────────────────────────────────────────────────────────────────────────────────────────
+  Alias                  HF repo                                            Size      Modified
+  ────────────────────────────────────────────────────────────────────────────────────────────────
+  gpt-oss-120b           mlx-community/gpt-oss-120b-MXFP4-Q8                118.1 GiB 1d ago
+  qwen3.6-35b-8bit       mlx-community/Qwen3.6-35B-A3B-8bit                 70.3 GiB  7h ago
+  qwen3.5-4b-4bit        mlx-community/Qwen3.5-4B-MLX-4bit                  5.7 GiB   2d ago
+  qwen3-4b-instruct-2507-4bit mlx-community/Qwen3-4B-Instruct-2507-4bit          4.2 GiB   2d ago
+  ────────────────────────────────────────────────────────────────────────────────────────────────
+  Total: 198.4 GiB
+
+  Tip: `rapid-mlx rm <hf-repo>` to free disk space
+";
+
+    const INFO_FIXTURE: &str = "\
+  Alias: qwen3.5-4b-4bit → mlx-community/Qwen3.5-4B-MLX-4bit
+
+┌──────────────────────────────────────────────────────────────┐
+│ Model: mlx-community/Qwen3.5-4B-MLX-4bit                     │
+│ ──────────────────────────────────────────────────────────── │
+│ Tool format      : hermes                                    │
+│ Reasoning parser : qwen3                                     │
+│ Architecture     : pure attention                            │
+│ Spec decode      : ✗ disabled (no MTP/drafter trained)       │
+│ MTP path         : disabled                                  │
+│ KV-share         : no                                        │
+│ Throttle         : ✗ not needed                              │
+│ Suffix tier      : n/a (no MTP/drafter — spec decode off)    │
+└──────────────────────────────────────────────────────────────┘
+
+┌──────────────────────────────────────────────────────────────┐
+│ DFlash eligibility: ✗ ineligible                             │
+│ ──────────────────────────────────────────────────────────── │
+│ Declared support  : ✗ no                                     │
+└──────────────────────────────────────────────────────────────┘
+";
+
+    #[test]
+    fn parses_ps_table() {
+        let servers = parse_ps(PS_FIXTURE);
+        assert_eq!(
+            servers,
+            vec![RunningServer {
+                pid: 26101,
+                port: 8000,
+                model: "mlx-community/Qwen3.6-35B-A3B-8bit".into(),
+                uptime: "2h11m".into(),
+            }]
+        );
+    }
+
+    #[test]
+    fn parses_ps_table_with_no_running_servers() {
+        let output = "  PID     PORT    MODEL                                   UPTIME    \n  ------------------------------------------------------------------\n";
+        assert_eq!(parse_ps(output), vec![]);
+    }
+
+    #[test]
+    fn parses_catalog_stopping_before_audio_section() {
+        let entries = parse_catalog(CATALOG_FIXTURE);
+        assert_eq!(entries.len(), 5);
+
+        assert_eq!(
+            entries[0],
+            CatalogEntry {
+                alias: "bonsai-1.7b-2bit".into(),
+                tool_format: Some("hermes".into()),
+                reasoning_parser: None,
+                spec_decode: false,
+                hybrid: false,
+                suffix_tier: Some("unknown".into()),
+                dflash: None,
+                ddtree: None,
+            }
+        );
+
+        let deepseek = entries
+            .iter()
+            .find(|e| e.alias.starts_with("deepseek"))
+            .unwrap();
+        assert!(deepseek.spec_decode);
+
+        let hybrid_entry = entries
+            .iter()
+            .find(|e| e.alias == "diffusion-gemma-26b-4bit")
+            .unwrap();
+        assert!(hybrid_entry.hybrid);
+        assert!(!hybrid_entry.spec_decode);
+        assert_eq!(hybrid_entry.suffix_tier.as_deref(), Some("n/a"));
+    }
+
+    #[test]
+    fn parses_cached_models_despite_alias_column_overflow() {
+        let cached = parse_cached(CACHED_FIXTURE);
+        assert_eq!(cached.len(), 4);
+
+        let overflowing = cached
+            .iter()
+            .find(|c| c.alias == "qwen3-4b-instruct-2507-4bit")
+            .expect("row with an alias wider than the rendered column still parses");
+        assert_eq!(
+            overflowing.hf_repo,
+            "mlx-community/Qwen3-4B-Instruct-2507-4bit"
+        );
+        assert_eq!(overflowing.modified, "2d ago");
+        assert_eq!(
+            overflowing.size_bytes,
+            (4.2 * 1024.0 * 1024.0 * 1024.0) as u64
+        );
+
+        let biggest = cached.iter().find(|c| c.alias == "gpt-oss-120b").unwrap();
+        assert_eq!(
+            biggest.size_bytes,
+            (118.1 * 1024.0 * 1024.0 * 1024.0) as u64
+        );
+    }
+
+    #[test]
+    fn parses_info_first_box_only() {
+        let profile = parse_info(INFO_FIXTURE).expect("parses");
+        assert_eq!(
+            profile.model_path.as_deref(),
+            Some("mlx-community/Qwen3.5-4B-MLX-4bit")
+        );
+        assert_eq!(profile.tool_format(), Some("hermes"));
+        assert_eq!(profile.reasoning_parser(), Some("qwen3"));
+        assert!(!profile.spec_decode_enabled());
+        // The DFlash box's "Declared support" must not appear (would collide
+        // with nothing here, but confirms we stopped at the first box).
+        assert!(profile.field("DFlash eligibility").is_none());
+        assert!(profile.field("Declared support").is_none());
+    }
+
+    #[test]
+    fn parse_info_returns_none_for_garbage() {
+        assert!(parse_info("not a rapid-mlx info output at all").is_none());
+    }
+
+    fn rapid_mlx_available() -> bool {
+        std::process::Command::new(DEFAULT_BINARY)
+            .arg("--version")
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false)
+    }
+
+    /// Extracts the `N` out of a rapid-mlx section title like `"Available
+    /// models (165 aliases)"` or `"Cached models (4 on disk)"` — the
+    /// section's own claimed row count, used as an oracle to catch the
+    /// token-count parsers silently dropping rows they don't recognize.
+    fn claimed_row_count(text: &str, marker: &str) -> Option<usize> {
+        let line = text.lines().find(|l| l.contains(marker))?;
+        let after_paren = line.split('(').nth(1)?;
+        let digits: String = after_paren
+            .chars()
+            .take_while(|c| c.is_ascii_digit())
+            .collect();
+        digits.parse().ok()
+    }
+
+    #[tokio::test]
+    async fn live_introspection_round_trips_when_installed() {
+        if !rapid_mlx_available() {
+            eprintln!("skipping: rapid-mlx binary not found");
+            return;
+        }
+        let rmlx = RapidMlx::default();
+        let version = rmlx.version().await.expect("version");
+        assert!(version.contains("rapid-mlx"));
+
+        // Read-only introspection only — no `pull`/`serve` here, which would
+        // download models or spawn a real server.
+        let catalog_text = rmlx.run(&["models"]).await.expect("models");
+        let catalog = parse_catalog(&catalog_text);
+        let claimed = claimed_row_count(&catalog_text, "Available models")
+            .expect("catalog header reports its own row count");
+        assert_eq!(
+            catalog.len(),
+            claimed,
+            "parser dropped {} of {claimed} catalog rows — a column no longer matches the \
+             expected token count (see the module doc comment on the token-counting approach)",
+            claimed.saturating_sub(catalog.len())
+        );
+
+        let cached_text = rmlx
+            .run(&["models", "--cached"])
+            .await
+            .expect("cached models");
+        let cached = parse_cached(&cached_text);
+        if let Some(claimed_cached) = claimed_row_count(&cached_text, "Cached models") {
+            assert_eq!(
+                cached.len(),
+                claimed_cached,
+                "parser dropped cached-model rows: the `Modified` column may not always end in \
+                 \"ago\""
+            );
+        }
+
+        let running = rmlx.running_servers().await.expect("ps");
+        // Not asserting on contents: legitimately empty if nothing's running.
+        let _ = running;
+    }
+}

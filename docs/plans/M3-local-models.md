@@ -58,10 +58,34 @@ under a minute. First-class targets: **rapid-mlx** (recommended default on Apple
     kill_on_drop, stdout/stderr parsed for ready + download-progress lines), wait ready, then
     `set_model` in pi. If the user runs their own server externally, detect and *don't* manage.
   - `rapid-mlx pull <alias>` for explicit downloads with parsed progress.
-  - pi wiring: `models.json` preset — OpenAI-compatible provider `rapid-mlx`, `baseUrl
-    http://localhost:8000/v1`, dummy `apiKey`; try the `anthropic-messages` API type against
-    `/v1/messages` at impl time (pi supports that wire API, and it may carry tool calls /
-    thinking more faithfully) and ship whichever proves more robust as the preset default.
+  - pi wiring: **resolved 2026-07-26** by running both wire APIs end-to-end through a real
+    `pi --mode json --print` tool-call turn (bash tool, `--no-session`) against this machine's
+    live rapid-mlx server — **use `api: "anthropic-messages"`, with `baseUrl` as the bare
+    origin (`http://localhost:8000`, no `/v1` suffix)** as the preset default:
+    - `anthropic-messages` with `baseUrl: "http://localhost:8000/v1"` (the same convention as
+      the `openai-completions` preset) **404s** — pi's anthropic client appends `/v1/messages`
+      itself, so the `/v1` must NOT be in `baseUrl` for this API type. This is the one deviation
+      from `models.md`'s own custom-header example (which shows a proxy `baseUrl` ending in
+      `/v1` for `anthropic-messages`); trust the empirical result over that doc snippet.
+    - With the bare-origin `baseUrl`, `anthropic-messages` round-tripped a full tool-call turn
+      correctly (`toolCall` → bash execution → `toolResult` → follow-up turn) **and** surfaced
+      genuine `thinking` content blocks automatically — no per-model `compat`/`thinkingFormat`
+      needed, because rapid-mlx's own `reasoning_parser` abstraction (visible per-alias via
+      `RapidMlx::catalog()`/`info()`) already normalizes whatever the underlying model family
+      emits into that one endpoint. `thinkingSignature` came back empty; the anthropic-messages
+      `compat.allowEmptySignature: true` flag should be set proactively in the preset in case a
+      longer multi-turn conversation is stricter about replaying it than this single-turn test.
+    - `openai-completions` (`baseUrl: ".../v1"`, current hand-written `~/.pi/agent/models.json`
+      convention) round-tripped the tool-call turn correctly too, but surfaced **no** thinking
+      content by default. A `chat_template_kwargs: {"enable_thinking": true}` request (verified
+      via raw curl) does unlock a separate `reasoning_content` field — matching pi's
+      `compat.thinkingFormat: "qwen-chat-template"` exactly — but that's a per-model-family
+      compat mapping (`qwen-chat-template` only fits Qwen; rapid-mlx's 165-alias catalog spans
+      deepseek_r1/gemma4/hy_v3/ui_tars/... families with different conventions), which cuts
+      against a single preset that "just works" across the whole catalog.
+    - Net: ship `anthropic-messages` + bare-origin `baseUrl` as the models.json preset default;
+      `openai-completions` remains a documented fallback (e.g. for a future non-rapid-mlx
+      OpenAI-compatible router that doesn't implement `/v1/messages` at all).
 - `OllamaProbe`: `GET /api/tags` to detect a running Ollama and list models.
 - `SystemFit`: total/available RAM + VRAM detection (`sysinfo`; on Apple Silicon unified memory,
   treat RAM as the budget) → fit labels for a model size: **Fits / May be slow / Won't fit**
