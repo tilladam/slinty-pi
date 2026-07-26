@@ -49,10 +49,19 @@ needed for two things not yet in a published release (1.17.1 predates both):
   apps like this one (`main.rs` installs a `CustomApplicationHandler` to see winit's
   `WindowEvent::DroppedFile`, so it can't go through the default backend selector)
 
-Run with `SLINT_MCP_PORT=<port>` set to enable the server, then talk JSON-RPC to
-`http://127.0.0.1:<port>/mcp` (`tools/list` for the available tools — window/element
-inspection, screenshots, click/drag/key simulation). Move these back to crates.io
-version pins once both land in a release.
+`mcp` is not enabled by default (it pulls in a whole extra dependency tree — async-net,
+httparse, prost, protox, ...). Enable it per-invocation instead:
+
+```sh
+SLINT_EMIT_DEBUG_INFO=1 SLINT_MCP_PORT=9315 cargo run -p slinty-pi --features slint/mcp
+```
+
+`SLINT_EMIT_DEBUG_INFO=1` preserves element IDs/source locations, needed for full
+element introspection. Then talk JSON-RPC to `http://127.0.0.1:9315/mcp` (`tools/list`
+for the available tools — window/element inspection, screenshots, click/drag/key
+simulation). See the [official Slint AI-plugins skill](https://github.com/slint-ui/ai-plugins)
+(installed as a Claude Code plugin: `slint@slint`) for full usage details. Move these
+back to crates.io version pins once `mcp` and PR #11520 land in a release.
 
 ## Tests
 

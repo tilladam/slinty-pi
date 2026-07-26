@@ -16,7 +16,12 @@ pi-rpc = { path = "../pi-rpc" }
 # This ties slinty-pi's build to whatever's checked out on disk at
 # /Users/till/Code/Rust/slint/slint — expected to move to crates.io pins
 # once these land in a release.
-slint = { path = "/Users/till/Code/Rust/slint/slint/api/rs/slint", features = ["mcp"] }
+#
+# `mcp` is deliberately NOT enabled here (per the official Slint AI-plugins
+# skill's guidance) — it pulls in a whole extra dependency tree (async-net,
+# httparse, prost, protox, ...) that every normal build would otherwise pay
+# for. Enable it per-invocation instead: see README.md's MCP section.
+slint = { path = "/Users/till/Code/Rust/slint/slint/api/rs/slint" }
 tokio.workspace = true
 serde_json.workspace = true
 anyhow.workspace = true
