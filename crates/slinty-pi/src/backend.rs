@@ -1225,12 +1225,19 @@ pub async fn pi_backend(
     // across project switches, only `cwd` does.
     let mut sessions_changed = spawn_sessions_watcher(sidebar.sessions_root.as_deref());
     let mut cwd = std::env::current_dir().ok();
-    // A session picker lands with the sidebar (M2); until then, resuming a
-    // specific session on startup is reachable for testing/scripting via env
-    // var, the same way `SLINTY_DEMO*` gates the demo backend. Only applies
-    // to the very first child: it names a session under the *initial* cwd,
-    // which a later project switch would leave behind.
+    // Resuming a *specific* session on startup (as opposed to just the
+    // latest one, see `continue_on_first_spawn` below) is reachable for
+    // testing/scripting via env var, the same way `SLINTY_DEMO*` gates the
+    // demo backend. Only applies to the very first child: it names a
+    // session under the *initial* cwd, which a later project switch would
+    // leave behind.
     let mut resume_on_first_spawn = std::env::var("SLINTY_RESUME_SESSION").ok();
+    // Never lose work: land back in the project's most recent session
+    // (pi's own `--continue`) rather than a blank one, unless a specific
+    // session was requested instead. One-shot like `resume_on_first_spawn`
+    // — later project switches start fresh (the sidebar/palette are how you
+    // reach a specific other session at that point).
+    let mut continue_on_first_spawn = resume_on_first_spawn.is_none();
 
     loop {
         sidebar.cwd = cwd.clone();
@@ -1238,6 +1245,11 @@ pub async fn pi_backend(
 
         let opts = PiOptions {
             cwd: cwd.clone(),
+            extra_args: if continue_on_first_spawn {
+                vec!["--continue".to_string()]
+            } else {
+                vec![]
+            },
             ..Default::default()
         };
         let (client, events) = match PiClient::spawn(opts).await {
@@ -1264,6 +1276,7 @@ pub async fn pi_backend(
             }
         };
 
+        continue_on_first_spawn = false;
         if let Some(path) = resume_on_first_spawn.take() {
             resume_session(&client, &mut transcript, &path).await;
         }
