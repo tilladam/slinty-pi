@@ -21,8 +21,14 @@ pub struct DemoProject {
 /// OS temp dir, laid out the same way pi encodes a project's session
 /// directory on disk. Safe to call every launch — it just overwrites.
 pub fn setup() -> DemoProject {
+    setup_at(std::env::temp_dir().join("slinty-pi-demo-sessions"))
+}
+
+/// Same as [`setup`], but writes into an arbitrary `sessions_root` instead of
+/// the shared demo-mode path — lets tests use their own isolated temp
+/// directory rather than racing each other over the fixed production one.
+fn setup_at(sessions_root: PathBuf) -> DemoProject {
     let cwd = PathBuf::from("/demo/slinty-pi");
-    let sessions_root = std::env::temp_dir().join("slinty-pi-demo-sessions");
     let dir = pi_sessions::project_session_dir(&sessions_root, &cwd);
     let _ = std::fs::create_dir_all(&dir);
     for (name, content) in [
@@ -64,7 +70,8 @@ mod tests {
 
     #[test]
     fn setup_writes_sessions_pi_sessions_can_list() {
-        let demo = setup();
+        let tmp = tempfile::tempdir().unwrap();
+        let demo = setup_at(tmp.path().to_path_buf());
         let dir = pi_sessions::project_session_dir(&demo.sessions_root, &demo.cwd);
         let sessions =
             pi_sessions::list_sessions(&dir).expect("demo session dir should be listable");
@@ -73,7 +80,8 @@ mod tests {
 
     #[test]
     fn hydrate_messages_extracts_only_message_entries_in_branch_order() {
-        let demo = setup();
+        let tmp = tempfile::tempdir().unwrap();
+        let demo = setup_at(tmp.path().to_path_buf());
         let dir = pi_sessions::project_session_dir(&demo.sessions_root, &demo.cwd);
         let sessions = pi_sessions::list_sessions(&dir).unwrap();
         let basic = sessions

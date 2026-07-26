@@ -50,3 +50,6 @@ winit = "0.30"
 # otherwise the compiled .slint code and the runtime types it references can
 # drift apart, which fails loudly at compile time (missing/renamed fields).
 slint-build = { path = "/Users/till/Code/Rust/slint/slint/api/rs/build" }
+
+[dev-dependencies]
+tempfile = "3.27.0"

@@ -4632,6 +4632,7 @@ dependencies = [
  "slint",
  "slint-build",
  "syntect",
+ "tempfile",
  "tokio",
  "tracing",
  "tracing-subscriber",
