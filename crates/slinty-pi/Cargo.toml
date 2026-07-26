@@ -7,7 +7,16 @@ description = "Native desktop app for the pi coding agent, built with Slint"
 
 [dependencies]
 pi-rpc = { path = "../pi-rpc" }
-slint = "=1.17.1"
+# Path dependency on the local Slint checkout (master), not crates.io. Needed
+# for two things not yet in a published release (1.17.1 predates both):
+#   - the `mcp` feature (embedded MCP server, see mcp-server.md in that repo)
+#   - PR #11520, which makes `slint::platform::set_platform()` start that
+#     server automatically for custom-platform apps like this one (without
+#     it, only selector-based apps got the server for free)
+# This ties slinty-pi's build to whatever's checked out on disk at
+# /Users/till/Code/Rust/slint/slint — expected to move to crates.io pins
+# once these land in a release.
+slint = { path = "/Users/till/Code/Rust/slint/slint/api/rs/slint", features = ["mcp"] }
 tokio.workspace = true
 serde_json.workspace = true
 anyhow.workspace = true
@@ -23,12 +32,16 @@ directories = "6.0.0"
 nucleo-matcher = "0.3.1"
 base64 = "0.23.0"
 rfd = "0.17.2"
-# Internal Slint crate (not semver-stable, pinned exactly to match `slint`);
-# only used to install a CustomApplicationHandler so we can see winit's
-# WindowEvent::DroppedFile before Slint silently discards it. See
-# crates/slinty-pi/src/main.rs's platform setup and attach.rs's doc comment.
-i-slint-backend-winit = "=1.17.1"
+# Internal Slint crate (not semver-stable, must match `slint`'s source exactly
+# — see the path dependency above); used to install a CustomApplicationHandler
+# so we can see winit's WindowEvent::DroppedFile before Slint silently
+# discards it. See crates/slinty-pi/src/main.rs's platform setup and
+# attach.rs's doc comment.
+i-slint-backend-winit = { path = "/Users/till/Code/Rust/slint/slint/internal/backends/winit" }
 winit = "0.30"
 
 [build-dependencies]
-slint-build = "1"
+# Must match the `slint` runtime's source exactly (same reasoning as above) —
+# otherwise the compiled .slint code and the runtime types it references can
+# drift apart, which fails loudly at compile time (missing/renamed fields).
+slint-build = { path = "/Users/till/Code/Rust/slint/slint/api/rs/build" }
