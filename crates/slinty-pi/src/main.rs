@@ -164,6 +164,10 @@ fn main() -> anyhow::Result<()> {
         app.on_download_hf_model(move |model| {
             let _ = tx.send(UiCmd::DownloadRouterModel(model.to_string()));
         });
+        let tx = cmd_tx.clone();
+        app.on_add_ollama_to_pi(move || {
+            let _ = tx.send(UiCmd::AddOllamaToPi);
+        });
         app.on_density_changed(density::save);
         let tx = cmd_tx.clone();
         app.on_attach_clicked(move || {
@@ -313,6 +317,9 @@ fn main() -> anyhow::Result<()> {
         "SLINTY_DOWNLOAD_HF_MODEL_AFTER",
         UiCmd::DownloadRouterModel,
     );
+    spawn_delayed_cmd(&rt, &cmd_tx, "SLINTY_ADD_OLLAMA_AFTER", |_| {
+        UiCmd::AddOllamaToPi
+    });
     spawn_delayed_cmd(&rt, &cmd_tx, "SLINTY_FORK_FROM_AFTER", UiCmd::ForkFrom);
     // Same as SLINTY_DEMO_AUTOSEND but for the real (non-demo) backend.
     spawn_delayed_cmd(&rt, &cmd_tx, "SLINTY_SEND_AFTER", UiCmd::Send);

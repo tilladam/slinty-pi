@@ -430,6 +430,9 @@ export component AppWindow inherits Window {
     in property <string> router-status: "";
     in property <string> router-url: "";
     in property <[RouterModelRow]> router-models: [];
+    in property <bool> ollama-detected: false;
+    in property <string> ollama-summary: "";
+    in property <int> ollama-model-count: 0;
 
     in-out property <bool> hf-search-visible: false;
     in property <[HfResultRow]> hf-search-results: [];
@@ -476,6 +479,7 @@ export component AppWindow inherits Window {
     callback unload-router-model(string);
     callback hf-search(string);
     callback download-hf-model(string);
+    callback add-ollama-to-pi();
     callback density-changed(int);
     callback open-palette();
     callback palette-query(string);
@@ -835,11 +839,15 @@ export component AppWindow inherits Window {
         router-status: root.router-status;
         router-url: root.router-url;
         router-models: root.router-models;
+        ollama-detected: root.ollama-detected;
+        ollama-summary: root.ollama-summary;
+        ollama-model-count: root.ollama-model-count;
         close => { root.models-visible = false; }
         serve-rapid-mlx(alias) => { root.serve-rapid-mlx(alias); }
         load-router-model(id) => { root.load-router-model(id); }
         unload-router-model(id) => { root.unload-router-model(id); }
         open-hf-search => { root.hf-search-visible = true; }
+        add-ollama-to-pi => { root.add-ollama-to-pi(); }
     }
 
     if root.hf-search-visible: HfSearchOverlay {

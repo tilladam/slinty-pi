@@ -171,7 +171,25 @@ State machine shown in the transcript's empty state, not a wizard window:
    llama-server) — verified via `format_hf_results`'s unit tests, a live network round-trip test
    (`local::hf::tests::live_search_round_trips_against_the_real_api`, skips on no network), and a
    headless demo smoke run.
-6. `models.json` guided editor with round-trip-preserving serde + Ollama detection.
+6. `models.json` guided editor with round-trip-preserving serde + Ollama detection. **[spine done,
+   2026-07-28]** New `local::ollama` (`GET /api/tags`, shape verified against ollama's own docs —
+   no live server on this dev machine) and `local::models_json` (generic `serde_json::Value`
+   read/edit/write, `preserve_order` feature enabled specifically for this). One-click "add all to
+   pi" writes the canonical Ollama preset from `docs/models.md`'s own minimal example (verified
+   against the installed pi 0.82.0's actual docs, not guessed) into `~/.pi/agent/models.json`,
+   atomically (tmp+rename) with a `.bak`, refusing to touch a file it can't parse. The
+   round-trip-fidelity criterion is tested against a real hand-written `models.json` from this
+   machine: reserializing unedited reproduces it byte-for-byte, and adding a sibling provider
+   leaves the existing entry byte-identical (see `local::models_json`'s test module) — this was
+   verified *first*, before building anything on top, since it determines whether whole-document
+   reserialization is viable at all (it is, here). **Deferred** (scope call, not started): the
+   general guided form (LM Studio/vLLM presets, plain-language compat toggles, editing arbitrary
+   existing entries) — the spine (Ollama detect → one-click add → faithful write) satisfies the
+   acceptance criterion's "≤3 clicks" and round-trip requirements on its own; the full form is a
+   separate slice. `add_ollama_to_pi`'s live path is compile-checked but not run-checked (no
+   Ollama installed here) — confirmed instead that it declines safely and leaves the real
+   `models.json` byte-for-byte untouched when Ollama isn't detected (MD5 before/after, no stray
+   `.tmp`/`.bak`).
 7. `auth.json` key entry (secure field, 0600 preserved, interpolation entries untouched).
 8. Onboarding state machine + empty-state UI + probes (rapid-mlx / router / Ollama).
 9. Composer badges, status-bar server dot, palette entries ("Load model…", "Models panel").

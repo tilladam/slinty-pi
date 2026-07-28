@@ -21,6 +21,7 @@ export struct HfResultRow {
     quants: [string],
 }
 
+
 component CachedModelItem inherits Rectangle {
     in property <CachedModelRow> entry;
     callback serve();
@@ -165,11 +166,15 @@ export component ModelsOverlay inherits Rectangle {
     in property <string> router-status: "";
     in property <string> router-url: "";
     in property <[RouterModelRow]> router-models: [];
+    in property <bool> ollama-detected: false;
+    in property <string> ollama-summary: "";
+    in property <int> ollama-model-count: 0;
     callback close();
     callback serve-rapid-mlx(string);
     callback load-router-model(string);
     callback unload-router-model(string);
     callback open-hf-search();
+    callback add-ollama-to-pi();
 
     background: Palette.background.transparentize(0.1);
 
@@ -314,6 +319,38 @@ export component ModelsOverlay inherits Rectangle {
                 font-size: 12px;
                 color: Palette.foreground.transparentize(0.5);
                 wrap: word-wrap;
+            }
+
+            Rectangle {
+                background: Palette.alternate-background.transparentize(0.5);
+                border-radius: 6px;
+
+                VerticalLayout {
+                    padding: 8px;
+                    spacing: 3px;
+
+                    HorizontalLayout {
+                        Text {
+                            text: "Ollama";
+                            font-size: 12px;
+                            font-weight: 600;
+                            color: Palette.foreground;
+                        }
+                        Rectangle { horizontal-stretch: 1; }
+                        if root.ollama-model-count > 0: Text {
+                            text: "add all to pi";
+                            font-size: 11px;
+                            color: Palette.accent-background;
+                            TouchArea { clicked => { root.add-ollama-to-pi(); } }
+                        }
+                    }
+                    Text {
+                        text: root.ollama-detected ? root.ollama-summary : "not detected";
+                        font-size: 11px;
+                        color: Palette.foreground.transparentize(0.3);
+                        wrap: word-wrap;
+                    }
+                }
             }
         }
     }

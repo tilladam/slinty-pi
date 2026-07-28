@@ -10,6 +10,8 @@
 //! SSE stream aren't used yet — see their own `#[allow(dead_code)]` markers.
 
 pub mod hf;
+pub mod models_json;
+pub mod ollama;
 pub mod rapid_mlx;
 pub mod router;
 pub mod system_fit;

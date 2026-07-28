@@ -99,6 +99,10 @@ pub enum UiCmd {
     /// `POST /models` to start the download, then poll like
     /// `LoadRouterModel`.
     DownloadRouterModel(String),
+    /// "add to pi" clicked on the Ollama section: writes every
+    /// currently-detected Ollama model into `~/.pi/agent/models.json` under
+    /// the canonical `ollama` provider preset.
+    AddOllamaToPi,
 }
 
 // ---------------------------------------------------------------------------
@@ -460,6 +464,18 @@ impl Ui {
                 })
                 .collect();
             app.set_hf_search_results(ModelRc::new(VecModel::from(rows)));
+        });
+    }
+
+    /// `summary` is a pre-formatted "N model(s): a, b, c" string (or empty
+    /// when not detected) — built in Rust rather than exposing a raw row
+    /// list, since this section is a one-click "add all" affordance, not a
+    /// browsable list like the router/rapid-mlx sections.
+    fn set_ollama_panel(&self, detected: bool, summary: String, model_count: i32) {
+        self.with_app(move |app| {
+            app.set_ollama_detected(detected);
+            app.set_ollama_summary(SharedString::from(summary));
+            app.set_ollama_model_count(model_count);
         });
     }
 
@@ -1659,6 +1675,16 @@ async fn run_session(
                     UiCmd::DownloadRouterModel(model) => {
                         download_router_model(transcript, &model).await;
                     }
+                    UiCmd::AddOllamaToPi => {
+                        if add_ollama_to_pi(transcript).await {
+                            // Not verifiable on this dev machine (no
+                            // running Ollama) — double-check the composer
+                            // picker refreshes against a live Ollama
+                            // before relying on it, same caveat as the
+                            // router load nudge above.
+                            models = refresh_models(client, transcript).await;
+                        }
+                    }
                 }
             }
             event = events.recv() => {
@@ -2067,7 +2093,88 @@ async fn open_models_panel(transcript: &mut Transcript) {
         .ui
         .set_router_panel(fetch_router_state(&router).await);
 
+    let ollama_models = local::ollama::OllamaProbe::default().list_models().await;
+    let (detected, summary, count) = format_ollama_panel(ollama_models);
+    transcript.ui.set_ollama_panel(detected, summary, count);
+
     transcript.ui.show_models_panel();
+}
+
+/// Pure Ollama models -> panel summary, shared by the live path (above) and
+/// the demo backend's seeded fixture — same shared-formatter guarantee as
+/// the router/HF formatters. `None` means undetected (not installed, not
+/// running — the panel doesn't distinguish why, see `OllamaProbe`).
+fn format_ollama_panel(models: Option<Vec<local::ollama::OllamaModel>>) -> (bool, String, i32) {
+    match models {
+        None => (false, String::new(), 0),
+        Some(models) if models.is_empty() => {
+            (true, "detected, no models pulled yet".to_string(), 0)
+        }
+        Some(models) => {
+            let count = models.len();
+            let names = models
+                .iter()
+                .map(|m| m.name.as_str())
+                .collect::<Vec<_>>()
+                .join(", ");
+            (true, format!("{count} model(s): {names}"), count as i32)
+        }
+    }
+}
+
+/// Writes every currently-detected Ollama model into `~/.pi/agent/
+/// models.json` under the canonical `ollama` preset (see
+/// `local::ollama::provider_preset`). Refuses to touch a `models.json` it
+/// can't parse rather than guessing (the M3 plan's stated corruption
+/// mitigation) — an existing `ollama` entry, hand-written or from a prior
+/// add, is replaced wholesale, everything else in the file is untouched
+/// (verified by `local::models_json`'s round-trip tests). Returns whether
+/// the write succeeded, so the caller knows whether to nudge pi to re-read
+/// it (see `refresh_models`'s call site in `run_session`).
+async fn add_ollama_to_pi(transcript: &mut Transcript) -> bool {
+    let Some(models) = local::ollama::OllamaProbe::default().list_models().await else {
+        transcript.note("error", "Ollama: no longer detected — nothing to add");
+        return false;
+    };
+    if models.is_empty() {
+        transcript.note("info", "Ollama: no models pulled yet — nothing to add");
+        return false;
+    }
+    let Some(path) = local::models_json::default_path() else {
+        transcript.note("error", "could not resolve $HOME to locate models.json");
+        return false;
+    };
+    let mut doc = if path.exists() {
+        match local::models_json::ModelsJson::load(&path) {
+            Ok(doc) => doc,
+            Err(e) => {
+                transcript.note(
+                    "error",
+                    format!("{e} — refusing to overwrite a models.json I can't parse"),
+                );
+                return false;
+            }
+        }
+    } else {
+        local::models_json::ModelsJson::empty()
+    };
+    let ids: Vec<String> = models.into_iter().map(|m| m.name).collect();
+    doc.set_provider("ollama", local::ollama::provider_preset(&ids));
+    let wrote = match doc.write(&path) {
+        Ok(()) => {
+            transcript.note(
+                "info",
+                format!("added {} Ollama model(s) to {}", ids.len(), path.display()),
+            );
+            true
+        }
+        Err(e) => {
+            transcript.note("error", format!("could not write models.json: {e}"));
+            false
+        }
+    };
+    open_models_panel(transcript).await;
+    wrote
 }
 
 /// Re-fetches and re-renders only the router section — used while polling
@@ -2304,7 +2411,27 @@ async fn render_demo_models_panel(
         base_url: local::router::DEFAULT_BASE_URL.to_string(),
         models: format_router_models(router_entries.to_vec()),
     });
+    let (detected, summary, count) = format_ollama_panel(Some(seed_demo_ollama_models()));
+    transcript.ui.set_ollama_panel(detected, summary, count);
     transcript.ui.show_models_panel();
+}
+
+/// Two seeded Ollama models — deterministic, offline (item 10's demoable
+/// requirement applies here too, same reasoning as
+/// `demo_rapid_mlx_snapshot`/`seed_demo_router_entries`).
+fn seed_demo_ollama_models() -> Vec<local::ollama::OllamaModel> {
+    vec![
+        local::ollama::OllamaModel {
+            name: "llama3.1:8b".to_string(),
+            size: 4_920_000_000,
+            details: None,
+        },
+        local::ollama::OllamaModel {
+            name: "qwen2.5-coder:7b".to_string(),
+            size: 4_680_000_000,
+            details: None,
+        },
+    ]
 }
 
 /// Simulates a load: transitions the entry through a couple of progress
@@ -2618,6 +2745,25 @@ mod models_panel_tests {
             .unwrap();
         assert!(gated);
         assert_eq!(quants, &vec!["Q4_K_M".to_string(), "Q5_K_M".to_string()]);
+    }
+
+    #[test]
+    fn ollama_panel_distinguishes_undetected_empty_and_populated() {
+        let (detected, summary, count) = format_ollama_panel(None);
+        assert!(!detected);
+        assert_eq!(count, 0);
+        assert!(summary.is_empty());
+
+        let (detected, summary, count) = format_ollama_panel(Some(Vec::new()));
+        assert!(detected);
+        assert_eq!(count, 0);
+        assert_eq!(summary, "detected, no models pulled yet");
+
+        let (detected, summary, count) = format_ollama_panel(Some(seed_demo_ollama_models()));
+        assert!(detected);
+        assert_eq!(count, 2);
+        assert!(summary.contains("llama3.1:8b"));
+        assert!(summary.contains("qwen2.5-coder:7b"));
     }
 }
 
@@ -3236,6 +3382,10 @@ pub async fn demo_backend(
             }
             UiCmd::DownloadRouterModel(model) => {
                 simulate_router_download(&mut transcript, &mut demo_router_entries, &model).await;
+                continue;
+            }
+            UiCmd::AddOllamaToPi => {
+                transcript.note("info", "not available in demo mode");
                 continue;
             }
             _ => continue,

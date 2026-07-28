@@ -23,7 +23,9 @@ pi-rpc = { path = "../pi-rpc" }
 # for. Enable it per-invocation instead: see README.md's MCP section.
 slint = { path = "/Users/till/Code/Rust/slint/slint/api/rs/slint" }
 tokio.workspace = true
-serde_json.workspace = true
+# preserve_order: models.json editing needs Map iteration/serialization to
+# follow the file's original key order, not alphabetical — see local::pi_config.
+serde_json = { workspace = true, features = ["preserve_order"] }
 anyhow.workspace = true
 tracing.workspace = true
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
