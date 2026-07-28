@@ -5,6 +5,20 @@ edition.workspace = true
 license.workspace = true
 description = "Native desktop app for the pi coding agent, built with Slint"
 
+# `cargo bundle` (https://github.com/burtonageo/cargo-bundle) reads this to
+# produce a macOS .app / Linux .deb / Windows .msi. `identifier` matches the
+# qualifier/organization/application triple already used for the on-disk
+# config dir in density.rs (directories::ProjectDirs::from("dev",
+# "slinty-pi", "slinty-pi")), so both agree on what the app "is" to the OS.
+[package.metadata.bundle]
+identifier = "dev.slinty-pi.slinty-pi"
+# cargo-bundle special-cases pre-built .icns/.ico files: it copies each in
+# directly for macOS/Windows rather than re-deriving one from a PNG set, and
+# for Linux it unpacks every size out of the .icns into the FreeDesktop
+# hicolor theme. No need to also list a PNG here.
+icon = ["assets/icon/icon.icns", "assets/icon/icon.ico"]
+category = "Developer Tool"
+
 [dependencies]
 pi-rpc = { path = "../pi-rpc" }
 # Path dependency on the local Slint checkout (master), not crates.io. Needed
@@ -56,6 +70,15 @@ thiserror.workspace = true
 # otherwise the compiled .slint code and the runtime types it references can
 # drift apart, which fails loudly at compile time (missing/renamed fields).
 slint-build = { path = "/Users/till/Code/Rust/slint/slint/api/rs/build" }
+# Embeds icon.ico into the .exe itself (taskbar/Explorer icon) — separate from
+# cargo-bundle's .msi installer icon above. Deliberately NOT a
+# `[target.'cfg(windows)'.build-dependencies]` entry: Cargo evaluates that
+# cfg against the *host* building the crate, not the compile target, so it
+# would both fail to build here (host is macOS) and silently skip embedding
+# when cross-compiling for Windows from a non-Windows CI runner. Plain
+# `embed_resource::compile()` checks the actual target itself and no-ops on
+# non-Windows targets, so this is safe (and cheap) to keep unconditional.
+embed-resource = "3.0"
 
 [dev-dependencies]
 tempfile = "3.27.0"
