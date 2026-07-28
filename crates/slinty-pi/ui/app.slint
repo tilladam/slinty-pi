@@ -2,7 +2,7 @@ import { Button, ComboBox, ListView, Palette, TextEdit, VerticalBox, HorizontalB
 import { Sidebar, SessionRow } from "sidebar.slint";
 import { TreeOverlay, TreeRow } from "tree.slint";
 import { CommandPalette, PaletteRow } from "palette.slint";
-import { ModelsOverlay, CachedModelRow } from "models.slint";
+import { ModelsOverlay, CachedModelRow, RouterModelRow } from "models.slint";
 
 export struct TableCell {
     text: string,
@@ -427,6 +427,9 @@ export component AppWindow inherits Window {
     in property <string> rapid-mlx-running: "";
     in property <[CachedModelRow]> rapid-mlx-cached: [];
     in property <int> rapid-mlx-catalog-count: 0;
+    in property <string> router-status: "";
+    in property <string> router-url: "";
+    in property <[RouterModelRow]> router-models: [];
 
     // 0 = Verbose, 1 = Normal, 2 = Summary. Set from Rust at startup from
     // the persisted state file; `density-changed` fires on every change
@@ -466,6 +469,8 @@ export component AppWindow inherits Window {
     callback fork-from(string);
     callback open-models();
     callback serve-rapid-mlx(string);
+    callback load-router-model(string);
+    callback unload-router-model(string);
     callback density-changed(int);
     callback open-palette();
     callback palette-query(string);
@@ -822,8 +827,13 @@ export component AppWindow inherits Window {
         rapid-mlx-running: root.rapid-mlx-running;
         rapid-mlx-cached: root.rapid-mlx-cached;
         rapid-mlx-catalog-count: root.rapid-mlx-catalog-count;
+        router-status: root.router-status;
+        router-url: root.router-url;
+        router-models: root.router-models;
         close => { root.models-visible = false; }
         serve-rapid-mlx(alias) => { root.serve-rapid-mlx(alias); }
+        load-router-model(id) => { root.load-router-model(id); }
+        unload-router-model(id) => { root.unload-router-model(id); }
     }
 
     if root.palette-visible: CommandPalette {

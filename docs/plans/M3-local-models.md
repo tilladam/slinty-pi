@@ -154,14 +154,19 @@ State machine shown in the transcript's empty state, not a wizard window:
    openai-completions vs anthropic-messages by testing both against pi); integration test
    against a real `rapid-mlx` when present (skip otherwise).
 3. `SystemFit` + fit labels + tests (fixed fixtures, no hardware assumptions).
-4. Models panel UI: rapid-mlx section (install/serve/switch/pull) + router section
-   (list/load/unload/progress).
+4. Models panel UI: rapid-mlx section (install/serve/switch/pull) **[done]** + router section
+   (list/load/unload/progress) **[done, 2026-07-28]** — progress is polled from `GET /models`
+   (whose `status.progress` field already carries it) rather than the `/models/sse` stream;
+   `LlamaRouter::subscribe_events`/`SseReader` stay unused for now (see their doc comments).
 5. HF search + download flow (+ gated-repo warning).
 6. `models.json` guided editor with round-trip-preserving serde + Ollama detection.
 7. `auth.json` key entry (secure field, 0600 preserved, interpolation entries untouched).
 8. Onboarding state machine + empty-state UI + probes (rapid-mlx / router / Ollama).
 9. Composer badges, status-bar server dot, palette entries ("Load model…", "Models panel").
-10. Demo mode: fake router + fake rapid-mlx state so the panel is demoable offline.
+10. Demo mode: fake router + fake rapid-mlx state so the panel is demoable offline. **[done,
+    2026-07-28]** Both sections seed deterministic fixtures and flow through the same
+    `format_router_models`/`format_rapid_mlx_panel` the live path uses (not a parallel
+    formatter) — see `backend.rs`'s `models_panel_tests`.
 
 ## Risks
 

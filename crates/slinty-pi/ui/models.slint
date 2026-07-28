@@ -7,6 +7,13 @@ export struct CachedModelRow {
     fit-label: string,
 }
 
+export struct RouterModelRow {
+    id: string,
+    status: string,
+    loaded: bool,
+    busy: bool,
+}
+
 component CachedModelItem inherits Rectangle {
     in property <CachedModelRow> entry;
     callback serve();
@@ -79,13 +86,82 @@ component CachedModelItem inherits Rectangle {
     touch := TouchArea {}
 }
 
+component RouterModelItem inherits Rectangle {
+    in property <RouterModelRow> entry;
+    callback load();
+    callback unload();
+
+    height: 40px;
+    border-radius: 6px;
+    background: touch.has-hover ? Palette.alternate-background.transparentize(0.3) : transparent;
+
+    HorizontalLayout {
+        padding: 8px;
+        spacing: 8px;
+
+        VerticalLayout {
+            spacing: 2px;
+            alignment: center;
+
+            Text {
+                text: entry.id;
+                font-size: 12px;
+                font-weight: 600;
+                color: Palette.foreground;
+                overflow: elide;
+            }
+            Text {
+                text: entry.status;
+                font-size: 10px;
+                color: entry.loaded ? Palette.accent-background : Palette.foreground.transparentize(0.4);
+                overflow: elide;
+            }
+        }
+
+        Rectangle { horizontal-stretch: 1; }
+
+        if !entry.busy: Rectangle {
+            width: action-label.width + 14px;
+            height: 22px;
+            border-radius: 5px;
+            border-width: 1px;
+            border-color: Palette.border.transparentize(0.5);
+            background: action-touch.has-hover ? Palette.alternate-background.darker(10%) : transparent;
+
+            action-label := Text {
+                text: entry.loaded ? "unload" : "load";
+                font-size: 11px;
+                color: Palette.foreground;
+                vertical-alignment: center;
+                horizontal-alignment: center;
+            }
+            action-touch := TouchArea {
+                clicked => {
+                    if entry.loaded {
+                        root.unload();
+                    } else {
+                        root.load();
+                    }
+                }
+            }
+        }
+    }
+
+    touch := TouchArea {}
+}
+
 export component ModelsOverlay inherits Rectangle {
     in property <string> rapid-mlx-version: "";
     in property <string> rapid-mlx-running: "";
     in property <[CachedModelRow]> rapid-mlx-cached: [];
     in property <int> rapid-mlx-catalog-count: 0;
+    in property <string> router-status: "";
+    in property <string> router-url: "";
+    in property <[RouterModelRow]> router-models: [];
     callback close();
     callback serve-rapid-mlx(string);
+    callback load-router-model(string);
+    callback unload-router-model(string);
 
     background: Palette.background.transparentize(0.1);
 
@@ -162,6 +238,7 @@ export component ModelsOverlay inherits Rectangle {
             }
 
             ListView {
+                height: 130px;
                 for entry in root.rapid-mlx-cached: CachedModelItem {
                     entry: entry;
                     serve => { root.serve-rapid-mlx(entry.alias); }
@@ -178,6 +255,46 @@ export component ModelsOverlay inherits Rectangle {
             if root.rapid-mlx-catalog-count > 0: Text {
                 text: root.rapid-mlx-catalog-count + " aliases available in the rapid-mlx catalog — download more with `rapid-mlx pull <alias>`.";
                 font-size: 10px;
+                color: Palette.foreground.transparentize(0.5);
+                wrap: word-wrap;
+            }
+
+            Rectangle {
+                background: Palette.alternate-background.transparentize(0.5);
+                border-radius: 6px;
+
+                VerticalLayout {
+                    padding: 8px;
+                    spacing: 3px;
+
+                    Text {
+                        text: "llama.cpp router";
+                        font-size: 12px;
+                        font-weight: 600;
+                        color: Palette.foreground;
+                    }
+                    Text {
+                        text: root.router-status == "ready" ? "connected · " + root.router-url
+                            : root.router-status == "loading" ? "starting up · " + root.router-url
+                            : "not reachable at " + root.router-url;
+                        font-size: 11px;
+                        color: Palette.foreground.transparentize(0.3);
+                    }
+                }
+            }
+
+            ListView {
+                height: 110px;
+                for entry in root.router-models: RouterModelItem {
+                    entry: entry;
+                    load => { root.load-router-model(entry.id); }
+                    unload => { root.unload-router-model(entry.id); }
+                }
+            }
+
+            if root.router-models.length == 0: Text {
+                text: "No router models detected.";
+                font-size: 12px;
                 color: Palette.foreground.transparentize(0.5);
                 wrap: word-wrap;
             }

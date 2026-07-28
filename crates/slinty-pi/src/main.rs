@@ -148,6 +148,14 @@ fn main() -> anyhow::Result<()> {
         app.on_serve_rapid_mlx(move |alias| {
             let _ = tx.send(UiCmd::ServeRapidMlxModel(alias.to_string()));
         });
+        let tx = cmd_tx.clone();
+        app.on_load_router_model(move |id| {
+            let _ = tx.send(UiCmd::LoadRouterModel(id.to_string()));
+        });
+        let tx = cmd_tx.clone();
+        app.on_unload_router_model(move |id| {
+            let _ = tx.send(UiCmd::UnloadRouterModel(id.to_string()));
+        });
         app.on_density_changed(density::save);
         let tx = cmd_tx.clone();
         app.on_attach_clicked(move || {
@@ -272,6 +280,18 @@ fn main() -> anyhow::Result<()> {
         &cmd_tx,
         "SLINTY_SERVE_RAPID_MLX_AFTER",
         UiCmd::ServeRapidMlxModel,
+    );
+    spawn_delayed_cmd(
+        &rt,
+        &cmd_tx,
+        "SLINTY_LOAD_ROUTER_MODEL_AFTER",
+        UiCmd::LoadRouterModel,
+    );
+    spawn_delayed_cmd(
+        &rt,
+        &cmd_tx,
+        "SLINTY_UNLOAD_ROUTER_MODEL_AFTER",
+        UiCmd::UnloadRouterModel,
     );
     spawn_delayed_cmd(&rt, &cmd_tx, "SLINTY_FORK_FROM_AFTER", UiCmd::ForkFrom);
     // Same as SLINTY_DEMO_AUTOSEND but for the real (non-demo) backend.

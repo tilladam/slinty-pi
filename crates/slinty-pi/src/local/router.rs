@@ -21,6 +21,7 @@ pub enum RouterError {
     Http(#[from] reqwest::Error),
     #[error("router returned an error ({code}): {message}")]
     Api { code: u16, message: String },
+    #[allow(dead_code)] // returned by the SSE stream, unused until item 5 wires it in
     #[error("malformed SSE stream: {0}")]
     Sse(String),
 }
@@ -40,17 +41,21 @@ struct ModelsResponse {
 #[derive(Debug, Clone, Deserialize)]
 pub struct ModelEntry {
     pub id: String,
+    #[allow(dead_code)] // not shown in the panel yet — item 5's model cards want it
     #[serde(default)]
     pub path: Option<String>,
     pub status: ModelStatus,
+    #[allow(dead_code)] // not shown in the panel yet — item 5's model cards want it
     #[serde(default)]
     pub architecture: Option<Architecture>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct Architecture {
+    #[allow(dead_code)] // not shown in the panel yet — item 5's model cards want it
     #[serde(default)]
     pub input_modalities: Vec<String>,
+    #[allow(dead_code)] // not shown in the panel yet — item 5's model cards want it
     #[serde(default)]
     pub output_modalities: Vec<String>,
 }
@@ -70,6 +75,7 @@ pub enum StatusValue {
 #[derive(Debug, Clone, Deserialize)]
 pub struct ModelStatus {
     pub value: StatusValue,
+    #[allow(dead_code)] // not shown in the panel yet — item 5's model cards want it
     #[serde(default)]
     pub args: Vec<String>,
     #[serde(default)]
@@ -93,6 +99,7 @@ pub struct FileProgress {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct LoadingProgress {
+    #[allow(dead_code)] // not shown in the panel yet — `current` covers the label for now
     #[serde(default)]
     pub stages: Vec<String>,
     #[serde(default)]
@@ -133,6 +140,10 @@ impl LlamaRouter {
                 .expect("reqwest client builds"),
             base_url: base_url.into(),
         }
+    }
+
+    pub fn base_url(&self) -> &str {
+        &self.base_url
     }
 
     /// `GET /health` — public, no API key check. 200 once ready, 503 while
@@ -176,11 +187,13 @@ impl LlamaRouter {
 
     /// `POST /models` — starts a non-blocking download; track progress via
     /// [`Self::subscribe_events`].
+    #[allow(dead_code)] // item 5's HF-search/download flow
     pub async fn download_model(&self, model: &str) -> Result<(), RouterError> {
         self.post_model_action("/models", model).await
     }
 
     /// `DELETE /models?model=...` — cache-only; fails for preset-defined models.
+    #[allow(dead_code)] // item 5's HF-search/download flow
     pub async fn delete_model(&self, model: &str) -> Result<(), RouterError> {
         let resp = self
             .client
@@ -206,6 +219,12 @@ impl LlamaRouter {
     /// Open `GET /models/sse` for real-time load/download progress. Call
     /// [`SseReader::next_event`] in a loop; it returns `Ok(None)` when the
     /// router closes the stream.
+    ///
+    /// Unused for now: polling `GET /models` (whose `status.progress` field
+    /// already carries the same data) is enough for the models panel's
+    /// progress display — see `router_model_status_label` in `backend.rs`.
+    /// A future live-updating panel could switch to this instead.
+    #[allow(dead_code)]
     pub async fn subscribe_events(&self) -> Result<SseReader, RouterError> {
         let resp = self
             .client
@@ -246,6 +265,9 @@ struct ApiErrorInner {
 /// One parsed `/models/sse` event. Event kinds not recognized here surface as
 /// `Unknown` instead of failing the stream, so router additions don't break
 /// the client (see module doc comment).
+///
+/// Unused for now — see [`LlamaRouter::subscribe_events`]'s doc comment.
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub enum RouterEvent {
     ModelStatus {
@@ -270,6 +292,7 @@ pub enum RouterEvent {
     },
 }
 
+#[allow(dead_code)] // see LlamaRouter::subscribe_events's doc comment
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SseStatusValue {
@@ -282,6 +305,7 @@ pub enum SseStatusValue {
     Unknown,
 }
 
+#[allow(dead_code)] // see LlamaRouter::subscribe_events's doc comment
 #[derive(Debug, Clone, Deserialize)]
 struct SseEnvelope {
     model: String,
@@ -290,6 +314,7 @@ struct SseEnvelope {
     data: Option<Value>,
 }
 
+#[allow(dead_code)] // see LlamaRouter::subscribe_events's doc comment
 #[derive(Debug, Clone, Deserialize)]
 struct SseModelStatusData {
     status: SseStatusValue,
@@ -299,6 +324,7 @@ struct SseModelStatusData {
     info: Option<Value>,
 }
 
+#[allow(dead_code)] // see LlamaRouter::subscribe_events's doc comment
 impl RouterEvent {
     fn from_envelope(env: SseEnvelope) -> Result<Self, RouterError> {
         match env.event.as_str() {
@@ -336,6 +362,7 @@ impl RouterEvent {
     }
 }
 
+#[allow(dead_code)] // see LlamaRouter::subscribe_events's doc comment
 fn find_double_newline(buf: &[u8]) -> Option<usize> {
     buf.windows(2).position(|w| w == b"\n\n")
 }
@@ -343,6 +370,7 @@ fn find_double_newline(buf: &[u8]) -> Option<usize> {
 /// Extracts the JSON envelope from one SSE block (the `data:` line(s)
 /// between blank-line separators). Returns `Ok(None)` for blocks that carry
 /// no `data:` line (e.g. a bare comment/keepalive).
+#[allow(dead_code)] // see LlamaRouter::subscribe_events's doc comment
 fn parse_sse_block(block: &[u8]) -> Result<Option<SseEnvelope>, RouterError> {
     let text = String::from_utf8_lossy(block);
     let payload: Vec<&str> = text
@@ -360,11 +388,13 @@ fn parse_sse_block(block: &[u8]) -> Result<Option<SseEnvelope>, RouterError> {
 }
 
 /// Streaming reader over `/models/sse`, one [`RouterEvent`] at a time.
+#[allow(dead_code)] // see LlamaRouter::subscribe_events's doc comment
 pub struct SseReader {
     resp: Option<reqwest::Response>,
     buf: Vec<u8>,
 }
 
+#[allow(dead_code)] // see LlamaRouter::subscribe_events's doc comment
 impl SseReader {
     pub async fn next_event(&mut self) -> Result<Option<RouterEvent>, RouterError> {
         loop {

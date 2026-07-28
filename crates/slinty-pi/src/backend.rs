@@ -26,8 +26,8 @@ use crate::local;
 use crate::palette;
 use crate::segmenter::{self, segment_markdown, Segment};
 use crate::{
-    highlight, AppWindow, CachedModelRow, CodeLine, ColoredSpan, PaletteRow, QueueItem, Row,
-    SessionRow, TableCell, TableColumn, TreeRow,
+    highlight, AppWindow, CachedModelRow, CodeLine, ColoredSpan, PaletteRow, QueueItem,
+    RouterModelRow, Row, SessionRow, TableCell, TableColumn, TreeRow,
 };
 
 const TEXT_FLUSH: Duration = Duration::from_millis(33);
@@ -86,6 +86,12 @@ pub enum UiCmd {
     /// `rapid-mlx serve` child on the default port, then `set_model` once
     /// it's ready.
     ServeRapidMlxModel(String),
+    /// "load" clicked on a router model id: `POST /models/load`, then poll
+    /// `/models` until it settles (loaded/failed/timeout).
+    LoadRouterModel(String),
+    /// "unload" clicked on a router model id: `POST /models/unload`, then
+    /// refresh.
+    UnloadRouterModel(String),
 }
 
 // ---------------------------------------------------------------------------
@@ -380,18 +386,14 @@ impl Ui {
         });
     }
 
-    /// `version` is `None` when rapid-mlx isn't on PATH. `running_summary` is
-    /// `None` when no server is currently listening (managed or external).
-    /// `cached` rows are `(alias, hf_repo, human_size, fit_label)`.
-    fn set_models_panel(
-        &self,
-        version: Option<String>,
-        running_summary: Option<String>,
-        cached: Vec<(String, String, String, String)>,
-        catalog_count: usize,
-    ) {
+    /// Rapid-mlx section only. Deliberately separate from
+    /// [`Self::set_router_panel`]: collecting rapid-mlx state spawns the CLI
+    /// a handful of times, which the router's load/unload poll loop (see
+    /// `poll_router_until_idle`) must not repeat on every tick.
+    fn set_rapid_mlx_panel(&self, data: RapidMlxPanelData) {
         self.with_app(move |app| {
-            let rows: Vec<CachedModelRow> = cached
+            let rows: Vec<CachedModelRow> = data
+                .cached
                 .into_iter()
                 .map(|(alias, hf_repo, size, fit_label)| CachedModelRow {
                     alias: alias.as_str().into(),
@@ -400,10 +402,35 @@ impl Ui {
                     fit_label: fit_label.as_str().into(),
                 })
                 .collect();
-            app.set_rapid_mlx_version(SharedString::from(version.unwrap_or_default()));
-            app.set_rapid_mlx_running(SharedString::from(running_summary.unwrap_or_default()));
+            app.set_rapid_mlx_version(SharedString::from(data.version.unwrap_or_default()));
+            app.set_rapid_mlx_running(SharedString::from(data.running_summary.unwrap_or_default()));
             app.set_rapid_mlx_cached(ModelRc::new(VecModel::from(rows)));
-            app.set_rapid_mlx_catalog_count(catalog_count as i32);
+            app.set_rapid_mlx_catalog_count(data.catalog_count as i32);
+        });
+    }
+
+    /// llama.cpp router section only — see [`Self::set_rapid_mlx_panel`]'s
+    /// doc comment for why the two are separate setters.
+    fn set_router_panel(&self, data: RouterPanelData) {
+        self.with_app(move |app| {
+            let rows: Vec<RouterModelRow> = data
+                .models
+                .into_iter()
+                .map(|(id, status, loaded, busy)| RouterModelRow {
+                    id: id.as_str().into(),
+                    status: status.as_str().into(),
+                    loaded,
+                    busy,
+                })
+                .collect();
+            app.set_router_status(SharedString::from(data.status_label));
+            app.set_router_url(SharedString::from(data.base_url));
+            app.set_router_models(ModelRc::new(VecModel::from(rows)));
+        });
+    }
+
+    fn show_models_panel(&self) {
+        self.with_app(move |app| {
             app.set_models_visible(true);
         });
     }
@@ -1432,7 +1459,7 @@ async fn run_session(
     sidebar: &mut Sidebar,
     managed_rapid_mlx: &mut Option<local::rapid_mlx::ManagedServer>,
 ) -> SessionOutcome {
-    let models = refresh_models(client, transcript).await;
+    let mut models = refresh_models(client, transcript).await;
     let mut thinking_levels = refresh_thinking(client, transcript).await;
     let mut streaming = false;
     let mut palette_entries: Vec<palette::PaletteEntry> = Vec::new();
@@ -1585,6 +1612,18 @@ async fn run_session(
                     }
                     UiCmd::ServeRapidMlxModel(alias) => {
                         serve_rapid_mlx_model(client, transcript, managed_rapid_mlx, &alias).await;
+                    }
+                    UiCmd::LoadRouterModel(model) => {
+                        load_router_model(transcript, &model).await;
+                        // Not verifiable on this dev machine (no real
+                        // llama-server to load against) — double-check the
+                        // composer picker actually refreshes against a live
+                        // router before relying on it; see the M3 plan's
+                        // "nudge pi after catalog changes" note.
+                        models = refresh_models(client, transcript).await;
+                    }
+                    UiCmd::UnloadRouterModel(model) => {
+                        unload_router_model(transcript, &model).await;
                     }
                 }
             }
@@ -1799,11 +1838,20 @@ async fn fork_from(client: &PiClient, transcript: &mut Transcript, entry_id: &st
 }
 
 // ---------------------------------------------------------------------------
-// Models panel: rapid-mlx section. Detection/catalog/ps are OS-level (not
-// pi-specific), so `open_models_panel` works the same under the demo
-// backend too; only `serve_rapid_mlx_model` needs a real `PiClient` for the
-// `set_model` step, so demo mode declines that action instead (see
+// Models panel: rapid-mlx + llama.cpp router sections.
+//
+// rapid-mlx detection/catalog/ps are OS-level (not pi-specific), so
+// `collect_rapid_mlx_snapshot` works the same under the demo backend too;
+// only `serve_rapid_mlx_model`'s final `set_model` step needs a real
+// `PiClient`, so demo mode declines that action instead (see
 // `demo_backend`).
+//
+// The router has no local server to verify against on the dev machine, so
+// `format_router_models` (entries -> UI rows) is a pure function shared by
+// the live path (`fetch_router_state`, a real `list_models()` call) and the
+// demo backend's hand-seeded `Vec<router::ModelEntry>` — verifying the demo
+// panel this way actually exercises the formatter the live path runs, not a
+// parallel stand-in.
 // ---------------------------------------------------------------------------
 
 /// Default port for the app's managed rapid-mlx server — matches rapid-mlx's
@@ -1812,19 +1860,49 @@ async fn fork_from(client: &PiClient, transcript: &mut Transcript, entry_id: &st
 /// `serve_rapid_mlx_model`).
 const RAPID_MLX_PORT: u16 = 8000;
 
-async fn open_models_panel(transcript: &mut Transcript) {
+/// Raw rapid-mlx CLI results, collected in one shot. Kept separate from
+/// [`RapidMlxPanelData`] so the demo backend can seed a fake snapshot and run
+/// it through the same [`format_rapid_mlx_panel`] the live path uses.
+struct RapidMlxSnapshot {
+    version: Option<String>,
+    running: Vec<local::rapid_mlx::RunningServer>,
+    cached: Vec<local::rapid_mlx::CachedModel>,
+    catalog_count: usize,
+}
+
+/// UI-ready rapid-mlx panel data. `cached` rows are `(alias, hf_repo,
+/// human_size, fit_label)`.
+struct RapidMlxPanelData {
+    version: Option<String>,
+    running_summary: Option<String>,
+    cached: Vec<(String, String, String, String)>,
+    catalog_count: usize,
+}
+
+async fn collect_rapid_mlx_snapshot() -> RapidMlxSnapshot {
     let rmlx = local::rapid_mlx::RapidMlx::default();
     let version = rmlx.version().await;
     let running = rmlx.running_servers().await.unwrap_or_default();
     let cached = rmlx.cached_models().await.unwrap_or_default();
     let catalog_count = rmlx.catalog().await.map(|c| c.len()).unwrap_or(0);
+    RapidMlxSnapshot {
+        version,
+        running,
+        cached,
+        catalog_count,
+    }
+}
 
-    let running_summary = running
+fn format_rapid_mlx_panel(
+    snapshot: RapidMlxSnapshot,
+    mem: &local::system_fit::SystemMemory,
+) -> RapidMlxPanelData {
+    let running_summary = snapshot
+        .running
         .first()
         .map(|s| format!("{} running on :{} (uptime {})", s.model, s.port, s.uptime));
-
-    let mem = local::system_fit::SystemMemory::probe();
-    let cached_rows = cached
+    let cached = snapshot
+        .cached
         .into_iter()
         .map(|c| {
             let fit = mem.fit_label_for(c.size_bytes).label().to_string();
@@ -1836,10 +1914,507 @@ async fn open_models_panel(transcript: &mut Transcript) {
             )
         })
         .collect();
+    RapidMlxPanelData {
+        version: snapshot.version,
+        running_summary,
+        cached,
+        catalog_count: snapshot.catalog_count,
+    }
+}
 
+/// UI-ready router panel data. `models` rows are `(id, status_label, loaded,
+/// busy)`.
+struct RouterPanelData {
+    status_label: String,
+    base_url: String,
+    models: Vec<(String, String, bool, bool)>,
+}
+
+fn router_health_label(health: local::router::HealthState) -> &'static str {
+    match health {
+        local::router::HealthState::Ready => "ready",
+        local::router::HealthState::Loading => "loading",
+        local::router::HealthState::Unreachable => "unreachable",
+    }
+}
+
+/// Human status label for one router model row, including progress when
+/// loading/downloading (`/models` carries `status.progress` directly, so
+/// polling this endpoint is enough to show live progress without also
+/// wiring the `/models/sse` stream — see the module-level design note).
+fn router_model_status_label(status: &local::router::ModelStatus) -> String {
+    use local::router::{StatusProgress, StatusValue};
+    if status.failed {
+        return match status.exit_code {
+            Some(code) => format!("failed (exit {code})"),
+            None => "failed".to_string(),
+        };
+    }
+    match status.value {
+        StatusValue::Loaded => "loaded".to_string(),
+        StatusValue::Unloaded => "unloaded".to_string(),
+        StatusValue::Sleeping => "sleeping".to_string(),
+        StatusValue::Loading => match &status.progress {
+            Some(StatusProgress::Loading(p)) => match (&p.current, p.value) {
+                (Some(stage), Some(v)) => format!("loading {stage} {:.0}%", v * 100.0),
+                (None, Some(v)) => format!("loading {:.0}%", v * 100.0),
+                _ => "loading…".to_string(),
+            },
+            _ => "loading…".to_string(),
+        },
+        StatusValue::Downloading => match &status.progress {
+            Some(StatusProgress::Downloading(files)) if !files.is_empty() => {
+                let (done, total) = files
+                    .values()
+                    .fold((0u64, 0u64), |(d, t), f| (d + f.done, t + f.total));
+                if total > 0 {
+                    format!("downloading {:.0}%", done as f64 / total as f64 * 100.0)
+                } else {
+                    "downloading…".to_string()
+                }
+            }
+            _ => "downloading…".to_string(),
+        },
+        StatusValue::Unknown => "unknown".to_string(),
+    }
+}
+
+fn router_model_busy(status: &local::router::ModelStatus) -> bool {
+    matches!(
+        status.value,
+        local::router::StatusValue::Loading | local::router::StatusValue::Downloading
+    )
+}
+
+/// Pure `/models` entries -> UI rows. Shared by the live path
+/// (`fetch_router_state`) and the demo backend's fake entries — see the
+/// module-level design note on why this must not be duplicated.
+fn format_router_models(
+    entries: Vec<local::router::ModelEntry>,
+) -> Vec<(String, String, bool, bool)> {
+    entries
+        .into_iter()
+        .map(|e| {
+            let label = router_model_status_label(&e.status);
+            let loaded = matches!(e.status.value, local::router::StatusValue::Loaded);
+            let busy = router_model_busy(&e.status);
+            (e.id, label, loaded, busy)
+        })
+        .collect()
+}
+
+async fn fetch_router_state(router: &local::router::LlamaRouter) -> RouterPanelData {
+    let health = router.health().await;
+    let models = if health == local::router::HealthState::Unreachable {
+        Vec::new()
+    } else {
+        router
+            .list_models(false)
+            .await
+            .map(format_router_models)
+            .unwrap_or_default()
+    };
+    RouterPanelData {
+        status_label: router_health_label(health).to_string(),
+        base_url: router.base_url().to_string(),
+        models,
+    }
+}
+
+async fn open_models_panel(transcript: &mut Transcript) {
+    let mem = local::system_fit::SystemMemory::probe();
+    let snapshot = collect_rapid_mlx_snapshot().await;
     transcript
         .ui
-        .set_models_panel(version, running_summary, cached_rows, catalog_count);
+        .set_rapid_mlx_panel(format_rapid_mlx_panel(snapshot, &mem));
+
+    let router = local::router::LlamaRouter::default();
+    transcript
+        .ui
+        .set_router_panel(fetch_router_state(&router).await);
+
+    transcript.ui.show_models_panel();
+}
+
+/// Re-fetches and re-renders only the router section — used while polling
+/// for load/unload progress, so the (comparatively expensive, multi-process)
+/// rapid-mlx snapshot isn't re-collected every tick. Returns whether any
+/// model is still loading/downloading, so callers know whether to keep
+/// polling.
+async fn refresh_router_panel(
+    transcript: &mut Transcript,
+    router: &local::router::LlamaRouter,
+) -> bool {
+    let state = fetch_router_state(router).await;
+    let busy = state.models.iter().any(|(_, _, _, busy)| *busy);
+    transcript.ui.set_router_panel(state);
+    busy
+}
+
+/// Polls `/models` every 500ms until nothing is loading/downloading anymore
+/// (or two minutes elapse), pushing each snapshot to the router section so
+/// progress is visible throughout — the same "poll after triggering an
+/// action" shape as `serve_rapid_mlx_model`'s `wait_ready`, just non-blocking
+/// on the UI since router state can also change over SSE / another client.
+async fn poll_router_until_idle(transcript: &mut Transcript, router: &local::router::LlamaRouter) {
+    let deadline = Instant::now() + Duration::from_secs(120);
+    while refresh_router_panel(transcript, router).await && Instant::now() < deadline {
+        tokio::time::sleep(Duration::from_millis(500)).await;
+    }
+}
+
+async fn load_router_model(transcript: &mut Transcript, model: &str) {
+    let router = local::router::LlamaRouter::default();
+    transcript.note("info", format!("router: loading {model}…"));
+    if let Err(e) = router.load_model(model).await {
+        transcript.note("error", format!("router: failed to load {model}: {e}"));
+        return;
+    }
+    poll_router_until_idle(transcript, &router).await;
+}
+
+async fn unload_router_model(transcript: &mut Transcript, model: &str) {
+    let router = local::router::LlamaRouter::default();
+    if let Err(e) = router.unload_model(model).await {
+        transcript.note("error", format!("router: failed to unload {model}: {e}"));
+    }
+    poll_router_until_idle(transcript, &router).await;
+}
+
+// ---------------------------------------------------------------------------
+// Models panel: demo-mode fakes.
+//
+// Item 10 of the M3 plan wants the panel demoable offline — deterministic,
+// not dependent on what happens to be installed/cached on the machine
+// running the demo. rapid-mlx's live probing (`collect_rapid_mlx_snapshot`)
+// happens to work for free on a machine that has it installed, but that's
+// not the same as "demoable offline"; both sections get seeded fakes here,
+// run through the exact same formatters (`format_rapid_mlx_panel`,
+// `format_router_models`) the live path uses.
+// ---------------------------------------------------------------------------
+
+fn demo_rapid_mlx_snapshot() -> RapidMlxSnapshot {
+    const GIB: f64 = 1024.0 * 1024.0 * 1024.0;
+    RapidMlxSnapshot {
+        version: Some("rapid-mlx 0.11.0".to_string()),
+        running: vec![local::rapid_mlx::RunningServer {
+            pid: 12345,
+            port: RAPID_MLX_PORT,
+            model: "mlx-community/Qwen3.5-4B-MLX-4bit".to_string(),
+            uptime: "12m".to_string(),
+        }],
+        cached: vec![
+            local::rapid_mlx::CachedModel {
+                alias: "qwen3.5-4b-4bit".to_string(),
+                hf_repo: "mlx-community/Qwen3.5-4B-MLX-4bit".to_string(),
+                size_bytes: (5.7 * GIB) as u64,
+                modified: "2d ago".to_string(),
+            },
+            local::rapid_mlx::CachedModel {
+                alias: "gpt-oss-120b".to_string(),
+                hf_repo: "mlx-community/gpt-oss-120b-MXFP4-Q8".to_string(),
+                size_bytes: (118.1 * GIB) as u64,
+                modified: "1d ago".to_string(),
+            },
+        ],
+        catalog_count: 165,
+    }
+}
+
+/// Seeds one router model in each state the panel can render — loaded,
+/// unloaded, loading (with progress), downloading (with progress), and
+/// failed — so a single `OpenModels` screenshot exercises every branch of
+/// `router_model_status_label` at once.
+fn seed_demo_router_entries() -> Vec<local::router::ModelEntry> {
+    use local::router::{
+        FileProgress, LoadingProgress, ModelEntry, ModelStatus, StatusProgress, StatusValue,
+    };
+    vec![
+        ModelEntry {
+            id: "ggml-org/gemma-3-4b-it-GGUF:Q4_K_M".to_string(),
+            path: Some("/demo/gemma-3-4b-it.gguf".to_string()),
+            status: ModelStatus {
+                value: StatusValue::Loaded,
+                args: vec!["llama-server".to_string()],
+                failed: false,
+                exit_code: None,
+                progress: None,
+            },
+            architecture: None,
+        },
+        ModelEntry {
+            id: "unsloth/Qwen3-8B-GGUF:Q4_K_M".to_string(),
+            path: Some("/demo/qwen3-8b.gguf".to_string()),
+            status: ModelStatus {
+                value: StatusValue::Unloaded,
+                args: vec![],
+                failed: false,
+                exit_code: None,
+                progress: None,
+            },
+            architecture: None,
+        },
+        ModelEntry {
+            id: "mlx-community/Llama-3.2-3B-Instruct-4bit".to_string(),
+            path: None,
+            status: ModelStatus {
+                value: StatusValue::Loading,
+                args: vec![],
+                failed: false,
+                exit_code: None,
+                progress: Some(StatusProgress::Loading(LoadingProgress {
+                    stages: vec!["text_model".to_string()],
+                    current: Some("text_model".to_string()),
+                    value: Some(0.45),
+                })),
+            },
+            architecture: None,
+        },
+        ModelEntry {
+            id: "TheBloke/Mistral-7B-Instruct-v0.2-GGUF:Q4_K_M".to_string(),
+            path: None,
+            status: ModelStatus {
+                value: StatusValue::Downloading,
+                args: vec![],
+                failed: false,
+                exit_code: None,
+                progress: Some(StatusProgress::Downloading(HashMap::from([(
+                    "https://huggingface.co/TheBloke/Mistral-7B-Instruct-v0.2-GGUF/model.gguf"
+                        .to_string(),
+                    FileProgress {
+                        done: 60,
+                        total: 100,
+                    },
+                )]))),
+            },
+            architecture: None,
+        },
+        ModelEntry {
+            id: "broken/does-not-load-GGUF".to_string(),
+            path: None,
+            status: ModelStatus {
+                value: StatusValue::Unloaded,
+                args: vec!["llama-server".to_string()],
+                failed: true,
+                exit_code: Some(1),
+                progress: None,
+            },
+            architecture: None,
+        },
+    ]
+}
+
+async fn render_demo_models_panel(
+    transcript: &mut Transcript,
+    router_entries: &[local::router::ModelEntry],
+) {
+    let mem = local::system_fit::SystemMemory::probe();
+    transcript
+        .ui
+        .set_rapid_mlx_panel(format_rapid_mlx_panel(demo_rapid_mlx_snapshot(), &mem));
+    transcript.ui.set_router_panel(RouterPanelData {
+        status_label: "ready".to_string(),
+        base_url: local::router::DEFAULT_BASE_URL.to_string(),
+        models: format_router_models(router_entries.to_vec()),
+    });
+    transcript.ui.show_models_panel();
+}
+
+/// Simulates a load: transitions the entry through a couple of progress
+/// ticks to `loaded`, rendering after each so progress is visible — the
+/// synthetic counterpart to `poll_router_until_idle` against a real router.
+async fn simulate_router_load(
+    transcript: &mut Transcript,
+    entries: &mut [local::router::ModelEntry],
+    model: &str,
+) {
+    use local::router::{LoadingProgress, ModelStatus, StatusProgress, StatusValue};
+    for pct in [25u32, 60, 100] {
+        if let Some(entry) = entries.iter_mut().find(|e| e.id == model) {
+            entry.status = if pct < 100 {
+                ModelStatus {
+                    value: StatusValue::Loading,
+                    args: vec![],
+                    failed: false,
+                    exit_code: None,
+                    progress: Some(StatusProgress::Loading(LoadingProgress {
+                        stages: vec![],
+                        current: None,
+                        value: Some(pct as f64 / 100.0),
+                    })),
+                }
+            } else {
+                ModelStatus {
+                    value: StatusValue::Loaded,
+                    args: vec![],
+                    failed: false,
+                    exit_code: None,
+                    progress: None,
+                }
+            };
+        }
+        render_demo_models_panel(transcript, entries).await;
+        tokio::time::sleep(Duration::from_millis(300)).await;
+    }
+}
+
+async fn simulate_router_unload(
+    transcript: &mut Transcript,
+    entries: &mut [local::router::ModelEntry],
+    model: &str,
+) {
+    use local::router::{ModelStatus, StatusValue};
+    if let Some(entry) = entries.iter_mut().find(|e| e.id == model) {
+        entry.status = ModelStatus {
+            value: StatusValue::Unloaded,
+            args: vec![],
+            failed: false,
+            exit_code: None,
+            progress: None,
+        };
+    }
+    render_demo_models_panel(transcript, entries).await;
+}
+
+#[cfg(test)]
+mod models_panel_tests {
+    use super::*;
+    use local::router::{FileProgress, LoadingProgress, ModelStatus, StatusProgress, StatusValue};
+
+    #[test]
+    fn status_label_covers_every_branch() {
+        let loaded = ModelStatus {
+            value: StatusValue::Loaded,
+            args: vec![],
+            failed: false,
+            exit_code: None,
+            progress: None,
+        };
+        assert_eq!(router_model_status_label(&loaded), "loaded");
+
+        let loading_with_stage = ModelStatus {
+            value: StatusValue::Loading,
+            args: vec![],
+            failed: false,
+            exit_code: None,
+            progress: Some(StatusProgress::Loading(LoadingProgress {
+                stages: vec![],
+                current: Some("text_model".to_string()),
+                value: Some(0.45),
+            })),
+        };
+        assert_eq!(
+            router_model_status_label(&loading_with_stage),
+            "loading text_model 45%"
+        );
+
+        let downloading = ModelStatus {
+            value: StatusValue::Downloading,
+            args: vec![],
+            failed: false,
+            exit_code: None,
+            progress: Some(StatusProgress::Downloading(HashMap::from([(
+                "https://x/model.gguf".to_string(),
+                FileProgress {
+                    done: 60,
+                    total: 100,
+                },
+            )]))),
+        };
+        assert_eq!(router_model_status_label(&downloading), "downloading 60%");
+
+        let failed = ModelStatus {
+            value: StatusValue::Unloaded,
+            args: vec![],
+            failed: true,
+            exit_code: Some(1),
+            progress: None,
+        };
+        assert_eq!(router_model_status_label(&failed), "failed (exit 1)");
+    }
+
+    #[test]
+    fn busy_is_true_only_while_loading_or_downloading() {
+        let loading = ModelStatus {
+            value: StatusValue::Loading,
+            args: vec![],
+            failed: false,
+            exit_code: None,
+            progress: None,
+        };
+        assert!(router_model_busy(&loading));
+
+        let loaded = ModelStatus {
+            value: StatusValue::Loaded,
+            args: vec![],
+            failed: false,
+            exit_code: None,
+            progress: None,
+        };
+        assert!(!router_model_busy(&loaded));
+    }
+
+    /// The demo backend's fake catalog and the live path's real `/models`
+    /// response both flow through `format_router_models` — this is the
+    /// guarantee that verifying the demo panel actually exercises the
+    /// formatter the live path runs, not a parallel stand-in (see the
+    /// module-level design note above `RAPID_MLX_PORT`).
+    #[test]
+    fn seeded_demo_entries_cover_every_row_state_via_the_shared_formatter() {
+        let rows = format_router_models(seed_demo_router_entries());
+        assert_eq!(rows.len(), 5);
+
+        let (_, status, loaded, busy) = rows.iter().find(|(id, ..)| id.contains("gemma")).unwrap();
+        assert_eq!(status, "loaded");
+        assert!(loaded);
+        assert!(!busy);
+
+        let (_, status, loaded, busy) = rows
+            .iter()
+            .find(|(id, ..)| id.contains("Qwen3-8B"))
+            .unwrap();
+        assert_eq!(status, "unloaded");
+        assert!(!loaded);
+        assert!(!busy);
+
+        let (_, status, loaded, busy) = rows
+            .iter()
+            .find(|(id, ..)| id.contains("Llama-3.2"))
+            .unwrap();
+        assert!(status.starts_with("loading"));
+        assert!(status.contains('%'));
+        assert!(!loaded);
+        assert!(busy);
+
+        let (_, status, loaded, busy) =
+            rows.iter().find(|(id, ..)| id.contains("Mistral")).unwrap();
+        assert!(status.starts_with("downloading"));
+        assert!(status.contains('%'));
+        assert!(!loaded);
+        assert!(busy);
+
+        let (_, status, loaded, busy) = rows.iter().find(|(id, ..)| id.contains("broken")).unwrap();
+        assert!(status.starts_with("failed"));
+        assert!(!loaded);
+        assert!(!busy);
+    }
+
+    #[test]
+    fn demo_rapid_mlx_snapshot_formats_into_a_fit_labeled_cached_row() {
+        let mem = local::system_fit::SystemMemory {
+            total_bytes: 32 * 1024 * 1024 * 1024,
+            available_bytes: 32 * 1024 * 1024 * 1024,
+        };
+        let data = format_rapid_mlx_panel(demo_rapid_mlx_snapshot(), &mem);
+        assert_eq!(data.version.as_deref(), Some("rapid-mlx 0.11.0"));
+        assert!(data.running_summary.unwrap().contains("Qwen3.5-4B"));
+        assert_eq!(data.cached.len(), 2);
+        let (alias, hf_repo, size, fit) = &data.cached[0];
+        assert_eq!(alias, "qwen3.5-4b-4bit");
+        assert_eq!(hf_repo, "mlx-community/Qwen3.5-4B-MLX-4bit");
+        assert_eq!(size, "5.7 GiB");
+        assert_eq!(fit, "Fits");
+    }
 }
 
 /// (Re)spawns a managed `rapid-mlx serve <alias>` on `RAPID_MLX_PORT`,
@@ -2383,6 +2958,7 @@ pub async fn demo_backend(
     sidebar.refresh_projects(&transcript.ui);
     let mut current_session: Option<String> = None;
     sidebar.refresh_sessions_with_active(current_session.as_deref(), &transcript.ui);
+    let mut demo_router_entries = seed_demo_router_entries();
 
     let rate: u64 = std::env::var("SLINTY_DEMO_RATE")
         .ok()
@@ -2426,15 +3002,23 @@ pub async fn demo_backend(
                 transcript.note("info", "not available in demo mode");
                 continue;
             }
-            // Detection/catalog/ps are OS-level (real rapid-mlx, not
-            // pi-specific), so the panel itself is demoable as-is; only the
-            // `set_model` step at the end of a serve needs a real client.
+            // Both sections are seeded fakes here (not live-probed), so the
+            // panel is demoable offline and deterministic — see the
+            // "Models panel: demo-mode fakes" section below.
             UiCmd::OpenModels => {
-                open_models_panel(&mut transcript).await;
+                render_demo_models_panel(&mut transcript, &demo_router_entries).await;
                 continue;
             }
             UiCmd::ServeRapidMlxModel(_) => {
                 transcript.note("info", "not available in demo mode");
+                continue;
+            }
+            UiCmd::LoadRouterModel(model) => {
+                simulate_router_load(&mut transcript, &mut demo_router_entries, &model).await;
+                continue;
+            }
+            UiCmd::UnloadRouterModel(model) => {
+                simulate_router_unload(&mut transcript, &mut demo_router_entries, &model).await;
                 continue;
             }
             _ => continue,
