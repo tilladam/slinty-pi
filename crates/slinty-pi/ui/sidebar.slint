@@ -185,11 +185,15 @@ export component Sidebar inherits Rectangle {
         HorizontalLayout {
             spacing: 4px;
             ComboBox {
+                // Index 0 is always a "Switch project…" placeholder (see
+                // `Ui::set_projects`'s doc comment for why) — `project-list`
+                // is one longer than `project-paths` to make room for it, so
+                // a real project is `project-paths[current-index - 1]`.
                 model: root.project-list;
                 current-index <=> root.project-index;
                 selected => {
-                    if (self.current-index >= 0 && self.current-index < root.project-paths.length) {
-                        root.project-selected(root.project-paths[self.current-index]);
+                    if (self.current-index >= 1 && self.current-index - 1 < root.project-paths.length) {
+                        root.project-selected(root.project-paths[self.current-index - 1]);
                     }
                 }
             }

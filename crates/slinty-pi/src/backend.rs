@@ -312,15 +312,25 @@ impl Ui {
     }
 
     /// `labels`/`paths` are parallel arrays (projects other than the current
-    /// one); Slint resolves the picked label back to a path itself, so
-    /// there's no index bookkeeping to keep in sync on the Rust side.
+    /// one). A placeholder ("Switch project…") is prepended to what Slint
+    /// sees as index 0 — *not* to `paths`, which stays real-projects-only —
+    /// so `project-index: 0` is a genuine, truthfully-displayed selection.
+    /// Slint's `ComboBoxBase` has no concept of "no selection": its
+    /// `reset-current()` clamps whatever `current-index` we send into
+    /// `[0, model.length-1]` on every model change, so a bare `-1` "meaning
+    /// unselected" silently becomes index 0 and displays `model[0]` as if
+    /// it were genuinely chosen — which, before this placeholder existed,
+    /// meant the box showed some *other* project as though it were current
+    /// (see the sidebar bug report this fixed: clicking that misleadingly-
+    /// shown entry silently switched the whole app into it).
     fn set_projects(&self, labels: Vec<String>, paths: Vec<String>, current_name: String) {
         self.with_app(move |app| {
-            let label_model: Vec<SharedString> = labels.iter().map(|l| l.as_str().into()).collect();
+            let mut label_model: Vec<SharedString> = vec!["Switch project…".into()];
+            label_model.extend(labels.iter().map(|l| l.as_str().into()));
             let path_model: Vec<SharedString> = paths.iter().map(|p| p.as_str().into()).collect();
             app.set_project_list(ModelRc::new(VecModel::from(label_model)));
             app.set_project_paths(ModelRc::new(VecModel::from(path_model)));
-            app.set_project_index(-1);
+            app.set_project_index(0);
             app.set_current_project_name(SharedString::from(current_name));
         });
     }
@@ -1113,7 +1123,7 @@ impl Sidebar {
         } else {
             pi_sessions::search(&all, &self.query)
         };
-        let rows = filtered
+        let mut rows: Vec<(String, String, String, bool, String)> = filtered
             .into_iter()
             .map(|m| {
                 let path = m.path.to_string_lossy().into_owned();
@@ -1127,6 +1137,30 @@ impl Sidebar {
                 )
             })
             .collect();
+
+        // pi doesn't write a session's file until its first message, so a
+        // just-switched-to project's brand-new (still empty) session has no
+        // file for `meta_cache` to find yet — without this, the sidebar
+        // would show every *other* session but not the one you're actually
+        // in, until you send a message (which finally creates the file) or
+        // switch away and back (which happens to land on a now-existing
+        // file). Synthesize its row from what pi already told us via
+        // `get_state`, so "where you are" is never silently missing.
+        if let Some(active_path) = active {
+            if self.query.is_empty() && !rows.iter().any(|(path, ..)| path == active_path) {
+                rows.insert(
+                    0,
+                    (
+                        active_path.to_string(),
+                        "New session".to_string(),
+                        "just now".to_string(),
+                        true,
+                        String::new(),
+                    ),
+                );
+            }
+        }
+
         ui.set_sidebar_sessions(rows);
     }
 }
