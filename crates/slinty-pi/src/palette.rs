@@ -29,6 +29,11 @@ const ACTIONS: &[(&str, &str, &str)] = &[
         "browse and fork from any point",
     ),
     (
+        "action:open-models",
+        "Models panel",
+        "browse and serve local rapid-mlx models",
+    ),
+    (
         "action:clone-session",
         "Clone session",
         "duplicate this session at the current point",

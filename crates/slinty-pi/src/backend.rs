@@ -22,11 +22,12 @@ use pi_rpc::{
 
 use crate::attach;
 use crate::demo_sessions;
+use crate::local;
 use crate::palette;
 use crate::segmenter::{self, segment_markdown, Segment};
 use crate::{
-    highlight, AppWindow, CodeLine, ColoredSpan, PaletteRow, QueueItem, Row, SessionRow, TableCell,
-    TableColumn, TreeRow,
+    highlight, AppWindow, CachedModelRow, CodeLine, ColoredSpan, PaletteRow, QueueItem, Row,
+    SessionRow, TableCell, TableColumn, TreeRow,
 };
 
 const TEXT_FLUSH: Duration = Duration::from_millis(33);
@@ -78,6 +79,13 @@ pub enum UiCmd {
     AttachPath(PathBuf),
     /// Remove a queued image attachment by its chip index.
     RemoveAttachment(usize),
+    /// Refresh and open the models panel (rapid-mlx detection state, running
+    /// servers, cached-model catalog with fit labels).
+    OpenModels,
+    /// "serve" clicked on a cached rapid-mlx alias: (re)spawn a managed
+    /// `rapid-mlx serve` child on the default port, then `set_model` once
+    /// it's ready.
+    ServeRapidMlxModel(String),
 }
 
 // ---------------------------------------------------------------------------
@@ -369,6 +377,34 @@ impl Ui {
                 .collect();
             app.set_tree_rows(ModelRc::new(VecModel::from(rows)));
             app.set_tree_visible(true);
+        });
+    }
+
+    /// `version` is `None` when rapid-mlx isn't on PATH. `running_summary` is
+    /// `None` when no server is currently listening (managed or external).
+    /// `cached` rows are `(alias, hf_repo, human_size, fit_label)`.
+    fn set_models_panel(
+        &self,
+        version: Option<String>,
+        running_summary: Option<String>,
+        cached: Vec<(String, String, String, String)>,
+        catalog_count: usize,
+    ) {
+        self.with_app(move |app| {
+            let rows: Vec<CachedModelRow> = cached
+                .into_iter()
+                .map(|(alias, hf_repo, size, fit_label)| CachedModelRow {
+                    alias: alias.as_str().into(),
+                    hf_repo: hf_repo.as_str().into(),
+                    size: size.as_str().into(),
+                    fit_label: fit_label.as_str().into(),
+                })
+                .collect();
+            app.set_rapid_mlx_version(SharedString::from(version.unwrap_or_default()));
+            app.set_rapid_mlx_running(SharedString::from(running_summary.unwrap_or_default()));
+            app.set_rapid_mlx_cached(ModelRc::new(VecModel::from(rows)));
+            app.set_rapid_mlx_catalog_count(catalog_count as i32);
+            app.set_models_visible(true);
         });
     }
 
@@ -1272,6 +1308,10 @@ pub async fn pi_backend(
     // — later project switches start fresh (the sidebar/palette are how you
     // reach a specific other session at that point).
     let mut continue_on_first_spawn = resume_on_first_spawn.is_none();
+    // Independent of pi's session/project lifecycle (switching sessions or
+    // projects shouldn't kill a running local model server), so it lives at
+    // this outer scope rather than inside `run_session`.
+    let mut managed_rapid_mlx: Option<local::rapid_mlx::ManagedServer> = None;
 
     loop {
         sidebar.cwd = cwd.clone();
@@ -1325,6 +1365,7 @@ pub async fn pi_backend(
             &mut sessions_changed,
             &mut transcript,
             &mut sidebar,
+            &mut managed_rapid_mlx,
         )
         .await
         {
@@ -1389,6 +1430,7 @@ async fn run_session(
     sessions_changed: &mut mpsc::UnboundedReceiver<()>,
     transcript: &mut Transcript,
     sidebar: &mut Sidebar,
+    managed_rapid_mlx: &mut Option<local::rapid_mlx::ManagedServer>,
 ) -> SessionOutcome {
     let models = refresh_models(client, transcript).await;
     let mut thinking_levels = refresh_thinking(client, transcript).await;
@@ -1537,6 +1579,12 @@ async fn run_session(
                             "palette: ranked query"
                         );
                         transcript.ui.set_palette_entries(ranked);
+                    }
+                    UiCmd::OpenModels => {
+                        open_models_panel(transcript).await;
+                    }
+                    UiCmd::ServeRapidMlxModel(alias) => {
+                        serve_rapid_mlx_model(client, transcript, managed_rapid_mlx, &alias).await;
                     }
                 }
             }
@@ -1748,6 +1796,95 @@ async fn fork_from(client: &PiClient, transcript: &mut Transcript, entry_id: &st
     if let Some(text) = prefill {
         transcript.ui.set_composer_text(text);
     }
+}
+
+// ---------------------------------------------------------------------------
+// Models panel: rapid-mlx section. Detection/catalog/ps are OS-level (not
+// pi-specific), so `open_models_panel` works the same under the demo
+// backend too; only `serve_rapid_mlx_model` needs a real `PiClient` for the
+// `set_model` step, so demo mode declines that action instead (see
+// `demo_backend`).
+// ---------------------------------------------------------------------------
+
+/// Default port for the app's managed rapid-mlx server — matches rapid-mlx's
+/// own `serve` default so an unmanaged/external server on the same port is
+/// detected as a conflict rather than silently ignored (see
+/// `serve_rapid_mlx_model`).
+const RAPID_MLX_PORT: u16 = 8000;
+
+async fn open_models_panel(transcript: &mut Transcript) {
+    let rmlx = local::rapid_mlx::RapidMlx::default();
+    let version = rmlx.version().await;
+    let running = rmlx.running_servers().await.unwrap_or_default();
+    let cached = rmlx.cached_models().await.unwrap_or_default();
+    let catalog_count = rmlx.catalog().await.map(|c| c.len()).unwrap_or(0);
+
+    let running_summary = running
+        .first()
+        .map(|s| format!("{} running on :{} (uptime {})", s.model, s.port, s.uptime));
+
+    let mem = local::system_fit::SystemMemory::probe();
+    let cached_rows = cached
+        .into_iter()
+        .map(|c| {
+            let fit = mem.fit_label_for(c.size_bytes).label().to_string();
+            (
+                c.alias,
+                c.hf_repo,
+                local::system_fit::human_size(c.size_bytes),
+                fit,
+            )
+        })
+        .collect();
+
+    transcript
+        .ui
+        .set_models_panel(version, running_summary, cached_rows, catalog_count);
+}
+
+/// (Re)spawns a managed `rapid-mlx serve <alias>` on `RAPID_MLX_PORT`,
+/// stopping any server this app was already managing first (a model switch
+/// is a supervised restart, not a hot swap — see the M3 plan). An
+/// already-running *external* server (or anything else bound to the port)
+/// surfaces as a normal "failed to become ready" error instead of being
+/// killed: we only ever stop servers we ourselves spawned.
+async fn serve_rapid_mlx_model(
+    client: &PiClient,
+    transcript: &mut Transcript,
+    managed: &mut Option<local::rapid_mlx::ManagedServer>,
+    alias: &str,
+) {
+    if let Some(prev) = managed.take() {
+        transcript.note("info", "stopping the previous managed rapid-mlx server…");
+        let _ = prev.shutdown().await;
+    }
+
+    transcript.note("info", format!("starting rapid-mlx serve {alias}…"));
+    match local::rapid_mlx::ManagedServer::spawn(
+        local::rapid_mlx::DEFAULT_BINARY,
+        alias,
+        RAPID_MLX_PORT,
+    ) {
+        Ok(mut server) => match server.wait_ready(Duration::from_secs(180)).await {
+            Ok(()) => {
+                *managed = Some(server);
+                match client.set_model("rapid-mlx", alias).await {
+                    Ok(_) => transcript.note("info", format!("rapid-mlx: {alias} ready")),
+                    Err(e) => transcript.note(
+                        "error",
+                        format!(
+                            "rapid-mlx: {alias} is ready but pi couldn't select it \
+                                 (is a matching entry configured in models.json?): {e}"
+                        ),
+                    ),
+                }
+            }
+            Err(e) => transcript.note("error", format!("rapid-mlx: {alias} failed to start: {e}")),
+        },
+        Err(e) => transcript.note("error", format!("rapid-mlx: could not spawn serve: {e}")),
+    }
+
+    open_models_panel(transcript).await;
 }
 
 // ---------------------------------------------------------------------------
@@ -2286,6 +2423,17 @@ pub async fn demo_backend(
             | UiCmd::DeleteSession(_)
             | UiCmd::RenameSession(_)
             | UiCmd::CloneSession => {
+                transcript.note("info", "not available in demo mode");
+                continue;
+            }
+            // Detection/catalog/ps are OS-level (real rapid-mlx, not
+            // pi-specific), so the panel itself is demoable as-is; only the
+            // `set_model` step at the end of a serve needs a real client.
+            UiCmd::OpenModels => {
+                open_models_panel(&mut transcript).await;
+                continue;
+            }
+            UiCmd::ServeRapidMlxModel(_) => {
                 transcript.note("info", "not available in demo mode");
                 continue;
             }

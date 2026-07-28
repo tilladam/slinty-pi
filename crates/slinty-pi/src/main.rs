@@ -9,7 +9,6 @@ mod backend;
 mod demo_sessions;
 mod density;
 mod highlight;
-#[allow(dead_code)] // foundation landed ahead of the models panel that will use it
 mod local;
 mod palette;
 mod segmenter;
@@ -141,6 +140,14 @@ fn main() -> anyhow::Result<()> {
         app.on_fork_from(move |entry_id| {
             let _ = tx.send(UiCmd::ForkFrom(entry_id.to_string()));
         });
+        let tx = cmd_tx.clone();
+        app.on_open_models(move || {
+            let _ = tx.send(UiCmd::OpenModels);
+        });
+        let tx = cmd_tx.clone();
+        app.on_serve_rapid_mlx(move |alias| {
+            let _ = tx.send(UiCmd::ServeRapidMlxModel(alias.to_string()));
+        });
         app.on_density_changed(density::save);
         let tx = cmd_tx.clone();
         app.on_attach_clicked(move || {
@@ -185,6 +192,9 @@ fn main() -> anyhow::Result<()> {
                     }
                     "open-tree" => {
                         let _ = tx.send(UiCmd::OpenTree);
+                    }
+                    "open-models" => {
+                        let _ = tx.send(UiCmd::OpenModels);
                     }
                     "clone-session" => {
                         let _ = tx.send(UiCmd::CloneSession);
@@ -254,6 +264,15 @@ fn main() -> anyhow::Result<()> {
         UiCmd::NewSession
     });
     spawn_delayed_cmd(&rt, &cmd_tx, "SLINTY_OPEN_TREE_AFTER", |_| UiCmd::OpenTree);
+    spawn_delayed_cmd(&rt, &cmd_tx, "SLINTY_OPEN_MODELS_AFTER", |_| {
+        UiCmd::OpenModels
+    });
+    spawn_delayed_cmd(
+        &rt,
+        &cmd_tx,
+        "SLINTY_SERVE_RAPID_MLX_AFTER",
+        UiCmd::ServeRapidMlxModel,
+    );
     spawn_delayed_cmd(&rt, &cmd_tx, "SLINTY_FORK_FROM_AFTER", UiCmd::ForkFrom);
     // Same as SLINTY_DEMO_AUTOSEND but for the real (non-demo) backend.
     spawn_delayed_cmd(&rt, &cmd_tx, "SLINTY_SEND_AFTER", UiCmd::Send);

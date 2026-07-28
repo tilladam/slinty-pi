@@ -2,11 +2,12 @@
 //! llama.cpp router HTTP client, rapid-mlx CLI integration, and system
 //! RAM-fit estimation. See `docs/plans/M3-local-models.md`.
 //!
-//! Not yet wired into `backend.rs`/the UI — this module lands the
-//! network/process/parsing layer first so the models panel, onboarding
-//! flow, and composer badges (later M3 work) have something solid to sit
-//! on top of.
+//! `rapid_mlx`/`system_fit` back the models panel's rapid-mlx section.
+//! `router` isn't wired into the UI yet — that's the llama.cpp router
+//! section (plan item 4b), which needs demo-mode fakes first since there's
+//! no real llama-server on the dev machine to verify it against.
 
 pub mod rapid_mlx;
+#[allow(dead_code)] // wired in for the router section of the models panel (item 4b), not yet
 pub mod router;
 pub mod system_fit;

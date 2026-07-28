@@ -70,12 +70,16 @@ pub struct CachedModel {
 /// "Reasoning parser", "Spec decode", ...). The DFlash/DDTree eligibility
 /// boxes that follow share several of the same field labels, so parsing
 /// stops at the first box's closing rule to avoid overwriting them.
+///
+/// Not wired into the models panel yet (the current cached-models list only
+/// needs alias/size/fit) — feeds a future per-alias detail view.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AliasProfile {
     pub model_path: Option<String>,
     pub fields: BTreeMap<String, String>,
 }
 
+#[allow(dead_code)] // see AliasProfile's doc comment
 impl AliasProfile {
     pub fn field(&self, key: &str) -> Option<&str> {
         self.fields.get(key).map(String::as_str)
@@ -141,6 +145,7 @@ impl RapidMlx {
         Ok(parse_cached(&self.run(&["models", "--cached"]).await?))
     }
 
+    #[allow(dead_code)] // see AliasProfile's doc comment
     pub async fn info(&self, alias: &str) -> Result<AliasProfile, RapidMlxError> {
         let text = self.run(&["info", alias]).await?;
         parse_info(&text)
@@ -263,6 +268,7 @@ fn parse_cached(output: &str) -> Vec<CachedModel> {
         .collect()
 }
 
+#[allow(dead_code)] // see AliasProfile's doc comment
 fn parse_info(output: &str) -> Option<AliasProfile> {
     let mut model_path = None;
     let mut fields = BTreeMap::new();
@@ -347,7 +353,10 @@ impl ManagedServer {
         .unwrap_or(Err(RapidMlxError::ReadyTimeout))
     }
 
-    /// Continue reading server log lines after `wait_ready` returns.
+    /// Continue reading server log lines after `wait_ready` returns. Not
+    /// used yet — the panel surfaces success/failure via `transcript.note`
+    /// only; wiring this up is for a future live-progress display.
+    #[allow(dead_code)]
     pub async fn next_log_line(&mut self) -> std::io::Result<Option<String>> {
         self.stdout_lines.next_line().await
     }

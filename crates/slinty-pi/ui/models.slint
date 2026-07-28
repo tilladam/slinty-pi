@@ -1,0 +1,186 @@
+import { ListView, Palette } from "std-widgets.slint";
+
+export struct CachedModelRow {
+    alias: string,
+    hf-repo: string,
+    size: string,
+    fit-label: string,
+}
+
+component CachedModelItem inherits Rectangle {
+    in property <CachedModelRow> entry;
+    callback serve();
+
+    height: 46px;
+    border-radius: 6px;
+    background: touch.has-hover ? Palette.alternate-background.transparentize(0.3) : transparent;
+
+    HorizontalLayout {
+        padding: 8px;
+        spacing: 8px;
+
+        VerticalLayout {
+            spacing: 2px;
+            alignment: center;
+
+            Text {
+                text: entry.alias;
+                font-size: 12px;
+                font-weight: 600;
+                color: Palette.foreground;
+                overflow: elide;
+            }
+            Text {
+                text: entry.hf-repo + " · " + entry.size;
+                font-size: 10px;
+                color: Palette.foreground.transparentize(0.4);
+                overflow: elide;
+            }
+        }
+
+        Rectangle { horizontal-stretch: 1; }
+
+        Rectangle {
+            background: Palette.accent-background.transparentize(0.85);
+            border-radius: 4px;
+            HorizontalLayout {
+                padding-left: 5px;
+                padding-right: 5px;
+                Text {
+                    text: entry.fit-label;
+                    font-size: 10px;
+                    color: Palette.accent-background;
+                    vertical-alignment: center;
+                }
+            }
+        }
+
+        Rectangle {
+            width: serve-label.width + 14px;
+            height: 22px;
+            border-radius: 5px;
+            border-width: 1px;
+            border-color: Palette.border.transparentize(0.5);
+            background: serve-touch.has-hover ? Palette.alternate-background.darker(10%) : transparent;
+
+            serve-label := Text {
+                text: "serve";
+                font-size: 11px;
+                color: Palette.foreground;
+                vertical-alignment: center;
+                horizontal-alignment: center;
+            }
+            serve-touch := TouchArea {
+                clicked => { root.serve(); }
+            }
+        }
+    }
+
+    touch := TouchArea {}
+}
+
+export component ModelsOverlay inherits Rectangle {
+    in property <string> rapid-mlx-version: "";
+    in property <string> rapid-mlx-running: "";
+    in property <[CachedModelRow]> rapid-mlx-cached: [];
+    in property <int> rapid-mlx-catalog-count: 0;
+    callback close();
+    callback serve-rapid-mlx(string);
+
+    background: Palette.background.transparentize(0.1);
+
+    TouchArea {
+        // Click the scrim to dismiss.
+        clicked => { root.close(); }
+    }
+
+    Rectangle {
+        width: min(560px, parent.width - 48px);
+        height: min(520px, parent.height - 48px);
+        background: Palette.background;
+        border-radius: 10px;
+        border-width: 1px;
+        border-color: Palette.border.transparentize(0.4);
+        drop-shadow-blur: 24px;
+        drop-shadow-color: #00000055;
+
+        // Swallow clicks so they don't fall through to the scrim.
+        TouchArea {}
+
+        VerticalLayout {
+            padding: 14px;
+            spacing: 10px;
+
+            HorizontalLayout {
+                Text {
+                    text: "Models";
+                    font-size: 15px;
+                    font-weight: 700;
+                    color: Palette.foreground;
+                }
+                Rectangle { horizontal-stretch: 1; }
+                Text {
+                    text: "close ✕";
+                    font-size: 11px;
+                    color: Palette.foreground.transparentize(0.4);
+                    TouchArea { clicked => { root.close(); } }
+                }
+            }
+
+            Rectangle {
+                background: Palette.alternate-background.transparentize(0.5);
+                border-radius: 6px;
+
+                VerticalLayout {
+                    padding: 8px;
+                    spacing: 3px;
+
+                    Text {
+                        text: "rapid-mlx";
+                        font-size: 12px;
+                        font-weight: 600;
+                        color: Palette.foreground;
+                    }
+                    Text {
+                        text: root.rapid-mlx-version == "" ? "not detected — install with `brew install rapid-mlx`" : root.rapid-mlx-version;
+                        font-size: 11px;
+                        color: Palette.foreground.transparentize(0.3);
+                    }
+                    Text {
+                        text: root.rapid-mlx-running == "" ? "No server running" : root.rapid-mlx-running;
+                        font-size: 11px;
+                        color: Palette.foreground.transparentize(0.3);
+                    }
+                }
+            }
+
+            Text {
+                text: "Downloaded models";
+                font-size: 12px;
+                font-weight: 600;
+                color: Palette.foreground;
+            }
+
+            ListView {
+                for entry in root.rapid-mlx-cached: CachedModelItem {
+                    entry: entry;
+                    serve => { root.serve-rapid-mlx(entry.alias); }
+                }
+            }
+
+            if root.rapid-mlx-cached.length == 0: Text {
+                text: "No cached models yet — run `rapid-mlx pull <alias>` to download one.";
+                font-size: 12px;
+                color: Palette.foreground.transparentize(0.5);
+                wrap: word-wrap;
+            }
+
+            if root.rapid-mlx-catalog-count > 0: Text {
+                text: root.rapid-mlx-catalog-count + " aliases available in the rapid-mlx catalog — download more with `rapid-mlx pull <alias>`.";
+                font-size: 10px;
+                color: Palette.foreground.transparentize(0.5);
+                wrap: word-wrap;
+            }
+        }
+    }
+}

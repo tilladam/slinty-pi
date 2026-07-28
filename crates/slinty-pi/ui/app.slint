@@ -2,6 +2,7 @@ import { Button, ComboBox, ListView, Palette, TextEdit, VerticalBox, HorizontalB
 import { Sidebar, SessionRow } from "sidebar.slint";
 import { TreeOverlay, TreeRow } from "tree.slint";
 import { CommandPalette, PaletteRow } from "palette.slint";
+import { ModelsOverlay, CachedModelRow } from "models.slint";
 
 export struct TableCell {
     text: string,
@@ -421,6 +422,12 @@ export component AppWindow inherits Window {
     in-out property <bool> tree-visible: false;
     in property <[TreeRow]> tree-rows: [];
 
+    in-out property <bool> models-visible: false;
+    in property <string> rapid-mlx-version: "";
+    in property <string> rapid-mlx-running: "";
+    in property <[CachedModelRow]> rapid-mlx-cached: [];
+    in property <int> rapid-mlx-catalog-count: 0;
+
     // 0 = Verbose, 1 = Normal, 2 = Summary. Set from Rust at startup from
     // the persisted state file; `density-changed` fires on every change
     // (including that initial set) so Rust can keep the file in sync.
@@ -457,6 +464,8 @@ export component AppWindow inherits Window {
     callback sidebar-search-edited(string);
     callback open-tree();
     callback fork-from(string);
+    callback open-models();
+    callback serve-rapid-mlx(string);
     callback density-changed(int);
     callback open-palette();
     callback palette-query(string);
@@ -517,7 +526,8 @@ export component AppWindow inherits Window {
         // reach it once it's up; see palette.slint). Esc otherwise closes
         // the tree overlay if open, else aborts from anywhere (including
         // while the composer has focus). Cmd+B toggles the sidebar; Cmd+N
-        // starts a new session; Cmd+T opens the tree; Ctrl+O cycles density.
+        // starts a new session; Cmd+T opens the tree; Cmd+M opens the models
+        // panel; Ctrl+O cycles density.
         capture-key-pressed(event) => {
             if (event.modifiers.meta && event.text == "p") {
                 root.palette-visible = true;
@@ -525,6 +535,10 @@ export component AppWindow inherits Window {
             }
             if (event.text == Key.Escape && root.tree-visible) {
                 root.tree-visible = false;
+                return accept;
+            }
+            if (event.text == Key.Escape && root.models-visible) {
+                root.models-visible = false;
                 return accept;
             }
             if (event.text == Key.Escape && root.streaming) {
@@ -541,6 +555,10 @@ export component AppWindow inherits Window {
             }
             if (event.modifiers.meta && event.text == "t") {
                 root.open-tree();
+                return accept;
+            }
+            if (event.modifiers.meta && event.text == "m") {
+                root.open-models();
                 return accept;
             }
             if (event.modifiers.control && event.text == "o") {
@@ -733,6 +751,22 @@ export component AppWindow inherits Window {
                         }
 
                         Rectangle {
+                            width: models-label.width + 10px;
+                            height: 20px;
+                            border-radius: 5px;
+                            background: models-touch.has-hover ? Palette.alternate-background : transparent;
+                            models-label := Text {
+                                text: "models";
+                                font-size: 11px;
+                                color: Style.faint;
+                                vertical-alignment: center;
+                            }
+                            models-touch := TouchArea {
+                                clicked => { root.open-models(); }
+                            }
+                        }
+
+                        Rectangle {
                             width: density-label.width + 10px;
                             height: 20px;
                             border-radius: 5px;
@@ -781,6 +815,15 @@ export component AppWindow inherits Window {
             root.tree-visible = false;
             root.fork-from(id);
         }
+    }
+
+    if root.models-visible: ModelsOverlay {
+        rapid-mlx-version: root.rapid-mlx-version;
+        rapid-mlx-running: root.rapid-mlx-running;
+        rapid-mlx-cached: root.rapid-mlx-cached;
+        rapid-mlx-catalog-count: root.rapid-mlx-catalog-count;
+        close => { root.models-visible = false; }
+        serve-rapid-mlx(alias) => { root.serve-rapid-mlx(alias); }
     }
 
     if root.palette-visible: CommandPalette {

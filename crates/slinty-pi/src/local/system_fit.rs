@@ -25,6 +25,23 @@ impl FitLabel {
     }
 }
 
+/// Formats a byte count the way rapid-mlx's own CLI does (`"5.7 GiB"`), for
+/// display next to a fit label in the models panel.
+pub fn human_size(bytes: u64) -> String {
+    const UNITS: &[(&str, f64)] = &[
+        ("TiB", 1024.0 * 1024.0 * 1024.0 * 1024.0),
+        ("GiB", 1024.0 * 1024.0 * 1024.0),
+        ("MiB", 1024.0 * 1024.0),
+        ("KiB", 1024.0),
+    ];
+    for (unit, size) in UNITS {
+        if bytes as f64 >= *size {
+            return format!("{:.1} {unit}", bytes as f64 / size);
+        }
+    }
+    format!("{bytes} B")
+}
+
 /// `size_bytes <= 0.7x` available memory: Fits. `<= 1.0x`: May be slow.
 /// Above that (or no memory info available): Won't fit.
 pub fn fit_label(size_bytes: u64, available_bytes: u64) -> FitLabel {
@@ -43,6 +60,7 @@ pub fn fit_label(size_bytes: u64, available_bytes: u64) -> FitLabel {
 
 #[derive(Debug, Clone, Copy)]
 pub struct SystemMemory {
+    #[allow(dead_code)] // not shown in the panel yet; kept for a future "X GiB total RAM" line
     pub total_bytes: u64,
     pub available_bytes: u64,
 }
@@ -94,6 +112,13 @@ mod tests {
     #[test]
     fn zero_available_memory_never_fits() {
         assert_eq!(fit_label(1, 0), FitLabel::WontFit);
+    }
+
+    #[test]
+    fn human_size_picks_the_largest_fitting_unit() {
+        assert_eq!(human_size(500), "500 B");
+        assert_eq!(human_size(4200 * 1024 * 1024), "4.1 GiB");
+        assert_eq!(human_size((118.1 * GIB as f64) as u64), "118.1 GiB");
     }
 
     #[test]
