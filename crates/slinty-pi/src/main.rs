@@ -156,6 +156,14 @@ fn main() -> anyhow::Result<()> {
         app.on_unload_router_model(move |id| {
             let _ = tx.send(UiCmd::UnloadRouterModel(id.to_string()));
         });
+        let tx = cmd_tx.clone();
+        app.on_hf_search(move |query| {
+            let _ = tx.send(UiCmd::SearchHfModels(query.to_string()));
+        });
+        let tx = cmd_tx.clone();
+        app.on_download_hf_model(move |model| {
+            let _ = tx.send(UiCmd::DownloadRouterModel(model.to_string()));
+        });
         app.on_density_changed(density::save);
         let tx = cmd_tx.clone();
         app.on_attach_clicked(move || {
@@ -292,6 +300,18 @@ fn main() -> anyhow::Result<()> {
         &cmd_tx,
         "SLINTY_UNLOAD_ROUTER_MODEL_AFTER",
         UiCmd::UnloadRouterModel,
+    );
+    spawn_delayed_cmd(
+        &rt,
+        &cmd_tx,
+        "SLINTY_HF_SEARCH_AFTER",
+        UiCmd::SearchHfModels,
+    );
+    spawn_delayed_cmd(
+        &rt,
+        &cmd_tx,
+        "SLINTY_DOWNLOAD_HF_MODEL_AFTER",
+        UiCmd::DownloadRouterModel,
     );
     spawn_delayed_cmd(&rt, &cmd_tx, "SLINTY_FORK_FROM_AFTER", UiCmd::ForkFrom);
     // Same as SLINTY_DEMO_AUTOSEND but for the real (non-demo) backend.

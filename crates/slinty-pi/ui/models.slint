@@ -1,4 +1,4 @@
-import { ListView, Palette } from "std-widgets.slint";
+import { ListView, LineEdit, Palette } from "std-widgets.slint";
 
 export struct CachedModelRow {
     alias: string,
@@ -12,6 +12,13 @@ export struct RouterModelRow {
     status: string,
     loaded: bool,
     busy: bool,
+}
+
+export struct HfResultRow {
+    id: string,
+    gated: bool,
+    downloads: int,
+    quants: [string],
 }
 
 component CachedModelItem inherits Rectangle {
@@ -162,6 +169,7 @@ export component ModelsOverlay inherits Rectangle {
     callback serve-rapid-mlx(string);
     callback load-router-model(string);
     callback unload-router-model(string);
+    callback open-hf-search();
 
     background: Palette.background.transparentize(0.1);
 
@@ -273,12 +281,21 @@ export component ModelsOverlay inherits Rectangle {
                         font-weight: 600;
                         color: Palette.foreground;
                     }
-                    Text {
-                        text: root.router-status == "ready" ? "connected · " + root.router-url
-                            : root.router-status == "loading" ? "starting up · " + root.router-url
-                            : "not reachable at " + root.router-url;
-                        font-size: 11px;
-                        color: Palette.foreground.transparentize(0.3);
+                    HorizontalLayout {
+                        Text {
+                            text: root.router-status == "ready" ? "connected · " + root.router-url
+                                : root.router-status == "loading" ? "starting up · " + root.router-url
+                                : "not reachable at " + root.router-url;
+                            font-size: 11px;
+                            color: Palette.foreground.transparentize(0.3);
+                        }
+                        Rectangle { horizontal-stretch: 1; }
+                        Text {
+                            text: "download model…";
+                            font-size: 11px;
+                            color: Palette.accent-background;
+                            TouchArea { clicked => { root.open-hf-search(); } }
+                        }
                     }
                 }
             }
@@ -294,6 +311,138 @@ export component ModelsOverlay inherits Rectangle {
 
             if root.router-models.length == 0: Text {
                 text: "No router models detected.";
+                font-size: 12px;
+                color: Palette.foreground.transparentize(0.5);
+                wrap: word-wrap;
+            }
+        }
+    }
+}
+
+component HfResultItem inherits Rectangle {
+    in property <HfResultRow> entry;
+    callback download(string);
+    callback view-license();
+
+    height: entry.gated ? 88px : 72px;
+    border-radius: 6px;
+    background: Palette.alternate-background.transparentize(0.6);
+
+    VerticalLayout {
+        padding: 8px;
+        spacing: 4px;
+
+        HorizontalLayout {
+            spacing: 6px;
+            Text {
+                text: entry.id;
+                font-size: 12px;
+                font-weight: 600;
+                color: Palette.foreground;
+                overflow: elide;
+            }
+            Rectangle { horizontal-stretch: 1; }
+            Text {
+                text: entry.downloads + " downloads";
+                font-size: 10px;
+                color: Palette.foreground.transparentize(0.4);
+            }
+        }
+
+        if entry.gated: Text {
+            text: "⚠ gated — requires accepting a license on Hugging Face";
+            font-size: 10px;
+            color: #d9822b;
+            wrap: word-wrap;
+            TouchArea { clicked => { root.view-license(); } }
+        }
+
+        HorizontalLayout {
+            spacing: 6px;
+            for quant in entry.quants: Rectangle {
+                width: quant-label.width + 12px;
+                height: 20px;
+                border-radius: 4px;
+                border-width: 1px;
+                border-color: Palette.border.transparentize(0.5);
+                background: quant-touch.has-hover ? Palette.alternate-background.darker(10%) : transparent;
+
+                quant-label := Text {
+                    text: quant;
+                    font-size: 10px;
+                    color: Palette.foreground;
+                    vertical-alignment: center;
+                    horizontal-alignment: center;
+                }
+                quant-touch := TouchArea {
+                    clicked => { root.download(quant); }
+                }
+            }
+        }
+    }
+}
+
+export component HfSearchOverlay inherits Rectangle {
+    in property <[HfResultRow]> results: [];
+    callback close();
+    callback search(string);
+    callback download(string);
+    callback view-license(string);
+
+    background: Palette.background.transparentize(0.1);
+
+    TouchArea {
+        clicked => { root.close(); }
+    }
+
+    Rectangle {
+        width: min(520px, parent.width - 48px);
+        height: min(480px, parent.height - 48px);
+        background: Palette.background;
+        border-radius: 10px;
+        border-width: 1px;
+        border-color: Palette.border.transparentize(0.4);
+        drop-shadow-blur: 24px;
+        drop-shadow-color: #00000055;
+
+        TouchArea {}
+
+        VerticalLayout {
+            padding: 14px;
+            spacing: 10px;
+
+            HorizontalLayout {
+                Text {
+                    text: "Download a model";
+                    font-size: 15px;
+                    font-weight: 700;
+                    color: Palette.foreground;
+                }
+                Rectangle { horizontal-stretch: 1; }
+                Text {
+                    text: "close ✕";
+                    font-size: 11px;
+                    color: Palette.foreground.transparentize(0.4);
+                    TouchArea { clicked => { root.close(); } }
+                }
+            }
+
+            query-box := LineEdit {
+                placeholder-text: "Search Hugging Face for a GGUF model…";
+                accepted(text) => { root.search(text); }
+            }
+
+            ListView {
+                vertical-stretch: 1;
+                for entry in root.results: HfResultItem {
+                    entry: entry;
+                    download(quant) => { root.download(entry.id + ":" + quant); }
+                    view-license => { root.view-license(entry.id); }
+                }
+            }
+
+            if root.results.length == 0: Text {
+                text: "Search above (press Enter) to find GGUF models on Hugging Face.";
                 font-size: 12px;
                 color: Palette.foreground.transparentize(0.5);
                 wrap: word-wrap;

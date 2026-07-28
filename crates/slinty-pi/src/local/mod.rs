@@ -6,9 +6,10 @@
 //! `router` backs the llama.cpp router section (item 4b) — list/load/unload
 //! with progress polled from `GET /models`, verified via `backend.rs`'s
 //! demo-mode fakes since there's no real llama-server on the dev machine.
-//! `download_model`/`delete_model`/the SSE stream aren't used yet (item 5's
-//! HF-search/download flow); see their own `#[allow(dead_code)]` markers.
+//! `download_model` backs `hf`'s "Download model…" flow; `delete_model`/the
+//! SSE stream aren't used yet — see their own `#[allow(dead_code)]` markers.
 
+pub mod hf;
 pub mod rapid_mlx;
 pub mod router;
 pub mod system_fit;

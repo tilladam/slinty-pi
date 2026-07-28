@@ -158,7 +158,19 @@ State machine shown in the transcript's empty state, not a wizard window:
    (list/load/unload/progress) **[done, 2026-07-28]** — progress is polled from `GET /models`
    (whose `status.progress` field already carries it) rather than the `/models/sse` stream;
    `LlamaRouter::subscribe_events`/`SseReader` stay unused for now (see their doc comments).
-5. HF search + download flow (+ gated-repo warning).
+5. HF search + download flow (+ gated-repo warning). **[done, 2026-07-28]** New `local::hf`
+   module (`GET https://huggingface.co/api/models?search=…&filter=gguf&full=true`, `HF_TOKEN`
+   honored when present, verified live). Quant labels are extracted by scanning each `.gguf`
+   sibling filename for a known quant-token shape (`Q4_K_M`, `IQ4_XS`, `BF16`, …), not by
+   diffing filenames against each other — a longest-common-prefix approach breaks on both a
+   single-file repo (whole filename is the "common prefix") and a sharded repo (the shard
+   suffix leaks into the result); see `quant_from_filename`'s doc comment and the three fixture
+   tests (flat multi-file, single-file, sharded) taken from real repos. Download reuses
+   `poll_router_until_idle` unchanged, since a download shows up as a new `downloading` row in
+   `GET /models` the same way a load does. Not runnable end-to-end on this dev machine (no real
+   llama-server) — verified via `format_hf_results`'s unit tests, a live network round-trip test
+   (`local::hf::tests::live_search_round_trips_against_the_real_api`, skips on no network), and a
+   headless demo smoke run.
 6. `models.json` guided editor with round-trip-preserving serde + Ollama detection.
 7. `auth.json` key entry (secure field, 0600 preserved, interpolation entries untouched).
 8. Onboarding state machine + empty-state UI + probes (rapid-mlx / router / Ollama).

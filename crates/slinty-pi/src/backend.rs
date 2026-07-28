@@ -26,8 +26,8 @@ use crate::local;
 use crate::palette;
 use crate::segmenter::{self, segment_markdown, Segment};
 use crate::{
-    highlight, AppWindow, CachedModelRow, CodeLine, ColoredSpan, PaletteRow, QueueItem,
-    RouterModelRow, Row, SessionRow, TableCell, TableColumn, TreeRow,
+    highlight, AppWindow, CachedModelRow, CodeLine, ColoredSpan, HfResultRow, PaletteRow,
+    QueueItem, RouterModelRow, Row, SessionRow, TableCell, TableColumn, TreeRow,
 };
 
 const TEXT_FLUSH: Duration = Duration::from_millis(33);
@@ -92,6 +92,13 @@ pub enum UiCmd {
     /// "unload" clicked on a router model id: `POST /models/unload`, then
     /// refresh.
     UnloadRouterModel(String),
+    /// Hugging Face search box submitted (Enter): `GET
+    /// https://huggingface.co/api/models?search=...&filter=gguf`.
+    SearchHfModels(String),
+    /// A quant chip clicked on an HF search result: `owner/repo:quant`,
+    /// `POST /models` to start the download, then poll like
+    /// `LoadRouterModel`.
+    DownloadRouterModel(String),
 }
 
 // ---------------------------------------------------------------------------
@@ -432,6 +439,27 @@ impl Ui {
     fn show_models_panel(&self) {
         self.with_app(move |app| {
             app.set_models_visible(true);
+        });
+    }
+
+    /// `results` rows are `(id, gated, downloads, quants)`.
+    fn set_hf_search_results(&self, results: Vec<(String, bool, i32, Vec<String>)>) {
+        self.with_app(move |app| {
+            let rows: Vec<HfResultRow> = results
+                .into_iter()
+                .map(|(id, gated, downloads, quants)| HfResultRow {
+                    id: id.as_str().into(),
+                    gated,
+                    downloads,
+                    quants: ModelRc::new(VecModel::from(
+                        quants
+                            .into_iter()
+                            .map(|q| SharedString::from(q.as_str()))
+                            .collect::<Vec<_>>(),
+                    )),
+                })
+                .collect();
+            app.set_hf_search_results(ModelRc::new(VecModel::from(rows)));
         });
     }
 
@@ -1625,6 +1653,12 @@ async fn run_session(
                     UiCmd::UnloadRouterModel(model) => {
                         unload_router_model(transcript, &model).await;
                     }
+                    UiCmd::SearchHfModels(query) => {
+                        search_hf_models(transcript, &query).await;
+                    }
+                    UiCmd::DownloadRouterModel(model) => {
+                        download_router_model(transcript, &model).await;
+                    }
                 }
             }
             event = events.recv() => {
@@ -2081,6 +2115,59 @@ async fn unload_router_model(transcript: &mut Transcript, model: &str) {
     poll_router_until_idle(transcript, &router).await;
 }
 
+/// `POST /models` (download-only, doesn't load) then poll like a load — the
+/// downloaded model shows up as a new `downloading` row in `/models` as soon
+/// as the router picks it up, so this reuses `poll_router_until_idle`
+/// unchanged. Not runnable end-to-end on this dev machine (no real
+/// llama-server) — verified via `format_hf_results`'s unit tests and the
+/// demo backend's `simulate_router_download` instead.
+async fn download_router_model(transcript: &mut Transcript, model: &str) {
+    let router = local::router::LlamaRouter::default();
+    transcript.note("info", format!("router: downloading {model}…"));
+    if let Err(e) = router.download_model(model).await {
+        transcript.note(
+            "error",
+            format!("router: failed to start download of {model}: {e}"),
+        );
+        return;
+    }
+    poll_router_until_idle(transcript, &router).await;
+}
+
+/// Pure Hugging Face search results -> UI rows, shared by the live path
+/// (`search_hf_models`) and the demo backend's seeded fixtures — same
+/// shared-formatter guarantee as `format_router_models`.
+fn format_hf_results(models: Vec<local::hf::HfModel>) -> Vec<(String, bool, i32, Vec<String>)> {
+    models
+        .into_iter()
+        .map(|m| {
+            let quants = local::hf::gguf_quants(&m);
+            (m.id, m.gated.is_gated(), m.downloads as i32, quants)
+        })
+        .collect()
+}
+
+const HF_SEARCH_LIMIT: u32 = 20;
+
+async fn search_hf_models(transcript: &mut Transcript, query: &str) {
+    if query.trim().is_empty() {
+        transcript.ui.set_hf_search_results(Vec::new());
+        return;
+    }
+    match local::hf::HfSearch::default()
+        .search_gguf(query, HF_SEARCH_LIMIT)
+        .await
+    {
+        Ok(models) => transcript
+            .ui
+            .set_hf_search_results(format_hf_results(models)),
+        Err(e) => {
+            transcript.note("error", format!("Hugging Face search failed: {e}"));
+            transcript.ui.set_hf_search_results(Vec::new());
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Models panel: demo-mode fakes.
 //
@@ -2276,6 +2363,98 @@ async fn simulate_router_unload(
     render_demo_models_panel(transcript, entries).await;
 }
 
+/// Two seeded HF search results (one gated, one not) covering the quant-chip
+/// and gated-warning rendering paths — run through the same
+/// `format_hf_results` the live path uses.
+fn seed_demo_hf_results() -> Vec<local::hf::HfModel> {
+    use local::hf::{Gated, HfModel, Sibling};
+    fn siblings(names: &[&str]) -> Vec<Sibling> {
+        names
+            .iter()
+            .map(|n| Sibling {
+                rfilename: n.to_string(),
+            })
+            .collect()
+    }
+    vec![
+        HfModel {
+            id: "unsloth/Phi-4-mini-instruct-GGUF".to_string(),
+            gated: Gated::Bool(false),
+            downloads: 48213,
+            siblings: siblings(&[
+                "Phi-4-mini-instruct-BF16.gguf",
+                "Phi-4-mini-instruct-Q4_K_M.gguf",
+                "Phi-4-mini-instruct-Q8_0.gguf",
+            ]),
+        },
+        HfModel {
+            id: "meta-llama/Llama-3.1-8B-Instruct-GGUF".to_string(),
+            gated: Gated::Kind("manual".to_string()),
+            downloads: 1523890,
+            siblings: siblings(&[
+                "Llama-3.1-8B-Instruct-Q4_K_M.gguf",
+                "Llama-3.1-8B-Instruct-Q5_K_M.gguf",
+            ]),
+        },
+    ]
+}
+
+/// Simulates a download: inserts a `downloading` entry if `model` (an
+/// `owner/repo:quant` string, as built by the HF search panel) isn't already
+/// a router entry, ticks progress like `simulate_router_load`, then lands on
+/// `unloaded` — a download doesn't load the model, matching the real
+/// router's `POST /models` semantics.
+async fn simulate_router_download(
+    transcript: &mut Transcript,
+    entries: &mut Vec<local::router::ModelEntry>,
+    model: &str,
+) {
+    use local::router::{FileProgress, ModelEntry, ModelStatus, StatusProgress, StatusValue};
+    if !entries.iter().any(|e| e.id == model) {
+        entries.push(ModelEntry {
+            id: model.to_string(),
+            path: None,
+            status: ModelStatus {
+                value: StatusValue::Downloading,
+                args: vec![],
+                failed: false,
+                exit_code: None,
+                progress: None,
+            },
+            architecture: None,
+        });
+    }
+    for pct in [25u64, 60, 100] {
+        if let Some(entry) = entries.iter_mut().find(|e| e.id == model) {
+            entry.status = if pct < 100 {
+                ModelStatus {
+                    value: StatusValue::Downloading,
+                    args: vec![],
+                    failed: false,
+                    exit_code: None,
+                    progress: Some(StatusProgress::Downloading(HashMap::from([(
+                        format!("https://huggingface.co/{model}"),
+                        FileProgress {
+                            done: pct,
+                            total: 100,
+                        },
+                    )]))),
+                }
+            } else {
+                ModelStatus {
+                    value: StatusValue::Unloaded,
+                    args: vec![],
+                    failed: false,
+                    exit_code: None,
+                    progress: None,
+                }
+            };
+        }
+        render_demo_models_panel(transcript, entries).await;
+        tokio::time::sleep(Duration::from_millis(300)).await;
+    }
+}
+
 #[cfg(test)]
 mod models_panel_tests {
     use super::*;
@@ -2414,6 +2593,31 @@ mod models_panel_tests {
         assert_eq!(hf_repo, "mlx-community/Qwen3.5-4B-MLX-4bit");
         assert_eq!(size, "5.7 GiB");
         assert_eq!(fit, "Fits");
+    }
+
+    /// Same shared-formatter guarantee as the router fixture test above,
+    /// for the HF search results path.
+    #[test]
+    fn seeded_demo_hf_results_cover_gated_and_public_via_the_shared_formatter() {
+        let rows = format_hf_results(seed_demo_hf_results());
+        assert_eq!(rows.len(), 2);
+
+        let (id, gated, downloads, quants) =
+            rows.iter().find(|(id, ..)| id.contains("Phi-4")).unwrap();
+        assert_eq!(id, "unsloth/Phi-4-mini-instruct-GGUF");
+        assert!(!gated);
+        assert!(*downloads > 0);
+        assert_eq!(
+            quants,
+            &vec!["BF16".to_string(), "Q4_K_M".to_string(), "Q8_0".to_string()]
+        );
+
+        let (_, gated, _, quants) = rows
+            .iter()
+            .find(|(id, ..)| id.contains("Llama-3.1"))
+            .unwrap();
+        assert!(gated);
+        assert_eq!(quants, &vec!["Q4_K_M".to_string(), "Q5_K_M".to_string()]);
     }
 }
 
@@ -3019,6 +3223,19 @@ pub async fn demo_backend(
             }
             UiCmd::UnloadRouterModel(model) => {
                 simulate_router_unload(&mut transcript, &mut demo_router_entries, &model).await;
+                continue;
+            }
+            UiCmd::SearchHfModels(query) => {
+                let results = if query.trim().is_empty() {
+                    Vec::new()
+                } else {
+                    format_hf_results(seed_demo_hf_results())
+                };
+                transcript.ui.set_hf_search_results(results);
+                continue;
+            }
+            UiCmd::DownloadRouterModel(model) => {
+                simulate_router_download(&mut transcript, &mut demo_router_entries, &model).await;
                 continue;
             }
             _ => continue,

@@ -185,9 +185,9 @@ impl LlamaRouter {
         self.post_model_action("/models/unload", model).await
     }
 
-    /// `POST /models` — starts a non-blocking download; track progress via
-    /// [`Self::subscribe_events`].
-    #[allow(dead_code)] // item 5's HF-search/download flow
+    /// `POST /models` — starts a non-blocking download; progress is polled
+    /// from [`Self::list_models`] (see `poll_router_until_idle` in
+    /// `backend.rs`), not [`Self::subscribe_events`].
     pub async fn download_model(&self, model: &str) -> Result<(), RouterError> {
         self.post_model_action("/models", model).await
     }

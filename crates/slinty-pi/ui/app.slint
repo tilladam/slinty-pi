@@ -2,7 +2,7 @@ import { Button, ComboBox, ListView, Palette, TextEdit, VerticalBox, HorizontalB
 import { Sidebar, SessionRow } from "sidebar.slint";
 import { TreeOverlay, TreeRow } from "tree.slint";
 import { CommandPalette, PaletteRow } from "palette.slint";
-import { ModelsOverlay, CachedModelRow, RouterModelRow } from "models.slint";
+import { ModelsOverlay, CachedModelRow, RouterModelRow, HfSearchOverlay, HfResultRow } from "models.slint";
 
 export struct TableCell {
     text: string,
@@ -431,6 +431,9 @@ export component AppWindow inherits Window {
     in property <string> router-url: "";
     in property <[RouterModelRow]> router-models: [];
 
+    in-out property <bool> hf-search-visible: false;
+    in property <[HfResultRow]> hf-search-results: [];
+
     // 0 = Verbose, 1 = Normal, 2 = Summary. Set from Rust at startup from
     // the persisted state file; `density-changed` fires on every change
     // (including that initial set) so Rust can keep the file in sync.
@@ -471,6 +474,8 @@ export component AppWindow inherits Window {
     callback serve-rapid-mlx(string);
     callback load-router-model(string);
     callback unload-router-model(string);
+    callback hf-search(string);
+    callback download-hf-model(string);
     callback density-changed(int);
     callback open-palette();
     callback palette-query(string);
@@ -834,6 +839,15 @@ export component AppWindow inherits Window {
         serve-rapid-mlx(alias) => { root.serve-rapid-mlx(alias); }
         load-router-model(id) => { root.load-router-model(id); }
         unload-router-model(id) => { root.unload-router-model(id); }
+        open-hf-search => { root.hf-search-visible = true; }
+    }
+
+    if root.hf-search-visible: HfSearchOverlay {
+        results: root.hf-search-results;
+        close => { root.hf-search-visible = false; }
+        search(q) => { root.hf-search(q); }
+        download(model) => { root.download-hf-model(model); }
+        view-license(id) => { root.open-link("https://huggingface.co/" + id); }
     }
 
     if root.palette-visible: CommandPalette {
