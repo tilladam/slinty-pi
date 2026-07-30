@@ -1,3 +1,8 @@
 /target
 **/*.rs.bk
 .DS_Store
+
+# Local Claude Code state — settings.local.json carries this machine's own
+# absolute paths and permission grants, not something to share via the repo.
+/.claude/
+/.agents/
