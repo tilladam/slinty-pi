@@ -191,6 +191,7 @@ impl RowSpec {
             lang: self.lang.as_str().into(),
             level: self.level,
             expanded: false,
+            expanded_overridden: false,
             detail: self.detail.as_str().into(),
             running: self.running,
             elapsed: self.elapsed.as_str().into(),
@@ -253,6 +254,7 @@ impl Ui {
                 let mut row = spec.to_row();
                 if let Some(old) = model.row_data(index) {
                     row.expanded = old.expanded;
+                    row.expanded_overridden = old.expanded_overridden;
                 }
                 model.set_row_data(index, row);
                 app.invoke_scroll_to_end();

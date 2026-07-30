@@ -32,6 +32,9 @@ export struct Row {
     lang: string,        // code language label
     level: int,          // heading level
     expanded: bool,      // thinking & tool rows
+    expanded-overridden: bool, // tool rows: user has explicitly toggled
+                               // expansion, so density's force-expand should
+                               // no longer apply
     detail: string,      // tool expanded detail
     running: bool,       // busy indicator on thinking/tool rows
     elapsed: string,     // tool elapsed label
@@ -325,7 +328,9 @@ component ThinkingRow inherits VerticalLayout {
 component ToolRow inherits VerticalLayout {
     in-out property <Row> entry;
     in property <bool> force-expanded: false;
-    property <bool> effective-expanded: entry.expanded || force-expanded;
+    // Once the user has explicitly toggled a row, their choice always wins;
+    // until then, density's force-expand (e.g. verbose mode) sets the default.
+    property <bool> effective-expanded: entry.expanded-overridden ? entry.expanded : (entry.expanded || force-expanded);
     spacing: 4px;
     HorizontalLayout {
         alignment: start;
@@ -355,7 +360,10 @@ component ToolRow inherits VerticalLayout {
                 }
             }
             TouchArea {
-                clicked => { entry.expanded = !entry.expanded; }
+                clicked => {
+                    entry.expanded = !effective-expanded;
+                    entry.expanded-overridden = true;
+                }
             }
         }
         if entry.running: Dots { }
@@ -613,8 +621,8 @@ export component AppWindow inherits Window {
                         if row-shown && entry.kind == "table": TableBlock {
                             columns: entry.table-columns;
                         }
-                        if row-shown && entry.kind == "thinking": ThinkingRow { entry: entry; }
-                        if row-shown && entry.kind == "tool": ToolRow { entry: entry; force-expanded: root.density == 0; }
+                        if row-shown && entry.kind == "thinking": ThinkingRow { entry <=> entry; }
+                        if row-shown && entry.kind == "tool": ToolRow { entry <=> entry; force-expanded: root.density == 0; }
                         if row-shown && (entry.kind == "info" || entry.kind == "error"): NoteRow { entry: entry; }
                     }
                 }
