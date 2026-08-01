@@ -487,6 +487,10 @@ export component AppWindow inherits Window {
     in-out property <int> thinking-index: -1;
     in property <bool> streaming: false;
     in property <string> status-text: "";
+    // Status-bar server dot: 0 = hidden (cloud model), 1 = local server
+    // reachable, 2 = local server down (needs attention). Click restarts a
+    // dead managed rapid-mlx server, or opens the models panel.
+    in property <int> server-dot: 0;
     in property <float> context-percent: 0;
     in property <int> composer-lines: 1;
     // File names of images queued for the next send (attach button).
@@ -571,6 +575,7 @@ export component AppWindow inherits Window {
     callback add-ollama-to-pi();
     callback density-changed(int);
     callback scheme-changed(bool);
+    callback server-dot-clicked();
     callback open-palette();
     callback palette-query(string);
     callback palette-exec(string);
@@ -829,6 +834,20 @@ export component AppWindow inherits Window {
                         padding-right: 2px;
 
                         UsageRing { percent: root.context-percent; }
+                        if root.server-dot != 0: Rectangle {
+                            width: 14px;
+                            height: 20px;
+                            Rectangle {
+                                width: 8px;
+                                height: 8px;
+                                border-radius: 4px;
+                                background: root.server-dot == 2 ? #d35454 : #43a047;
+                            }
+                            TouchArea {
+                                mouse-cursor: pointer;
+                                clicked => { root.server-dot-clicked(); }
+                            }
+                        }
                         Text {
                             text: root.status-text;
                             font-size: 11px;

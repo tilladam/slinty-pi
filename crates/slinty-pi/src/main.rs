@@ -83,6 +83,10 @@ fn main() -> anyhow::Result<()> {
             let _ = tx.send(UiCmd::Abort);
         });
         let tx = cmd_tx.clone();
+        app.on_server_dot_clicked(move || {
+            let _ = tx.send(UiCmd::ServerDotClicked);
+        });
+        let tx = cmd_tx.clone();
         app.on_model_selected(move |i| {
             if i >= 0 {
                 let _ = tx.send(UiCmd::SetModel(i as usize));
@@ -205,6 +209,10 @@ fn main() -> anyhow::Result<()> {
                 let _ = tx.send(UiCmd::SwitchSession(path.to_string()));
             } else if let Some(name) = id.strip_prefix("command:") {
                 let _ = tx.send(UiCmd::Send(format!("/{name}")));
+            } else if let Some(index) = id.strip_prefix("model:") {
+                if let Ok(i) = index.parse::<usize>() {
+                    let _ = tx.send(UiCmd::SetModel(i));
+                }
             } else if let Some(action) = id.strip_prefix("action:") {
                 match action {
                     "new-session" => {
@@ -323,8 +331,12 @@ fn main() -> anyhow::Result<()> {
     spawn_delayed_cmd(&rt, &cmd_tx, "SLINTY_FORK_FROM_AFTER", UiCmd::ForkFrom);
     // Same as SLINTY_DEMO_AUTOSEND but for the real (non-demo) backend.
     spawn_delayed_cmd(&rt, &cmd_tx, "SLINTY_SEND_AFTER", UiCmd::Send);
-    spawn_delayed_cmd(&rt, &cmd_tx, "SLINTY_OPEN_PALETTE_AFTER", |_| {
-        UiCmd::OpenPalette
+    // Mirrors Cmd+P: setting `palette-visible` shows the overlay AND fires
+    // the `open-palette` callback (via its changed handler), which is what
+    // sends `UiCmd::OpenPalette` to the backend — sending the command
+    // directly would populate entries without ever showing the palette.
+    spawn_delayed_invoke(&rt, app.as_weak(), "SLINTY_OPEN_PALETTE_AFTER", |app, _| {
+        app.set_palette_visible(true);
     });
     spawn_delayed_cmd(
         &rt,

@@ -2,7 +2,7 @@ import { ListView, LineEdit, Palette } from "std-widgets.slint";
 
 export struct PaletteRow {
     id: string,
-    kind: string, // "action" | "session" | "command"
+    kind: string, // "action" | "session" | "command" | "model"
     label: string,
     detail: string,
 }
@@ -100,7 +100,10 @@ export component CommandPalette inherits Rectangle {
                             spacing: 8px;
 
                             Text {
-                                text: row.kind == "session" ? "◷" : row.kind == "command" ? "/" : "▸";
+                                text: row.kind == "session" ? "◷"
+                                    : row.kind == "command" ? "/"
+                                    : row.kind == "model" ? "◇"
+                                    : "▸";
                                 font-size: 11px;
                                 color: Palette.foreground.transparentize(0.5);
                                 vertical-alignment: center;

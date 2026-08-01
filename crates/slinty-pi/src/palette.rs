@@ -1,10 +1,11 @@
 //! Command palette entry model and fuzzy ranking.
 //!
-//! Entries are a tagged union over three sources: static app actions, the
-//! current project's sessions, and pi's `get_commands` slash commands. The
-//! `id` prefix (`action:` / `session:` / `command:`) is how the palette's
-//! `exec` dispatch (in `main.rs`) tells them apart — see `PaletteRow` in
-//! `ui/palette.slint` for the Slint-side mirror of this shape.
+//! Entries are a tagged union over four sources: static app actions, the
+//! current project's sessions, pi's `get_commands` slash commands, and the
+//! composer's model list ("load model"). The `id` prefix (`action:` /
+//! `session:` / `command:` / `model:`) is how the palette's `exec` dispatch
+//! (in `main.rs`) tells them apart — see `PaletteRow` in `ui/palette.slint`
+//! for the Slint-side mirror of this shape.
 
 use nucleo_matcher::pattern::{CaseMatching, Normalization, Pattern};
 use nucleo_matcher::{Config, Matcher};
@@ -48,10 +49,13 @@ const ACTIONS: &[(&str, &str, &str)] = &[
 ];
 
 /// Build the full unranked entry list from the current project's sessions
-/// (already-scanned metadata) and pi's `get_commands` response data.
+/// (already-scanned metadata), pi's `get_commands` response data, and the
+/// composer's model labels (indexed as the picker is, so `model:{i}` maps
+/// straight onto `UiCmd::SetModel(i)`).
 pub fn build_entries(
     sessions: &[pi_sessions::SessionMeta],
     commands: &[serde_json::Value],
+    model_labels: &[String],
 ) -> Vec<PaletteEntry> {
     let mut entries: Vec<PaletteEntry> = ACTIONS
         .iter()
@@ -80,6 +84,18 @@ pub fn build_entries(
             detail: detail.to_string(),
         })
     }));
+
+    entries.extend(
+        model_labels
+            .iter()
+            .enumerate()
+            .map(|(i, label)| PaletteEntry {
+                id: format!("model:{i}"),
+                kind: "model",
+                label: label.clone(),
+                detail: "load model".to_string(),
+            }),
+    );
 
     entries
 }
@@ -158,7 +174,7 @@ mod tests {
     }
 
     #[test]
-    fn build_entries_includes_all_three_sources_with_correct_id_prefixes() {
+    fn build_entries_includes_all_four_sources_with_correct_id_prefixes() {
         let sessions = vec![pi_sessions::SessionMeta {
             path: "/x/y.jsonl".into(),
             id: "id1".into(),
@@ -174,7 +190,8 @@ mod tests {
         }];
         let commands =
             vec![serde_json::json!({"name": "compact", "description": "compact context"})];
-        let entries = build_entries(&sessions, &commands);
+        let models = vec!["Claude Sonnet 4 · anthropic · $3/$15".to_string()];
+        let entries = build_entries(&sessions, &commands, &models);
 
         assert!(entries
             .iter()
@@ -185,5 +202,16 @@ mod tests {
         assert!(entries
             .iter()
             .any(|e| e.kind == "command" && e.id == "command:compact" && e.label == "/compact"));
+        assert!(entries.iter().any(|e| e.kind == "model"
+            && e.id == "model:0"
+            && e.label == models[0]
+            && e.detail == "load model"));
+    }
+
+    #[test]
+    fn model_entries_rank_for_a_load_query() {
+        let entries = build_entries(&[], &[], &["qwen3.5-4b · rapid-mlx · free · local".into()]);
+        let ranked = rank(&entries, "load qwen");
+        assert_eq!(ranked.first().map(|e| e.id.as_str()), Some("model:0"));
     }
 }

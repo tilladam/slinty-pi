@@ -385,6 +385,13 @@ impl ManagedServer {
         self.stdout_lines.next_line().await
     }
 
+    /// Whether the child process is still running. `false` once it has
+    /// exited (crash or external kill) — drives the status-bar server dot's
+    /// needs-attention state.
+    pub fn is_alive(&mut self) -> bool {
+        matches!(self.child.try_wait(), Ok(None))
+    }
+
     pub async fn shutdown(mut self) -> std::io::Result<()> {
         self.child.start_kill()?;
         self.child.wait().await?;

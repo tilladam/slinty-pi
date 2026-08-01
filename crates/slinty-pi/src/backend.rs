@@ -103,6 +103,9 @@ pub enum UiCmd {
     /// currently-detected Ollama model into `~/.pi/agent/models.json` under
     /// the canonical `ollama` provider preset.
     AddOllamaToPi,
+    /// The status-bar server dot was clicked: restart a dead managed
+    /// rapid-mlx server, or open the models panel when healthy.
+    ServerDotClicked,
 }
 
 // ---------------------------------------------------------------------------
@@ -362,6 +365,10 @@ impl Ui {
             app.set_model_list(ModelRc::new(VecModel::from(labels)));
             app.set_model_index(index);
         });
+    }
+
+    fn set_server_dot(&self, state: i32) {
+        self.with_app(move |app| app.set_server_dot(state));
     }
 
     fn set_thinking(&self, labels: Vec<String>, index: i32) {
@@ -1193,7 +1200,46 @@ fn user_content_text(content: &serde_json::Value) -> (String, usize) {
 struct ModelEntry {
     provider: String,
     id: String,
+    /// pi's `baseUrl` for this model's provider; "" when absent.
+    base_url: String,
+    /// Whether `base_url` points at this machine (localhost et al.).
+    is_local: bool,
 }
+
+/// The composer model picker's state, rebuilt by `refresh_models`: wire
+/// entries for `set_model` (indexed the same as the picker), the display
+/// labels (shared with the palette's "load model" entries), and the index
+/// of pi's currently-selected model (-1 when unknown).
+struct ModelsState {
+    entries: Vec<ModelEntry>,
+    labels: Vec<String>,
+    current: i32,
+}
+
+impl ModelsState {
+    fn get(&self, i: usize) -> Option<&ModelEntry> {
+        self.entries.get(i)
+    }
+
+    fn current_entry(&self) -> Option<&ModelEntry> {
+        usize::try_from(self.current)
+            .ok()
+            .and_then(|i| self.entries.get(i))
+    }
+}
+
+/// A `rapid-mlx serve` child this app spawned, plus the alias it serves —
+/// the alias is what the status dot's one-click restart re-serves after the
+/// child dies.
+struct ManagedRapidMlx {
+    alias: String,
+    server: local::rapid_mlx::ManagedServer,
+}
+
+// Status-bar server dot states (mirrored by `server-dot` in app.slint).
+const SERVER_DOT_HIDDEN: i32 = 0;
+const SERVER_DOT_OK: i32 = 1;
+const SERVER_DOT_DOWN: i32 = 2;
 
 /// One `pi --mode rpc` child's lifetime ends either because the app is
 /// closing, or because the user switched projects and needs a new child
@@ -1431,7 +1477,7 @@ pub async fn pi_backend(
     // Independent of pi's session/project lifecycle (switching sessions or
     // projects shouldn't kill a running local model server), so it lives at
     // this outer scope rather than inside `run_session`.
-    let mut managed_rapid_mlx: Option<local::rapid_mlx::ManagedServer> = None;
+    let mut managed_rapid_mlx: Option<ManagedRapidMlx> = None;
 
     loop {
         sidebar.cwd = cwd.clone();
@@ -1550,12 +1596,18 @@ async fn run_session(
     sessions_changed: &mut mpsc::UnboundedReceiver<()>,
     transcript: &mut Transcript,
     sidebar: &mut Sidebar,
-    managed_rapid_mlx: &mut Option<local::rapid_mlx::ManagedServer>,
+    managed_rapid_mlx: &mut Option<ManagedRapidMlx>,
 ) -> SessionOutcome {
     let mut models = refresh_models(client, transcript).await;
     let mut thinking_levels = refresh_thinking(client, transcript).await;
     let mut streaming = false;
     let mut palette_entries: Vec<palette::PaletteEntry> = Vec::new();
+    // Status-bar server dot: recomputed every tick (and immediately after
+    // model/server changes via `reset_immediately`), pushed to the UI only
+    // on change.
+    let mut server_dot = SERVER_DOT_HIDDEN;
+    let mut dot_interval = tokio::time::interval(Duration::from_secs(5));
+    dot_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     // (display name, encoded image) pairs queued for the next non-streaming
     // `Send`.
     let mut pending_images: Vec<(String, ImageContent)> = Vec::new();
@@ -1610,8 +1662,10 @@ async fn run_session(
                         if let Some(entry) = models.get(i) {
                             match client.set_model(&entry.provider, &entry.id).await {
                                 Ok(_) => {
+                                    models.current = i as i32;
                                     thinking_levels =
                                         refresh_thinking(client, transcript).await;
+                                    dot_interval.reset_immediately();
                                 }
                                 Err(e) => transcript.note("error", e.to_string()),
                             }
@@ -1686,7 +1740,8 @@ async fn run_session(
                             .ok()
                             .and_then(|d| d.get("commands").and_then(|v| v.as_array()).cloned())
                             .unwrap_or_default();
-                        palette_entries = palette::build_entries(&sessions, &commands);
+                        palette_entries =
+                            palette::build_entries(&sessions, &commands, &models.labels);
                         tracing::debug!(entries = palette_entries.len(), "palette: built entries");
                         transcript.ui.set_palette_entries(palette::rank(&palette_entries, ""));
                     }
@@ -1705,6 +1760,8 @@ async fn run_session(
                     }
                     UiCmd::ServeRapidMlxModel(alias) => {
                         serve_rapid_mlx_model(client, transcript, managed_rapid_mlx, &alias).await;
+                        models = refresh_models(client, transcript).await;
+                        dot_interval.reset_immediately();
                     }
                     UiCmd::LoadRouterModel(model) => {
                         load_router_model(transcript, &model).await;
@@ -1734,6 +1791,30 @@ async fn run_session(
                             models = refresh_models(client, transcript).await;
                         }
                     }
+                    UiCmd::ServerDotClicked => {
+                        let dead_alias = managed_rapid_mlx
+                            .as_mut()
+                            .and_then(|m| (!m.server.is_alive()).then(|| m.alias.clone()));
+                        if let Some(alias) = dead_alias {
+                            transcript.note(
+                                "info",
+                                format!("rapid-mlx server for {alias} died — restarting…"),
+                            );
+                            serve_rapid_mlx_model(client, transcript, managed_rapid_mlx, &alias)
+                                .await;
+                            models = refresh_models(client, transcript).await;
+                            dot_interval.reset_immediately();
+                        } else {
+                            open_models_panel(transcript).await;
+                        }
+                    }
+                }
+            }
+            _ = dot_interval.tick() => {
+                let dot = compute_server_dot(models.current_entry(), managed_rapid_mlx).await;
+                if dot != server_dot {
+                    server_dot = dot;
+                    transcript.ui.set_server_dot(dot);
                 }
             }
             event = events.recv() => {
@@ -2632,6 +2713,78 @@ async fn simulate_router_download(
 }
 
 #[cfg(test)]
+mod model_label_tests {
+    use super::*;
+
+    #[test]
+    fn local_base_urls_are_detected() {
+        for url in [
+            "http://localhost:8000",
+            "http://127.0.0.1:8080",
+            "http://0.0.0.0:11434/v1",
+            "http://[::1]:8080",
+            "https://localhost",
+        ] {
+            assert!(is_local_base_url(url), "{url} should be local");
+        }
+        for url in [
+            "https://api.anthropic.com",
+            "https://api.openai.com/v1",
+            "http://192.168.1.10:8080",
+            "",
+        ] {
+            assert!(!is_local_base_url(url), "{url} should not be local");
+        }
+    }
+
+    #[test]
+    fn cloud_model_label_shows_provider_and_price() {
+        let m = serde_json::json!({
+            "id": "claude-sonnet-4",
+            "name": "Claude Sonnet 4",
+            "provider": "anthropic",
+            "baseUrl": "https://api.anthropic.com",
+            "cost": {"input": 3.0, "output": 15.0},
+        });
+        assert_eq!(model_label(&m), "Claude Sonnet 4 · anthropic · $3/$15");
+    }
+
+    #[test]
+    fn cloud_model_without_cost_omits_the_price() {
+        let m = serde_json::json!({
+            "id": "some-model",
+            "provider": "openai",
+            "baseUrl": "https://api.openai.com",
+        });
+        assert_eq!(model_label(&m), "some-model · openai");
+    }
+
+    #[test]
+    fn local_model_label_says_free_local_instead_of_price() {
+        let m = serde_json::json!({
+            "id": "qwen3.5-4b-4bit",
+            "provider": "rapid-mlx",
+            "baseUrl": "http://localhost:8000",
+            "cost": {"input": 0.0, "output": 0.0},
+        });
+        assert_eq!(
+            model_label(&m),
+            "qwen3.5-4b-4bit · rapid-mlx · free · local"
+        );
+    }
+
+    #[test]
+    fn fractional_prices_keep_significant_digits() {
+        let m = serde_json::json!({
+            "id": "m", "provider": "p",
+            "baseUrl": "https://api.example.com",
+            "cost": {"input": 0.25, "output": 0.6},
+        });
+        assert_eq!(model_label(&m), "m · p · $0.25/$0.6");
+    }
+}
+
+#[cfg(test)]
 mod models_panel_tests {
     use super::*;
     use local::router::{FileProgress, LoadingProgress, ModelStatus, StatusProgress, StatusValue};
@@ -2825,12 +2978,12 @@ mod models_panel_tests {
 async fn serve_rapid_mlx_model(
     client: &PiClient,
     transcript: &mut Transcript,
-    managed: &mut Option<local::rapid_mlx::ManagedServer>,
+    managed: &mut Option<ManagedRapidMlx>,
     alias: &str,
 ) {
     if let Some(prev) = managed.take() {
         transcript.note("info", "stopping the previous managed rapid-mlx server…");
-        let _ = prev.shutdown().await;
+        let _ = prev.server.shutdown().await;
     }
 
     transcript.note("info", format!("starting rapid-mlx serve {alias}…"));
@@ -2841,7 +2994,10 @@ async fn serve_rapid_mlx_model(
     ) {
         Ok(mut server) => match server.wait_ready(Duration::from_secs(180)).await {
             Ok(()) => {
-                *managed = Some(server);
+                *managed = Some(ManagedRapidMlx {
+                    alias: alias.to_string(),
+                    server,
+                });
                 match client.set_model("rapid-mlx", alias).await {
                     Ok(_) => transcript.note("info", format!("rapid-mlx: {alias} ready")),
                     Err(e) => transcript.note(
@@ -3176,7 +3332,7 @@ mod tree_tests {
     }
 }
 
-async fn refresh_models(client: &PiClient, transcript: &mut Transcript) -> Vec<ModelEntry> {
+async fn refresh_models(client: &PiClient, transcript: &mut Transcript) -> ModelsState {
     let mut entries = Vec::new();
     let mut labels = Vec::new();
     match client.get_available_models().await {
@@ -3185,12 +3341,14 @@ async fn refresh_models(client: &PiClient, transcript: &mut Transcript) -> Vec<M
                 for m in models {
                     let provider = m.get("provider").and_then(|v| v.as_str()).unwrap_or("");
                     let id = m.get("id").and_then(|v| v.as_str()).unwrap_or("");
-                    let name = m.get("name").and_then(|v| v.as_str()).unwrap_or(id);
+                    let base_url = m.get("baseUrl").and_then(|v| v.as_str()).unwrap_or("");
                     entries.push(ModelEntry {
                         provider: provider.to_string(),
                         id: id.to_string(),
+                        base_url: base_url.to_string(),
+                        is_local: is_local_base_url(base_url),
                     });
-                    labels.push(format!("{name} · {provider}"));
+                    labels.push(model_label(m));
                 }
             }
         }
@@ -3208,8 +3366,112 @@ async fn refresh_models(client: &PiClient, transcript: &mut Transcript) -> Vec<M
         }
         Err(_) => -1,
     };
-    transcript.ui.set_models(labels, current);
-    entries
+    transcript.ui.set_models(labels.clone(), current);
+    ModelsState {
+        entries,
+        labels,
+        current,
+    }
+}
+
+/// Status-bar dot state for the active model: hidden unless the model is
+/// served from this machine; then alive-ness comes from the managed child's
+/// process state (when this app spawned it) or a 1s TCP probe of the
+/// model's base URL (router, external rapid-mlx, Ollama, …).
+async fn compute_server_dot(
+    current: Option<&ModelEntry>,
+    managed: &mut Option<ManagedRapidMlx>,
+) -> i32 {
+    let Some(entry) = current.filter(|e| e.is_local) else {
+        return SERVER_DOT_HIDDEN;
+    };
+    if entry.provider == "rapid-mlx" {
+        if let Some(m) = managed {
+            return if m.server.is_alive() {
+                SERVER_DOT_OK
+            } else {
+                SERVER_DOT_DOWN
+            };
+        }
+    }
+    if probe_tcp(&entry.base_url).await {
+        SERVER_DOT_OK
+    } else {
+        SERVER_DOT_DOWN
+    }
+}
+
+/// One-shot TCP connect to a base URL's host:port, capped at 1s. Cheaper
+/// and more universal than an HTTP health endpoint (which local servers
+/// don't uniformly have) — "the port answers" is the honesty level the dot
+/// promises.
+async fn probe_tcp(base_url: &str) -> bool {
+    let https = base_url.starts_with("https://");
+    let rest = base_url
+        .strip_prefix("http://")
+        .or_else(|| base_url.strip_prefix("https://"))
+        .unwrap_or(base_url);
+    let hostport = rest.split('/').next().unwrap_or("");
+    let (host, port) = match hostport.rsplit_once(':') {
+        Some((h, p)) => (h, p.parse().unwrap_or(if https { 443 } else { 80 })),
+        None => (hostport, if https { 443 } else { 80 }),
+    };
+    let host = host.trim_start_matches('[').trim_end_matches(']');
+    tokio::time::timeout(
+        Duration::from_secs(1),
+        tokio::net::TcpStream::connect((host, port)),
+    )
+    .await
+    .map(|r| r.is_ok())
+    .unwrap_or(false)
+}
+
+/// Whether a provider `baseUrl` points at this machine — the local/cloud
+/// split behind the picker badge and the status-bar server dot.
+fn is_local_base_url(base_url: &str) -> bool {
+    let rest = base_url
+        .strip_prefix("http://")
+        .or_else(|| base_url.strip_prefix("https://"))
+        .unwrap_or(base_url);
+    let host = rest
+        .split('/')
+        .next()
+        .unwrap_or("")
+        .rsplit_once(':')
+        .map(|(h, _)| h)
+        .unwrap_or_else(|| rest.split('/').next().unwrap_or(""));
+    matches!(
+        host,
+        "localhost" | "127.0.0.1" | "0.0.0.0" | "[::1]" | "::1"
+    )
+}
+
+/// Picker label for one of pi's `Model` objects: name, provider, and either
+/// "free · local" (local endpoint) or the per-Mtok in/out price when known.
+fn model_label(m: &serde_json::Value) -> String {
+    let id = m.get("id").and_then(|v| v.as_str()).unwrap_or("");
+    let name = m.get("name").and_then(|v| v.as_str()).unwrap_or(id);
+    let provider = m.get("provider").and_then(|v| v.as_str()).unwrap_or("");
+    let base_url = m.get("baseUrl").and_then(|v| v.as_str()).unwrap_or("");
+    let mut label = if provider.is_empty() {
+        name.to_string()
+    } else {
+        format!("{name} · {provider}")
+    };
+    if is_local_base_url(base_url) {
+        label.push_str(" · free · local");
+    } else {
+        let price = |key: &str| m.pointer(&format!("/cost/{key}")).and_then(|v| v.as_f64());
+        if let (Some(input), Some(output)) = (price("input"), price("output")) {
+            // Trim trailing zeros: 3.0 → "$3", 0.25 → "$0.25".
+            let fmt = |v: f64| {
+                let s = format!("{v:.2}");
+                s.trim_end_matches('0').trim_end_matches('.').to_string()
+            };
+            label.push_str(&format!(" · ${}/${}", fmt(input), fmt(output)));
+        }
+    }
+    label
 }
 
 async fn refresh_thinking(client: &PiClient, transcript: &mut Transcript) -> Vec<ThinkingLevel> {
@@ -3336,9 +3598,18 @@ pub async fn demo_backend(
 ) {
     let ui = Ui::new(weak, dark);
     let mut transcript = Transcript::new(ui);
-    transcript
-        .ui
-        .set_models(vec!["demo model · synthetic".into()], 0);
+    // Through the real `model_label` (not a hand-written string) so the demo
+    // exercises the same badge formatting the live picker uses.
+    transcript.ui.set_models(
+        vec![model_label(&serde_json::json!({
+            "id": "demo-model",
+            "name": "demo model",
+            "provider": "synthetic",
+            "baseUrl": "http://localhost:0",
+        }))],
+        0,
+    );
+    transcript.ui.set_server_dot(SERVER_DOT_OK);
 
     // Sessions/hydration are demoable without pi: the sidebar lists
     // pi-sessions' own test fixtures (guaranteed to match the real on-disk
@@ -3404,7 +3675,7 @@ pub async fn demo_backend(
             // Both sections are seeded fakes here (not live-probed), so the
             // panel is demoable offline and deterministic — see the
             // "Models panel: demo-mode fakes" section below.
-            UiCmd::OpenModels => {
+            UiCmd::OpenModels | UiCmd::ServerDotClicked => {
                 render_demo_models_panel(&mut transcript, &demo_router_entries).await;
                 continue;
             }
