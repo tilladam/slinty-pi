@@ -27,7 +27,7 @@ use crate::palette;
 use crate::segmenter::{self, segment_markdown, Segment};
 use crate::{
     highlight, AppWindow, CachedModelRow, CodeLine, ColoredSpan, HfResultRow, PaletteRow,
-    QueueItem, RouterModelRow, Row, SessionRow, TableCell, TableColumn, TreeRow,
+    QueueItem, RouterModelRow, Row, SessionRow, TableCell, TableRowCells, TreeRow,
 };
 
 const TEXT_FLUSH: Duration = Duration::from_millis(33);
@@ -113,7 +113,7 @@ pub enum UiCmd {
 struct RowSpec {
     kind: &'static str,
     /// Markdown for the styled field (prose only; code and tables render
-    /// through `code_lines`/`table_columns` instead).
+    /// through `code_lines`/`table_rows` instead).
     markdown: Option<String>,
     text: String,
     lang: String,
@@ -130,8 +130,8 @@ struct RowSpec {
     raw: String,
     /// "code" rows: per-line, per-span highlighted content.
     code_lines: Vec<highlight::CodeLine>,
-    /// "table" rows: column-major cells.
-    table_columns: Vec<segmenter::TableColumn>,
+    /// "table" rows: row-major cells (header row first when present).
+    table_rows: Vec<Vec<segmenter::TableCell>>,
 }
 
 impl RowSpec {
@@ -150,40 +150,8 @@ impl RowSpec {
             }
             None => StyledText::default(),
         };
-        let code_lines: Vec<CodeLine> = self
-            .code_lines
-            .iter()
-            .map(|line| {
-                let spans: Vec<ColoredSpan> = line
-                    .spans
-                    .iter()
-                    .map(|s| ColoredSpan {
-                        text: s.text.as_str().into(),
-                        color: Color::from_rgb_u8(s.color.0, s.color.1, s.color.2),
-                    })
-                    .collect();
-                CodeLine {
-                    spans: ModelRc::new(VecModel::from(spans)),
-                }
-            })
-            .collect();
-        let table_columns: Vec<TableColumn> = self
-            .table_columns
-            .iter()
-            .map(|col| {
-                let cells: Vec<TableCell> = col
-                    .cells
-                    .iter()
-                    .map(|c| TableCell {
-                        text: c.text.as_str().into(),
-                        header: c.header,
-                    })
-                    .collect();
-                TableColumn {
-                    cells: ModelRc::new(VecModel::from(cells)),
-                }
-            })
-            .collect();
+        let code_lines = code_lines_model(&self.code_lines);
+        let (table_rows, table_pref_width) = table_rows_model(&self.table_rows);
         Row {
             kind: self.kind.into(),
             styled,
@@ -197,10 +165,76 @@ impl RowSpec {
             elapsed: self.elapsed.as_str().into(),
             first: self.first,
             raw: self.raw.as_str().into(),
-            code_lines: ModelRc::new(VecModel::from(code_lines)),
-            table_columns: ModelRc::new(VecModel::from(table_columns)),
+            code_lines,
+            table_rows,
+            table_pref_width,
         }
     }
+}
+
+/// Convert highlighted lines into the Slint model shape. Shared with the
+/// scheme-change re-highlight in `main.rs`, which rebuilds `code-lines` for
+/// rows already on screen.
+pub fn code_lines_model(lines: &[highlight::CodeLine]) -> ModelRc<CodeLine> {
+    let rows: Vec<CodeLine> = lines
+        .iter()
+        .map(|line| {
+            let spans: Vec<ColoredSpan> = line
+                .spans
+                .iter()
+                .map(|s| ColoredSpan {
+                    text: s.text.as_str().into(),
+                    color: Color::from_rgb_u8(s.color.0, s.color.1, s.color.2),
+                })
+                .collect();
+            CodeLine {
+                spans: ModelRc::new(VecModel::from(spans)),
+            }
+        })
+        .collect();
+    ModelRc::new(VecModel::from(rows))
+}
+
+/// Convert row-major table cells into the Slint model, attaching each cell
+/// its column's stretch weight (from the column's longest cell, clamped so
+/// one verbose column can't starve the others entirely). Cells render with
+/// `preferred-width: 0` so column boundaries are identical in every row;
+/// the second return value is the table's estimated natural width in
+/// logical px (the UI caps it at the available span), so narrow tables
+/// don't stretch across the whole transcript.
+fn table_rows_model(rows: &[Vec<segmenter::TableCell>]) -> (ModelRc<TableRowCells>, f32) {
+    let col_count = rows.first().map(Vec::len).unwrap_or(0);
+    let weights: Vec<f32> = (0..col_count)
+        .map(|i| {
+            let max_chars = rows
+                .iter()
+                .filter_map(|row| row.get(i))
+                .map(|c| c.text.chars().count())
+                .max()
+                .unwrap_or(1);
+            max_chars.clamp(3, 60) as f32
+        })
+        .collect();
+    // ~7px per character at the 12.5px table font, plus cell padding.
+    let pref_width: f32 = weights.iter().map(|w| w * 7.0 + 18.0).sum();
+    let rows: Vec<TableRowCells> = rows
+        .iter()
+        .map(|row| {
+            let cells: Vec<TableCell> = row
+                .iter()
+                .enumerate()
+                .map(|(i, c)| TableCell {
+                    text: c.text.as_str().into(),
+                    header: c.header,
+                    weight: weights.get(i).copied().unwrap_or(1.0),
+                })
+                .collect();
+            TableRowCells {
+                cells: ModelRc::new(VecModel::from(cells)),
+            }
+        })
+        .collect();
+    (ModelRc::new(VecModel::from(rows)), pref_width)
 }
 
 // ---------------------------------------------------------------------------
@@ -880,9 +914,22 @@ fn spec_for_segment(segment: &Segment, first: bool, dark: bool, raw: &str) -> Ro
             raw,
             ..RowSpec::default()
         },
-        Segment::Table(columns) => RowSpec {
+        Segment::Quote(md) => RowSpec {
+            kind: "quote",
+            markdown: Some(md.clone()),
+            first,
+            raw,
+            ..RowSpec::default()
+        },
+        Segment::Rule => RowSpec {
+            kind: "rule",
+            first,
+            raw,
+            ..RowSpec::default()
+        },
+        Segment::Table(rows) => RowSpec {
             kind: "table",
-            table_columns: columns.clone(),
+            table_rows: rows.clone(),
             first,
             raw,
             ..RowSpec::default()
@@ -3269,9 +3316,9 @@ a [link](https://pi.dev), and a list:\n\n\
 - syntax-highlighted code\n\n\
 ## A code sample\n\n\
 ```rust\n\
-fn main() {\n\
-    let greeting = \"hello, slint\";\n\
-    println!(\"{greeting}\");\n\
+fn main() {\n    \
+let greeting = \"hello, slint\";\n    \
+println!(\"{greeting}\");\n\
 }\n\
 ```\n\n\
 A paragraph between the code block and a table, to verify segment ordering \
@@ -3393,6 +3440,15 @@ pub async fn demo_backend(
             _ => continue,
         };
 
+        // Test hook: a message starting with `md!` streams the remainder of
+        // the message itself as the assistant markdown, so rendering can be
+        // exercised with arbitrary input (via MCP or by typing) without
+        // rebuilding DEMO_MARKDOWN.
+        let (source, repeats) = match text.strip_prefix("md!") {
+            Some(md) => (md.trim_start().to_string(), 1),
+            None => (DEMO_MARKDOWN.to_string(), repeats),
+        };
+
         transcript.user_prompt(&text, false);
         transcript.apply(&Event::AgentStart);
         transcript.apply(&Event::MessageStart {
@@ -3418,7 +3474,7 @@ pub async fn demo_backend(
         let mut interval = tokio::time::interval(Duration::from_micros(1_000_000 / rate.max(1)));
         let mut aborted = false;
         'outer: for _ in 0..repeats {
-            for chunk in chunks(DEMO_MARKDOWN, 5) {
+            for chunk in chunks(&source, 5) {
                 tokio::select! {
                     _ = interval.tick() => {
                         chars += chunk.len();

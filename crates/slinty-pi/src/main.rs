@@ -17,7 +17,7 @@ use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
-use slint::{ComponentHandle, ModelRc, VecModel};
+use slint::{ComponentHandle, Model, ModelRc, VecModel};
 use tokio::sync::mpsc;
 
 use backend::UiCmd;
@@ -354,28 +354,43 @@ fn main() -> anyhow::Result<()> {
 
     // Keep the highlighter's theme choice and the code-card background in
     // sync with the OS color scheme. Code cards use the syntect theme's own
-    // background color so span colors keep their designed contrast.
+    // background color so span colors keep their designed contrast. The
+    // startup seed above can be wrong (winit reports the real theme only
+    // after the window is shown), and the scheme can flip mid-session — the
+    // `scheme-changed` callback covers both, re-highlighting every code row
+    // already on screen from its raw source (`Row.text`/`Row.lang`).
     let apply_code_theme = |app: &AppWindow| {
-        let (r, g, b) = highlight::theme_background(app.get_dark_mode());
+        let is_dark = app.get_dark_mode();
+        let (r, g, b) = highlight::theme_background(is_dark);
         app.set_code_background(slint::Color::from_rgb_u8(r, g, b));
+        let model = app.get_transcript();
+        let model = model
+            .as_any()
+            .downcast_ref::<VecModel<Row>>()
+            .expect("transcript is a VecModel");
+        for i in 0..model.row_count() {
+            let Some(mut row) = model.row_data(i) else {
+                continue;
+            };
+            if row.kind != "code" {
+                continue;
+            }
+            row.code_lines = backend::code_lines_model(&highlight::highlight_lines(
+                &row.text, &row.lang, is_dark,
+            ));
+            model.set_row_data(i, row);
+        }
     };
     apply_code_theme(&app);
     {
         let dark = dark.clone();
         let weak = app.as_weak();
-        let timer = slint::Timer::default();
-        timer.start(
-            slint::TimerMode::Repeated,
-            std::time::Duration::from_secs(2),
-            move || {
-                if let Some(app) = weak.upgrade() {
-                    dark.store(app.get_dark_mode(), Ordering::Relaxed);
-                    apply_code_theme(&app);
-                }
-            },
-        );
-        // Leak the timer so it keeps firing for the app's lifetime.
-        std::mem::forget(timer);
+        app.on_scheme_changed(move |is_dark| {
+            dark.store(is_dark, Ordering::Relaxed);
+            if let Some(app) = weak.upgrade() {
+                apply_code_theme(&app);
+            }
+        });
     }
 
     app.invoke_focus_input();

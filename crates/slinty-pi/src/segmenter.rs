@@ -20,13 +20,10 @@ pub struct TableCell {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TableColumn {
-    pub cells: Vec<TableCell>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Segment {
-    /// Markdown that StyledText renders directly.
+    /// Markdown that StyledText renders directly. One segment per top-level
+    /// block (paragraph, list, …) so inter-block spacing can come from the
+    /// per-row padding — StyledText itself has no paragraph spacing.
     Prose(String),
     Heading {
         level: u8,
@@ -36,9 +33,13 @@ pub enum Segment {
         lang: String,
         code: String,
     },
-    /// Row-major source pivoted to column-major for rendering (each column
-    /// is a vertical run of cells, easiest shape for a Slint grid).
-    Table(Vec<TableColumn>),
+    /// Block quote, with the `>` markers stripped; still markdown for
+    /// StyledText's inline subset.
+    Quote(String),
+    /// Thematic break (`---`).
+    Rule,
+    /// Row-major cells, exactly as parsed (header row first when present).
+    Table(Vec<Vec<TableCell>>),
 }
 
 pub fn segment_markdown(source: &str) -> Vec<Segment> {
@@ -56,6 +57,9 @@ pub fn segment_markdown(source: &str) -> Vec<Segment> {
         Code {
             lang: String,
             code: String,
+        },
+        Quote {
+            range: std::ops::Range<usize>,
         },
         Table {
             in_head: bool,
@@ -130,6 +134,12 @@ pub fn segment_markdown(source: &str) -> Vec<Segment> {
                                 current_cell: String::new(),
                             }
                         }
+                        Tag::BlockQuote(_) => {
+                            flush_prose(&mut segments, &mut prose_start, range.start);
+                            Block::Quote {
+                                range: range.clone(),
+                            }
+                        }
                         _ => {
                             if prose_start.is_none() {
                                 prose_start = Some(range.start);
@@ -176,12 +186,20 @@ pub fn segment_markdown(source: &str) -> Vec<Segment> {
                             let code = code.strip_suffix('\n').unwrap_or(&code).to_string();
                             segments.push(Segment::Code { lang, code });
                         }
+                        Some(Block::Quote { range }) => {
+                            let text = strip_quote_markers(&source[range]);
+                            if !text.is_empty() {
+                                segments.push(Segment::Quote(text));
+                            }
+                        }
                         Some(Block::Table { rows, .. }) => {
-                            segments.push(Segment::Table(pivot_table(rows)));
+                            segments.push(Segment::Table(rows));
                         }
                         _ => {
-                            // Prose runs accumulate until a non-prose block or EOF.
+                            // One Prose segment per top-level block, so rows
+                            // (and thus row padding) fall on block boundaries.
                             let _ = tag_end;
+                            flush_prose(&mut segments, &mut prose_start, range.end);
                         }
                     }
                 }
@@ -195,6 +213,14 @@ pub fn segment_markdown(source: &str) -> Vec<Segment> {
             Event::SoftBreak | Event::HardBreak => {
                 if let Some(Block::Table { current_cell, .. }) = block.as_mut() {
                     current_cell.push(' ');
+                }
+            }
+            Event::Rule => {
+                // A leaf event: only a top-level `---` (depth 0) becomes a
+                // rule row; inside a quote it stays part of that block.
+                if depth == 0 {
+                    flush_prose(&mut segments, &mut prose_start, range.start);
+                    segments.push(Segment::Rule);
                 }
             }
             Event::Code(t) => {
@@ -212,17 +238,20 @@ pub fn segment_markdown(source: &str) -> Vec<Segment> {
     segments
 }
 
-/// Pivot row-major table cells (as they arrive from pulldown-cmark, one
-/// `Vec<TableCell>` per row) into column-major `TableColumn`s.
-fn pivot_table(rows: Vec<Vec<TableCell>>) -> Vec<TableColumn> {
-    let Some(col_count) = rows.first().map(Vec::len) else {
-        return Vec::new();
-    };
-    (0..col_count)
-        .map(|i| TableColumn {
-            cells: rows.iter().filter_map(|row| row.get(i).cloned()).collect(),
+/// Strip the leading `>` marker (and one following space) from every line of
+/// a block quote's source, leaving the inner markdown.
+fn strip_quote_markers(source: &str) -> String {
+    source
+        .lines()
+        .map(|line| {
+            let line = line.trim_start();
+            let line = line.strip_prefix('>').unwrap_or(line);
+            line.strip_prefix(' ').unwrap_or(line)
         })
-        .collect()
+        .collect::<Vec<_>>()
+        .join("\n")
+        .trim()
+        .to_string()
 }
 
 fn heading_level(level: HeadingLevel) -> u8 {
@@ -260,24 +289,28 @@ mod tests {
     }
 
     #[test]
-    fn consecutive_prose_blocks_stay_one_segment() {
+    fn consecutive_prose_blocks_become_one_segment_each() {
         let s =
             "First paragraph.\n\n- a list\n- with items\n\nLast paragraph with [link](https://x).";
-        assert_eq!(seg(s), vec![Segment::Prose(s.into())]);
+        assert_eq!(
+            seg(s),
+            vec![
+                Segment::Prose("First paragraph.".into()),
+                Segment::Prose("- a list\n- with items".into()),
+                Segment::Prose("Last paragraph with [link](https://x).".into()),
+            ]
+        );
     }
 
     #[test]
-    fn table_pivots_rows_into_columns_with_header_flag() {
+    fn table_stays_row_major_with_header_flag() {
         let s = "| Name | Age |\n| --- | --- |\n| Alice | 30 |\n| Bob | 25 |";
         assert_eq!(
             seg(s),
             vec![Segment::Table(vec![
-                TableColumn {
-                    cells: vec![cell("Name", true), cell("Alice", false), cell("Bob", false)]
-                },
-                TableColumn {
-                    cells: vec![cell("Age", true), cell("30", false), cell("25", false)]
-                },
+                vec![cell("Name", true), cell("Age", true)],
+                vec![cell("Alice", false), cell("30", false)],
+                vec![cell("Bob", false), cell("25", false)],
             ])]
         );
     }
@@ -289,9 +322,7 @@ mod tests {
             seg(s),
             vec![
                 Segment::Prose("Before.".into()),
-                Segment::Table(vec![TableColumn {
-                    cells: vec![cell("A", true), cell("1", false)]
-                }]),
+                Segment::Table(vec![vec![cell("A", true)], vec![cell("1", false)]]),
                 Segment::Prose("After.".into()),
             ]
         );
@@ -302,9 +333,36 @@ mod tests {
         let s = "| Cmd |\n| --- |\n| `ls -la` |";
         assert_eq!(
             seg(s),
-            vec![Segment::Table(vec![TableColumn {
-                cells: vec![cell("Cmd", true), cell("ls -la", false)]
-            }])]
+            vec![Segment::Table(vec![
+                vec![cell("Cmd", true)],
+                vec![cell("ls -la", false)],
+            ])]
+        );
+    }
+
+    #[test]
+    fn blockquote_is_extracted_with_markers_stripped() {
+        let s = "Before.\n\n> quoted **bold**\n> second line\n\nAfter.";
+        assert_eq!(
+            seg(s),
+            vec![
+                Segment::Prose("Before.".into()),
+                Segment::Quote("quoted **bold**\nsecond line".into()),
+                Segment::Prose("After.".into()),
+            ]
+        );
+    }
+
+    #[test]
+    fn thematic_break_becomes_rule() {
+        let s = "Before.\n\n---\n\nAfter.";
+        assert_eq!(
+            seg(s),
+            vec![
+                Segment::Prose("Before.".into()),
+                Segment::Rule,
+                Segment::Prose("After.".into()),
+            ]
         );
     }
 

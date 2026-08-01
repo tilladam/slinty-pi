@@ -33,9 +33,15 @@ Useful env vars for driving the UI without a display/accessibility automation (e
 `SLINTY_OPEN_TREE_AFTER`, `SLINTY_FORK_FROM_AFTER`, `SLINTY_OPEN_PALETTE_AFTER`,
 `SLINTY_PALETTE_QUERY_AFTER`, `SLINTY_PALETTE_EXEC_AFTER`, `SLINTY_ATTACH_AFTER`,
 `SLINTY_CYCLE_DENSITY_AFTER`, `SLINTY_RESUME_SESSION`, `SLINTY_DEMO_RATE`, `SLINTY_DEMO_AUTOSEND`,
+`SLINTY_DEMO_REPEATS`,
 `SLINTY_OPEN_MODELS_AFTER`, `SLINTY_SERVE_RAPID_MLX_AFTER`, `SLINTY_LOAD_ROUTER_MODEL_AFTER`,
 `SLINTY_UNLOAD_ROUTER_MODEL_AFTER`, `SLINTY_HF_SEARCH_AFTER`, `SLINTY_DOWNLOAD_HF_MODEL_AFTER`,
 `SLINTY_ADD_OLLAMA_AFTER`.
+
+In demo mode, a message starting with `md!` streams the rest of the message itself as the
+assistant markdown — combined with `SLINTY_SEND_AFTER="800:md!…"` this drives arbitrary
+rendering test cases through the real segmenter/highlighter pipeline (used for screenshot-based
+rendering QA via the MCP server).
 
 ## Slint dependency: local checkout, not crates.io
 

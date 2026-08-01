@@ -7,9 +7,12 @@ import { ModelsOverlay, CachedModelRow, RouterModelRow, HfSearchOverlay, HfResul
 export struct TableCell {
     text: string,
     header: bool,
+    // Column stretch weight (same for every cell of a column), precomputed
+    // in Rust from the column's longest cell.
+    weight: float,
 }
 
-export struct TableColumn {
+export struct TableRowCells {
     cells: [TableCell],
 }
 
@@ -23,10 +26,10 @@ export struct CodeLine {
 }
 
 // One transcript row. Assistant messages are segmented (prose / heading /
-// code / table) into several rows; user/thinking/tool/info/error are single
-// rows.
+// code / quote / rule / table) into several rows; user/thinking/tool/info/
+// error are single rows.
 export struct Row {
-    kind: string,        // "user"|"prose"|"heading"|"code"|"table"|"thinking"|"tool"|"info"|"error"
+    kind: string,        // "user"|"prose"|"heading"|"code"|"quote"|"rule"|"table"|"thinking"|"tool"|"info"|"error"
     styled: styled-text, // prose content
     text: string,        // user text / heading text / tool summary / thinking text / raw code (copy source)
     lang: string,        // code language label
@@ -43,7 +46,8 @@ export struct Row {
                          // block, shared by every row segmented out of it;
                          // "" where no group copy is offered
     code-lines: [CodeLine],       // "code" rows: per-line, per-span highlighted content
-    table-columns: [TableColumn], // "table" rows: column-major cells
+    table-rows: [TableRowCells],  // "table" rows: row-major cells, header row first
+    table-pref-width: length,     // "table" rows: estimated natural width
 }
 
 export struct QueueItem {
@@ -68,9 +72,26 @@ global Style {
             return true;
         }
         if (density == 2) {
-            return kind == "user" || kind == "prose" || kind == "heading" || kind == "code" || kind == "table";
+            return kind == "user" || kind == "prose" || kind == "heading" || kind == "code"
+                || kind == "quote" || kind == "rule" || kind == "table";
         }
         return true;
+    }
+
+    // Vertical gap above a row: message groups get the largest, headings a
+    // section-sized one, content blocks a paragraph-sized one, and
+    // meta rows (thinking/tool/info) stay tight.
+    public pure function row-gap(kind: string, first: bool) -> length {
+        if (first) {
+            return 14px;
+        }
+        if (kind == "heading") {
+            return 12px;
+        }
+        if (kind == "prose" || kind == "code" || kind == "table" || kind == "quote" || kind == "rule") {
+            return 8px;
+        }
+        return 5px;
     }
 }
 
@@ -151,8 +172,11 @@ component UsageRing inherits Rectangle {
 
 component UserRow inherits HorizontalLayout {
     in property <Row> entry;
-    alignment: end;
+    // Stretch spacer caps the bubble short of the full transcript width
+    // (width bindings against the ListView would loop; see project notes).
+    Rectangle { horizontal-stretch: 1; min-width: 60px; }
     Rectangle {
+        horizontal-stretch: 0;
         background: Palette.accent-background.transparentize(0.88);
         border-radius: Style.radius;
         HorizontalLayout {
@@ -190,18 +214,56 @@ component ProseRow inherits HorizontalLayout {
 component HeadingRow inherits HorizontalLayout {
     in property <Row> entry;
     callback copy-requested(string);
-    padding-top: 4px;
     Text {
         text: entry.text;
         wrap: word-wrap;
-        font-size: entry.level == 1 ? 19px : entry.level == 2 ? 17px : 15px;
+        font-size: entry.level == 1 ? 20px
+            : entry.level == 2 ? 17.5px
+            : entry.level == 3 ? 15.5px
+            : 14px;
         font-weight: 700;
-        color: Palette.foreground;
+        // h4+ is body-sized; set it apart from bold prose by dimming.
+        color: entry.level >= 4 ? Palette.foreground.transparentize(0.2) : Palette.foreground;
     }
     if entry.first && entry.raw != "": Rectangle { horizontal-stretch: 1; min-width: 8px; }
     if entry.first && entry.raw != "": CopyButton {
         payload: entry.raw;
         copy-requested(t) => { root.copy-requested(t); }
+    }
+}
+
+component QuoteRow inherits HorizontalLayout {
+    in property <Row> entry;
+    callback open-link(string);
+    callback copy-requested(string);
+    padding-right: 12px;
+    spacing: 10px;
+    Rectangle {
+        width: 3px;
+        border-radius: 1.5px;
+        background: Palette.foreground.transparentize(0.75);
+    }
+    StyledText {
+        text: entry.styled;
+        default-font-size: 14px;
+        default-color: Style.dim;
+        link-color: Palette.accent-background;
+        link-clicked(l) => { root.open-link(l); }
+    }
+    if entry.first && entry.raw != "": Rectangle { horizontal-stretch: 1; min-width: 8px; }
+    if entry.first && entry.raw != "": CopyButton {
+        payload: entry.raw;
+        copy-requested(t) => { root.copy-requested(t); }
+    }
+}
+
+component RuleRow inherits HorizontalLayout {
+    padding-top: 5px;
+    padding-bottom: 5px;
+    padding-right: 12px;
+    Rectangle {
+        height: 1px;
+        background: Style.hairline;
     }
 }
 
@@ -235,56 +297,70 @@ component CodeRow inherits Rectangle {
                 copy-requested(t) => { root.copy-requested(t); }
             }
         }
-        VerticalLayout {
-            padding: 12px;
-            padding-top: 2px;
-            for line in entry.code-lines: HorizontalLayout {
+        // Long lines pan horizontally instead of clipping at the card edge.
+        // The Flickable has no intrinsic size, so its height comes from the
+        // line stack's preferred height (content-driven, no ancestor-width
+        // binding — safe inside the ListView).
+        Flickable {
+            height: lines.preferred-height;
+            viewport-width: max(self.width, lines.preferred-width);
+            lines := VerticalLayout {
+                padding: 12px;
+                padding-top: 2px;
                 alignment: start;
-                // Keeps blank lines at full line-height instead of collapsing.
-                if line.spans.length == 0: Text {
-                    text: " ";
-                    font-family: Style.mono-font;
-                    font-size: 12.5px;
-                }
-                for span in line.spans: Text {
-                    text: span.text;
-                    color: span.color;
-                    font-family: Style.mono-font;
-                    font-size: 12.5px;
+                for line in entry.code-lines: HorizontalLayout {
+                    alignment: start;
+                    // Keeps blank lines at full line-height instead of collapsing.
+                    if line.spans.length == 0: Text {
+                        text: " ";
+                        font-family: Style.mono-font;
+                        font-size: 12.5px;
+                    }
+                    for span in line.spans: Text {
+                        text: span.text;
+                        color: span.color;
+                        font-family: Style.mono-font;
+                        font-size: 12.5px;
+                    }
                 }
             }
         }
     }
 }
 
+// Row-major so a wrapping cell grows its whole row (cells in a
+// HorizontalLayout share the row's height) — with column-major stacks the
+// columns drift out of alignment and overflow clips at the card edge.
 component TableBlock inherits Rectangle {
-    in property <[TableColumn]> columns;
+    in property <[TableRowCells]> rows;
 
-    background: Style.card;
+    background: Style.hairline;
     border-radius: Style.radius;
     border-width: 1px;
     border-color: Style.hairline;
     clip: true;
 
-    HorizontalLayout {
+    VerticalLayout {
         padding: 1px;
         spacing: 1px;
-        for column in columns: Rectangle {
-            horizontal-stretch: 1;
-            background: Style.hairline;
-            VerticalLayout {
-                spacing: 1px;
-                for cell in column.cells: Rectangle {
-                    background: cell.header ? Style.card.darker(4%) : Style.card;
-                    VerticalLayout {
-                        padding: 8px;
-                        Text {
-                            text: cell.text;
-                            font-size: 12.5px;
-                            font-weight: cell.header ? 700 : 400;
-                            color: Palette.foreground;
-                            wrap: word-wrap;
-                        }
+        for row in rows: HorizontalLayout {
+            spacing: 1px;
+            for cell in row.cells: Rectangle {
+                // Width comes from the column weight alone (preferred 0), so
+                // every row computes identical column boundaries — content-
+                // driven preferred widths would leave the grid lines jagged.
+                preferred-width: 0px;
+                min-width: 24px;
+                horizontal-stretch: cell.weight;
+                background: cell.header ? Style.card.darker(4%) : Style.card;
+                VerticalLayout {
+                    padding: 8px;
+                    Text {
+                        text: cell.text;
+                        font-size: 12.5px;
+                        font-weight: cell.header ? 700 : 400;
+                        color: Palette.foreground;
+                        wrap: word-wrap;
                     }
                 }
             }
@@ -419,6 +495,11 @@ export component AppWindow inherits Window {
     // highlighted spans keep the contrast they were designed with.
     in property <color> code-background: #2b303b;
     out property <bool> dark-mode: Palette.color-scheme == ColorScheme.dark;
+    // Fires when the effective color scheme resolves or flips — including
+    // the first resolution right after the window is shown, which the
+    // startup seed can't see (winit only reports the real theme once the
+    // window exists).
+    changed dark-mode => { root.scheme-changed(root.dark-mode); }
 
     in-out property <bool> sidebar-visible: true;
     in property <[string]> project-list: [];
@@ -489,6 +570,7 @@ export component AppWindow inherits Window {
     callback download-hf-model(string);
     callback add-ollama-to-pi();
     callback density-changed(int);
+    callback scheme-changed(bool);
     callback open-palette();
     callback palette-query(string);
     callback palette-exec(string);
@@ -601,7 +683,7 @@ export component AppWindow inherits Window {
                         property <bool> row-shown: Style.row-visible(root.density, entry.kind);
                         padding-left: 10px;
                         padding-right: 10px;
-                        padding-top: row-shown ? (entry.first ? 14px : 5px) : 0px;
+                        padding-top: row-shown ? Style.row-gap(entry.kind, entry.first) : 0px;
 
                         if row-shown && entry.kind == "user": UserRow { entry: entry; }
                         if row-shown && entry.kind == "prose": ProseRow {
@@ -618,8 +700,23 @@ export component AppWindow inherits Window {
                             bg: root.code-background;
                             copy-requested(t) => { root.copy-text(t); }
                         }
-                        if row-shown && entry.kind == "table": TableBlock {
-                            columns: entry.table-columns;
+                        if row-shown && entry.kind == "quote": QuoteRow {
+                            entry: entry;
+                            open-link(l) => { root.open-link(l); }
+                            copy-requested(t) => { root.copy-text(t); }
+                        }
+                        if row-shown && entry.kind == "rule": RuleRow { }
+                        // Explicit width (capped at the available span): a
+                        // narrow table keeps its natural width instead of
+                        // spanning the transcript, and the weight-only cells
+                        // still get a real width to distribute.
+                        if row-shown && entry.kind == "table": HorizontalLayout {
+                            TableBlock {
+                                horizontal-stretch: 0;
+                                width: min(parent.width, entry.table-pref-width);
+                                rows: entry.table-rows;
+                            }
+                            Rectangle { horizontal-stretch: 1; }
                         }
                         if row-shown && entry.kind == "thinking": ThinkingRow { entry <=> entry; }
                         if row-shown && entry.kind == "tool": ToolRow { entry <=> entry; force-expanded: root.density == 0; }

@@ -72,6 +72,8 @@ pub fn highlight_lines(code: &str, lang: &str, dark: bool) -> Vec<CodeLine> {
     let theme = if dark { &assets.dark } else { &assets.light };
     let mut highlighter = HighlightLines::new(syntax, theme);
 
+    // Slint's `Text` renders tabs as tofu glyphs, not tab stops.
+    let code = code.replace('\t', "    ");
     code.lines()
         .map(|line| {
             let spans = match highlighter.highlight_line(line, &assets.syntaxes) {
@@ -146,5 +148,12 @@ mod tests {
     fn multiline_code_produces_one_code_line_per_source_line() {
         let lines = highlight_lines("a\nb", "", true);
         assert_eq!(lines.len(), 2);
+    }
+
+    #[test]
+    fn tabs_are_expanded_to_spaces() {
+        let lines = highlight_lines("\tindented", "", true);
+        let rebuilt: String = lines[0].spans.iter().map(|s| s.text.as_str()).collect();
+        assert_eq!(rebuilt, "    indented");
     }
 }
