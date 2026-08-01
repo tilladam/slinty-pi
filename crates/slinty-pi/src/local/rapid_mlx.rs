@@ -4,7 +4,7 @@
 //!
 //! Management is CLI-first, not HTTP: there is no documented `--json` flag
 //! (`rapid-mlx models --help` / `info --help` confirm no such option as of
-//! 0.11.0), so `models`, `models --cached`, `ps`, and `info <alias>` are
+//! 0.11.3), so `models`, `models --cached`, `ps`, and `info <alias>` are
 //! parsed from rich-formatted human text. To stay robust against the
 //! renderer's column padding (verified live: a long alias can push a row's
 //! later columns past their header-aligned start, e.g.
@@ -48,6 +48,9 @@ pub struct RunningServer {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CatalogEntry {
     pub alias: String,
+    /// Approximate download footprint. `None` on catalogs older than 0.11.3
+    /// (no `Size` column yet) or when rapid-mlx prints `—` (unknown).
+    pub size_bytes: Option<u64>,
     pub tool_format: Option<String>,
     pub reasoning_parser: Option<String>,
     pub spec_decode: bool,
@@ -215,23 +218,44 @@ fn parse_ps(output: &str) -> Vec<RunningServer> {
 }
 
 fn parse_catalog(output: &str) -> Vec<CatalogEntry> {
+    // 0.11.3 inserted a `Size` column right after `Alias`. A row alone is
+    // ambiguous (`—` size vs. `—` tool format shift the same way), so key
+    // the format off the header row instead of guessing per row.
+    let has_size = output
+        .lines()
+        .find(|l| l.contains("Spec-Decode"))
+        .is_some_and(|l| l.split_whitespace().any(|t| t == "Size"));
     extract_table_rows(output, "Spec-Decode")
         .into_iter()
         .filter_map(|line| {
             let tokens: Vec<&str> = line.split_whitespace().collect();
-            if tokens.len() != 7 && tokens.len() != 8 {
-                return None;
-            }
-            let hybrid = tokens.len() == 8;
+            let (alias, rest) = tokens.split_first()?;
+            let (size_bytes, rest) = if has_size {
+                match rest {
+                    ["—", rest @ ..] => (None, rest),
+                    [value, unit, rest @ ..] => (size_to_bytes(value.parse().ok()?, unit), rest),
+                    _ => return None,
+                }
+            } else {
+                (None, rest)
+            };
+            // Tools, Reasoning, Spec-Decode, [hybrid], Suffix Tier, DFlash,
+            // DDTree.
+            let hybrid = match rest.len() {
+                6 => false,
+                7 => true,
+                _ => return None,
+            };
             Some(CatalogEntry {
-                alias: tokens[0].to_string(),
-                tool_format: none_if_dash(tokens[1]),
-                reasoning_parser: none_if_dash(tokens[2]),
-                spec_decode: tokens[3] == "✓",
+                alias: alias.to_string(),
+                size_bytes,
+                tool_format: none_if_dash(rest[0]),
+                reasoning_parser: none_if_dash(rest[1]),
+                spec_decode: rest[2] == "✓",
                 hybrid,
-                suffix_tier: none_if_dash(tokens[4 + hybrid as usize]),
-                dflash: none_if_dash(tokens[tokens.len() - 2]),
-                ddtree: none_if_dash(tokens[tokens.len() - 1]),
+                suffix_tier: none_if_dash(rest[3 + hybrid as usize]),
+                dflash: none_if_dash(rest[rest.len() - 2]),
+                ddtree: none_if_dash(rest[rest.len() - 1]),
             })
         })
         .collect()
@@ -378,23 +402,37 @@ mod tests {
   26101   8000    mlx-community/Qwen3.6-35B-A3B-8bit      2h11m
 ";
 
+    // 0.11.3 format: `Size` column between `Alias` and `Tools`, "—" allowed
+    // for unknown sizes.
     const CATALOG_FIXTURE: &str = "\
+  Available models (173 aliases)
+  ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Alias                             Size       Tools            Reasoning    Spec-Decode Suffix Tier DFlash  DDTree
+  ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  bonsai-1.7b-2bit                  472.6 MiB  hermes           —            ✗          unknown     —       —
+  bonsai-27b-2bit                   7.9 GiB    hermes           qwen3        ✗          unknown     —       —
+  deepseek-coder-v2-lite-16b-4bit   8.2 GiB    deepseek_v3      —            ✓          unknown     —       —
+  diffusion-gemma-26b-4bit          15.4 GiB   gemma4           —            ✗ hybrid   n/a         —       —
+  vibethinker-1.5b-4bit             —          hermes           vibethinker  ✓          unknown     —       —
+  ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+  Audio models (41 aliases)
+  ──────────────────────────────────────────────────────────────────────────────────────────────────────
+  Alias                    Size       Kind       Family       HF id
+  ──────────────────────────────────────────────────────────────────────────────────────────────────────
+  kokoro-82m               313.2 MiB  [audio:tts] kokoro      mlx-community/Kokoro-82M-bf16
+";
+
+    // Pre-0.11.3 format (no `Size` column), still parsed for older installs.
+    const CATALOG_FIXTURE_LEGACY: &str = "\
   Available models (165 aliases)
   ──────────────────────────────────────────────────────────────────────────────────────────────────────
   Alias                             Tools            Reasoning    Spec-Decode Suffix Tier DFlash  DDTree
   ──────────────────────────────────────────────────────────────────────────────────────────────────────
   bonsai-1.7b-2bit                  hermes           —            ✗          unknown     —       —
-  bonsai-27b-2bit                   hermes           qwen3        ✗          unknown     —       —
-  deepseek-coder-v2-lite-16b-4bit   deepseek_v3      —            ✓          unknown     —       —
   diffusion-gemma-26b-4bit          gemma4           —            ✗ hybrid   n/a         —       —
   vibethinker-1.5b-4bit             hermes           vibethinker  ✓          unknown     —       —
   ──────────────────────────────────────────────────────────────────────────────────────────────────────
-
-  Audio models (26 aliases)
-  ──────────────────────────────────────────────────────────────────────────────────────────────────────
-  Alias                    Kind       Family       HF id
-  ──────────────────────────────────────────────────────────────────────────────────────────────────────
-  kokoro-82m                tts        kokoro       mlx-community/Kokoro-82M-bf16
 ";
 
     const CACHED_FIXTURE: &str = "\
@@ -464,6 +502,7 @@ mod tests {
             entries[0],
             CatalogEntry {
                 alias: "bonsai-1.7b-2bit".into(),
+                size_bytes: Some((472.6 * 1024.0 * 1024.0) as u64),
                 tool_format: Some("hermes".into()),
                 reasoning_parser: None,
                 spec_decode: false,
@@ -487,6 +526,32 @@ mod tests {
         assert!(hybrid_entry.hybrid);
         assert!(!hybrid_entry.spec_decode);
         assert_eq!(hybrid_entry.suffix_tier.as_deref(), Some("n/a"));
+
+        // "—" size parses as unknown, not a dropped row.
+        let unknown_size = entries
+            .iter()
+            .find(|e| e.alias == "vibethinker-1.5b-4bit")
+            .unwrap();
+        assert_eq!(unknown_size.size_bytes, None);
+        assert_eq!(
+            unknown_size.reasoning_parser.as_deref(),
+            Some("vibethinker")
+        );
+    }
+
+    #[test]
+    fn parses_legacy_catalog_without_size_column() {
+        let entries = parse_catalog(CATALOG_FIXTURE_LEGACY);
+        assert_eq!(entries.len(), 3);
+        assert!(entries.iter().all(|e| e.size_bytes.is_none()));
+        // The legacy "—" tool-format token must not be eaten as a size.
+        assert_eq!(
+            entries
+                .iter()
+                .find(|e| e.alias == "diffusion-gemma-26b-4bit")
+                .map(|e| (e.hybrid, e.tool_format.as_deref() == Some("gemma4"))),
+            Some((true, true))
+        );
     }
 
     #[test]
