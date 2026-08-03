@@ -96,9 +96,16 @@ global Style {
 }
 
 component Dots inherits Text {
-    // Animated "thinking" ellipsis, driven by animation-tick while visible.
-    property <int> n: Math.floor(Math.mod(animation-tick() / 350ms, 4));
+    // Animated "thinking" ellipsis. Stepped by a Timer, not animation-tick():
+    // an animation-tick() binding marks the window dirty every frame, which
+    // kept the whole (fully redrawn) scene rendering at display refresh rate
+    // for a label with four discrete states.
+    property <int> n: 0;
     text: n == 0 ? "" : n == 1 ? "·" : n == 2 ? "··" : "···";
+    Timer {
+        interval: 350ms;
+        triggered => { root.n = Math.mod(root.n + 1, 4); }
+    }
     color: Style.dim;
     font-size: 13px;
     min-width: 14px;

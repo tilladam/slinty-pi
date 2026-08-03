@@ -70,7 +70,17 @@ component LiveDot inherits Rectangle {
     height: 6px;
     border-radius: 3px;
     background: Palette.accent-background;
-    opacity: 0.35 + 0.65 * Math.abs(Math.sin((animation-tick() / 900ms) * 360deg));
+    // Timer-toggled pulse, not an animation-tick() sine: continuous
+    // animation-tick bindings force full-window redraws every frame for as
+    // long as a turn is streaming. This only animates during the eased
+    // transitions (~300ms out of every 700ms).
+    property <bool> bright: true;
+    opacity: bright ? 1.0 : 0.35;
+    animate opacity { duration: 300ms; easing: ease-in-out; }
+    Timer {
+        interval: 700ms;
+        triggered => { root.bright = !root.bright; }
+    }
 }
 
 component SessionRowItem inherits Rectangle {
