@@ -105,6 +105,42 @@ impl AliasProfile {
     }
 }
 
+/// `GET /health` on a rapid-mlx server (verified live against 0.11.3):
+/// `{"status": "healthy", "ready": true, "model_loaded": true,
+/// "model_name": "mlx-community/…", …}`. The served model matters because
+/// rapid-mlx answers `/v1/chat/completions` with **404 "model does not
+/// exist"** for any other model id — a reachable server is not enough for a
+/// request to succeed.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
+pub struct ServerHealth {
+    #[serde(default)]
+    pub ready: bool,
+    #[serde(default)]
+    pub model_loaded: bool,
+    #[serde(default)]
+    pub model_name: Option<String>,
+}
+
+/// Probe a rapid-mlx server's `/health`, 1s timeout. `base_url` may carry
+/// the `/v1` suffix pi's models.json uses; health lives at the origin.
+/// `None` means unreachable or not a rapid-mlx-shaped health response.
+pub async fn server_health(base_url: &str) -> Option<ServerHealth> {
+    let origin = base_url.trim_end_matches('/');
+    let origin = origin.strip_suffix("/v1").unwrap_or(origin);
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(1))
+        .build()
+        .ok()?;
+    client
+        .get(format!("{origin}/health"))
+        .send()
+        .await
+        .ok()?
+        .json::<ServerHealth>()
+        .await
+        .ok()
+}
+
 pub struct RapidMlx {
     binary: String,
 }

@@ -1262,6 +1262,10 @@ struct ManagedRapidMlx {
 const SERVER_DOT_HIDDEN: i32 = 0;
 const SERVER_DOT_OK: i32 = 1;
 const SERVER_DOT_DOWN: i32 = 2;
+/// The server answers, but it's serving a *different* model than pi's
+/// current one — rapid-mlx 404s every completion in that state, so a plain
+/// green would be a lie.
+const SERVER_DOT_MISMATCH: i32 = 3;
 
 /// One `pi --mode rpc` child's lifetime ends either because the app is
 /// closing, or because the user switched projects and needs a new child
@@ -2874,6 +2878,65 @@ mod model_label_tests {
 }
 
 #[cfg(test)]
+mod server_dot_tests {
+    use super::*;
+    use local::rapid_mlx::ServerHealth;
+
+    const MODEL: &str = "mlx-community/Qwen3.6-35B-A3B-8bit";
+
+    fn health(model_name: Option<&str>, ready: bool, loaded: bool) -> ServerHealth {
+        ServerHealth {
+            ready,
+            model_loaded: loaded,
+            model_name: model_name.map(str::to_string),
+        }
+    }
+
+    #[test]
+    fn serving_the_current_model_is_ok() {
+        let h = health(Some(MODEL), true, true);
+        assert_eq!(classify_rapid_mlx_dot(MODEL, Some(&h), None), SERVER_DOT_OK);
+    }
+
+    #[test]
+    fn serving_a_different_model_is_a_mismatch_not_ok() {
+        // The exact failure from the field: server up and healthy, but
+        // serving another model — completions 404.
+        let h = health(
+            Some("mlx-community/Qwen3-4B-Instruct-2507-4bit"),
+            true,
+            true,
+        );
+        assert_eq!(
+            classify_rapid_mlx_dot(MODEL, Some(&h), None),
+            SERVER_DOT_MISMATCH
+        );
+    }
+
+    #[test]
+    fn right_model_but_not_ready_yet_is_down() {
+        let h = health(Some(MODEL), false, false);
+        assert_eq!(
+            classify_rapid_mlx_dot(MODEL, Some(&h), None),
+            SERVER_DOT_DOWN
+        );
+    }
+
+    #[test]
+    fn no_health_response_is_down_unless_a_managed_child_is_still_alive() {
+        assert_eq!(classify_rapid_mlx_dot(MODEL, None, None), SERVER_DOT_DOWN);
+        assert_eq!(
+            classify_rapid_mlx_dot(MODEL, None, Some(false)),
+            SERVER_DOT_DOWN
+        );
+        assert_eq!(
+            classify_rapid_mlx_dot(MODEL, None, Some(true)),
+            SERVER_DOT_OK
+        );
+    }
+}
+
+#[cfg(test)]
 mod auth_panel_tests {
     use super::*;
 
@@ -3494,9 +3557,12 @@ async fn refresh_models(client: &PiClient, transcript: &mut Transcript) -> Model
 }
 
 /// Status-bar dot state for the active model: hidden unless the model is
-/// served from this machine; then alive-ness comes from the managed child's
-/// process state (when this app spawned it) or a 1s TCP probe of the
-/// model's base URL (router, external rapid-mlx, Ollama, …).
+/// served from this machine. rapid-mlx providers get a real `/health`
+/// probe — reachable is not enough there, because a rapid-mlx server 404s
+/// every completion whose model id isn't the one it serves (verified live
+/// against 0.11.3), so a served-model mismatch gets its own state. Other
+/// local providers keep the generic 1s TCP probe; a managed child's
+/// process state breaks ties when the port doesn't answer.
 async fn compute_server_dot(
     current: Option<&ModelEntry>,
     managed: &mut Option<ManagedRapidMlx>,
@@ -3505,18 +3571,46 @@ async fn compute_server_dot(
         return SERVER_DOT_HIDDEN;
     };
     if entry.provider == "rapid-mlx" {
-        if let Some(m) = managed {
-            return if m.server.is_alive() {
-                SERVER_DOT_OK
-            } else {
-                SERVER_DOT_DOWN
-            };
-        }
+        let health = local::rapid_mlx::server_health(&entry.base_url).await;
+        return classify_rapid_mlx_dot(
+            &entry.id,
+            health.as_ref(),
+            managed.as_mut().map(|m| m.server.is_alive()),
+        );
     }
     if probe_tcp(&entry.base_url).await {
         SERVER_DOT_OK
     } else {
         SERVER_DOT_DOWN
+    }
+}
+
+/// Pure classification for the rapid-mlx branch of the dot, so the
+/// mismatch/down/ok truth table is unit-testable without a live server.
+/// `managed_alive` is `Some` only when this app spawned the server.
+fn classify_rapid_mlx_dot(
+    current_model_id: &str,
+    health: Option<&local::rapid_mlx::ServerHealth>,
+    managed_alive: Option<bool>,
+) -> i32 {
+    match health {
+        Some(h) => {
+            let serves_current = h.model_name.as_deref() == Some(current_model_id);
+            if serves_current && h.ready && h.model_loaded {
+                SERVER_DOT_OK
+            } else if serves_current {
+                // Right model, still coming up.
+                SERVER_DOT_DOWN
+            } else {
+                SERVER_DOT_MISMATCH
+            }
+        }
+        // No health response: a live managed child is presumably still
+        // binding its port; anything else is down.
+        None => match managed_alive {
+            Some(true) => SERVER_DOT_OK,
+            _ => SERVER_DOT_DOWN,
+        },
     }
 }
 

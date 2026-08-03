@@ -488,8 +488,10 @@ export component AppWindow inherits Window {
     in property <bool> streaming: false;
     in property <string> status-text: "";
     // Status-bar server dot: 0 = hidden (cloud model), 1 = local server
-    // reachable, 2 = local server down (needs attention). Click restarts a
-    // dead managed rapid-mlx server, or opens the models panel.
+    // serving the current model, 2 = local server down (needs attention),
+    // 3 = server up but serving a different model (requests would 404).
+    // Click restarts a dead managed rapid-mlx server, or opens the models
+    // panel.
     in property <int> server-dot: 0;
     in property <float> context-percent: 0;
     in property <int> composer-lines: 1;
@@ -843,7 +845,9 @@ export component AppWindow inherits Window {
                                 width: 8px;
                                 height: 8px;
                                 border-radius: 4px;
-                                background: root.server-dot == 2 ? #d35454 : #43a047;
+                                background: root.server-dot == 2 ? #d35454
+                                    : root.server-dot == 3 ? #e2a53f
+                                    : #43a047;
                             }
                             TouchArea {
                                 mouse-cursor: pointer;
