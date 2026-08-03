@@ -35,7 +35,12 @@ pi-rpc = { path = "../pi-rpc" }
 # skill's guidance) — it pulls in a whole extra dependency tree (async-net,
 # httparse, prost, protox, ...) that every normal build would otherwise pay
 # for. Enable it per-invocation instead: see README.md's MCP section.
-slint = { path = "/Users/till/Code/Rust/slint/slint/api/rs/slint" }
+# renderer-winit-skia: the winit backend prefers Skia (Metal on macOS) over
+# the default femtovg renderer whenever it's compiled in. femtovg draws via
+# glutin/OpenGL — a deprecated compatibility layer on macOS — and re-tessellates
+# every path on the CPU each frame, which measurably loses to Skia's Metal
+# pipeline on transcript-heavy frames.
+slint = { path = "/Users/till/Code/Rust/slint/slint/api/rs/slint", features = ["renderer-winit-skia"] }
 tokio.workspace = true
 # preserve_order: models.json editing needs Map iteration/serialization to
 # follow the file's original key order, not alphabetical — see local::pi_config.
