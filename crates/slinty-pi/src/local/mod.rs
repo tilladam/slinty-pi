@@ -9,6 +9,7 @@
 //! `download_model` backs `hf`'s "Download model…" flow; `delete_model`/the
 //! SSE stream aren't used yet — see their own `#[allow(dead_code)]` markers.
 
+pub mod auth_json;
 pub mod hf;
 pub mod models_json;
 pub mod ollama;

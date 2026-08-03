@@ -1,4 +1,4 @@
-import { ListView, LineEdit, Palette } from "std-widgets.slint";
+import { Button, ListView, LineEdit, Palette } from "std-widgets.slint";
 
 export struct CachedModelRow {
     alias: string,
@@ -169,12 +169,15 @@ export component ModelsOverlay inherits Rectangle {
     in property <bool> ollama-detected: false;
     in property <string> ollama-summary: "";
     in property <int> ollama-model-count: 0;
+    // Pre-formatted "provider · form" labels (never key material).
+    in property <[string]> auth-entries: [];
     callback close();
     callback serve-rapid-mlx(string);
     callback load-router-model(string);
     callback unload-router-model(string);
     callback open-hf-search();
     callback add-ollama-to-pi();
+    callback save-api-key(string, string);
 
     background: Palette.background.transparentize(0.1);
 
@@ -185,7 +188,7 @@ export component ModelsOverlay inherits Rectangle {
 
     Rectangle {
         width: min(560px, parent.width - 48px);
-        height: min(520px, parent.height - 48px);
+        height: min(640px, parent.height - 48px);
         background: Palette.background;
         border-radius: 10px;
         border-width: 1px;
@@ -348,6 +351,61 @@ export component ModelsOverlay inherits Rectangle {
                         text: root.ollama-detected ? root.ollama-summary : "not detected";
                         font-size: 11px;
                         color: Palette.foreground.transparentize(0.3);
+                        wrap: word-wrap;
+                    }
+                }
+            }
+
+            Rectangle {
+                background: Palette.alternate-background.transparentize(0.5);
+                border-radius: 6px;
+
+                VerticalLayout {
+                    padding: 8px;
+                    spacing: 5px;
+
+                    Text {
+                        text: "Cloud API keys";
+                        font-size: 12px;
+                        font-weight: 600;
+                        color: Palette.foreground;
+                    }
+                    for entry in root.auth-entries: Text {
+                        text: entry;
+                        font-size: 11px;
+                        color: Palette.foreground.transparentize(0.3);
+                    }
+                    if root.auth-entries.length == 0: Text {
+                        text: "No credentials stored yet.";
+                        font-size: 11px;
+                        color: Palette.foreground.transparentize(0.5);
+                    }
+                    HorizontalLayout {
+                        spacing: 6px;
+                        provider-input := LineEdit {
+                            placeholder-text: "provider (e.g. anthropic)";
+                            font-size: 11px;
+                            horizontal-stretch: 0.6;
+                        }
+                        key-input := LineEdit {
+                            placeholder-text: "API key";
+                            input-type: password;
+                            font-size: 11px;
+                            horizontal-stretch: 1;
+                        }
+                        Button {
+                            text: "Save";
+                            enabled: provider-input.text != "" && key-input.text != "";
+                            clicked => {
+                                root.save-api-key(provider-input.text, key-input.text);
+                                key-input.text = "";
+                            }
+                        }
+                    }
+                    Text {
+                        text: "Stored in ~/.pi/agent/auth.json (0600). $ENV/!command and OAuth entries are read-only here — manage those in the file or via `pi /login`.";
+                        font-size: 10px;
+                        color: Palette.foreground.transparentize(0.5);
                         wrap: word-wrap;
                     }
                 }

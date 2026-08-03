@@ -106,6 +106,21 @@ pub enum UiCmd {
     /// The status-bar server dot was clicked: restart a dead managed
     /// rapid-mlx server, or open the models panel when healthy.
     ServerDotClicked,
+    /// "Save" clicked in the models panel's API-key section.
+    SaveApiKey {
+        provider: String,
+        key: Secret,
+    },
+}
+
+/// A credential in transit. `Debug` prints a redaction so `UiCmd`'s derive
+/// (or any future `?cmd` log line) can never leak key material.
+pub struct Secret(pub String);
+
+impl std::fmt::Debug for Secret {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Secret(«redacted»)")
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -514,6 +529,13 @@ impl Ui {
     /// when not detected) — built in Rust rather than exposing a raw row
     /// list, since this section is a one-click "add all" affordance, not a
     /// browsable list like the router/rapid-mlx sections.
+    fn set_auth_entries(&self, labels: Vec<String>) {
+        self.with_app(move |app| {
+            let labels: Vec<SharedString> = labels.iter().map(|l| l.as_str().into()).collect();
+            app.set_auth_entries(ModelRc::new(VecModel::from(labels)));
+        });
+    }
+
     fn set_ollama_panel(&self, detected: bool, summary: String, model_count: i32) {
         self.with_app(move |app| {
             app.set_ollama_detected(detected);
@@ -1791,6 +1813,12 @@ async fn run_session(
                             models = refresh_models(client, transcript).await;
                         }
                     }
+                    UiCmd::SaveApiKey { provider, key } => {
+                        save_api_key(transcript, &provider, &key);
+                        // A fresh key can make a configured provider usable;
+                        // let the picker pick that up.
+                        models = refresh_models(client, transcript).await;
+                    }
                     UiCmd::ServerDotClicked => {
                         let dead_alias = managed_rapid_mlx
                             .as_mut()
@@ -2227,7 +2255,68 @@ async fn open_models_panel(transcript: &mut Transcript) {
     let (detected, summary, count) = format_ollama_panel(ollama_models);
     transcript.ui.set_ollama_panel(detected, summary, count);
 
+    refresh_auth_entries(transcript);
+
     transcript.ui.show_models_panel();
+}
+
+/// (Re)load auth.json's entry list into the panel. Unreadable/malformed is
+/// surfaced as a single pseudo-entry rather than an empty list pretending
+/// there are no credentials.
+fn refresh_auth_entries(transcript: &mut Transcript) {
+    let labels = match local::auth_json::default_path() {
+        Some(path) => match local::auth_json::AuthJson::load_or_empty(&path) {
+            Ok(doc) => format_auth_entries(&doc.entries()),
+            Err(e) => vec![format!("auth.json unreadable: {e}")],
+        },
+        None => vec!["auth.json: no home directory".to_string()],
+    };
+    transcript.ui.set_auth_entries(labels);
+}
+
+/// Pure entries -> panel labels, shared by the live path and the demo
+/// backend's seeded fixture. Only provider ids and form labels — key
+/// material never reaches the UI model.
+fn format_auth_entries(entries: &[(String, local::auth_json::KeyForm)]) -> Vec<String> {
+    entries
+        .iter()
+        .map(|(provider, form)| format!("{provider} · {}", form.label()))
+        .collect()
+}
+
+/// Seeded auth.json entry list for demo mode: one of every form the panel
+/// renders, run through the same `format_auth_entries` as the live path.
+fn seed_demo_auth_entries() -> Vec<(String, local::auth_json::KeyForm)> {
+    use local::auth_json::KeyForm;
+    vec![
+        ("anthropic".to_string(), KeyForm::Literal),
+        ("cloudflare-ai-gateway".to_string(), KeyForm::Env),
+        ("openai".to_string(), KeyForm::Command),
+        ("github-copilot".to_string(), KeyForm::Managed),
+    ]
+}
+
+/// Write one api_key entry into auth.json (load → edit → atomic 0600
+/// write), then refresh the panel's entry list. All notes/errors mention
+/// the provider only — never the key.
+fn save_api_key(transcript: &mut Transcript, provider: &str, key: &Secret) {
+    let Some(path) = local::auth_json::default_path() else {
+        transcript.note("error", "auth.json: no home directory");
+        return;
+    };
+    let result = local::auth_json::AuthJson::load_or_empty(&path).and_then(|mut doc| {
+        doc.set_api_key(provider, &key.0)?;
+        doc.write(&path)?;
+        Ok(())
+    });
+    match result {
+        Ok(()) => {
+            let provider = provider.trim();
+            transcript.note("info", format!("auth.json: key saved for {provider}"));
+        }
+        Err(e) => transcript.note("error", format!("auth.json: {e}")),
+    }
+    refresh_auth_entries(transcript);
 }
 
 /// Pure Ollama models -> panel summary, shared by the live path (above) and
@@ -2781,6 +2870,36 @@ mod model_label_tests {
             "cost": {"input": 0.25, "output": 0.6},
         });
         assert_eq!(model_label(&m), "m · p · $0.25/$0.6");
+    }
+}
+
+#[cfg(test)]
+mod auth_panel_tests {
+    use super::*;
+
+    #[test]
+    fn labels_cover_every_form_and_never_contain_key_material() {
+        let labels = format_auth_entries(&seed_demo_auth_entries());
+        assert_eq!(
+            labels,
+            vec![
+                "anthropic · api key",
+                "cloudflare-ai-gateway · $ENV — read-only",
+                "openai · !command — read-only",
+                "github-copilot · managed by pi /login",
+            ]
+        );
+    }
+
+    #[test]
+    fn secret_debug_is_redacted() {
+        let cmd = UiCmd::SaveApiKey {
+            provider: "anthropic".into(),
+            key: Secret("sk-ant-super-secret".into()),
+        };
+        let printed = format!("{cmd:?}");
+        assert!(!printed.contains("super-secret"), "{printed}");
+        assert!(printed.contains("redacted"));
     }
 }
 
@@ -3629,6 +3748,9 @@ pub async fn demo_backend(
     let mut current_session: Option<String> = None;
     sidebar.refresh_sessions_with_active(current_session.as_deref(), &transcript.ui);
     let mut demo_router_entries = seed_demo_router_entries();
+    transcript
+        .ui
+        .set_auth_entries(format_auth_entries(&seed_demo_auth_entries()));
 
     let rate: u64 = std::env::var("SLINTY_DEMO_RATE")
         .ok()
@@ -3705,6 +3827,11 @@ pub async fn demo_backend(
                 continue;
             }
             UiCmd::AddOllamaToPi => {
+                transcript.note("info", "not available in demo mode");
+                continue;
+            }
+            // Demo never touches the real ~/.pi/agent/auth.json.
+            UiCmd::SaveApiKey { .. } => {
                 transcript.note("info", "not available in demo mode");
                 continue;
             }

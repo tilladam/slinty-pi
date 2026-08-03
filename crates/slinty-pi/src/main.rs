@@ -87,6 +87,13 @@ fn main() -> anyhow::Result<()> {
             let _ = tx.send(UiCmd::ServerDotClicked);
         });
         let tx = cmd_tx.clone();
+        app.on_save_api_key(move |provider, key| {
+            let _ = tx.send(UiCmd::SaveApiKey {
+                provider: provider.to_string(),
+                key: backend::Secret(key.to_string()),
+            });
+        });
+        let tx = cmd_tx.clone();
         app.on_model_selected(move |i| {
             if i >= 0 {
                 let _ = tx.send(UiCmd::SetModel(i as usize));

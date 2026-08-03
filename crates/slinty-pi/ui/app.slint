@@ -526,6 +526,7 @@ export component AppWindow inherits Window {
     in property <bool> ollama-detected: false;
     in property <string> ollama-summary: "";
     in property <int> ollama-model-count: 0;
+    in property <[string]> auth-entries: [];
 
     in-out property <bool> hf-search-visible: false;
     in property <[HfResultRow]> hf-search-results: [];
@@ -573,6 +574,7 @@ export component AppWindow inherits Window {
     callback hf-search(string);
     callback download-hf-model(string);
     callback add-ollama-to-pi();
+    callback save-api-key(string, string);
     callback density-changed(int);
     callback scheme-changed(bool);
     callback server-dot-clicked();
@@ -966,12 +968,14 @@ export component AppWindow inherits Window {
         ollama-detected: root.ollama-detected;
         ollama-summary: root.ollama-summary;
         ollama-model-count: root.ollama-model-count;
+        auth-entries: root.auth-entries;
         close => { root.models-visible = false; }
         serve-rapid-mlx(alias) => { root.serve-rapid-mlx(alias); }
         load-router-model(id) => { root.load-router-model(id); }
         unload-router-model(id) => { root.unload-router-model(id); }
         open-hf-search => { root.hf-search-visible = true; }
         add-ollama-to-pi => { root.add-ollama-to-pi(); }
+        save-api-key(provider, key) => { root.save-api-key(provider, key); }
     }
 
     if root.hf-search-visible: HfSearchOverlay {
