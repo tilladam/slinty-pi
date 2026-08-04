@@ -143,6 +143,30 @@ component CopyButton inherits Rectangle {
     }
 }
 
+// Composer-strip action chip. The 1px hairline outline and pointer cursor are
+// what mark these as interactive — bare faint words read as labels, not
+// controls.
+component StripChip inherits Rectangle {
+    in property <string> label;
+    callback activated();
+    width: chip-label.width + 16px;
+    height: 20px;
+    border-radius: 5px;
+    border-width: 1px;
+    border-color: chip-touch.has-hover ? Style.dim : Style.hairline;
+    background: chip-touch.has-hover ? Palette.alternate-background : transparent;
+    chip-label := Text {
+        text: root.label;
+        font-size: 11px;
+        color: chip-touch.has-hover ? Style.dim : Style.faint;
+        vertical-alignment: center;
+    }
+    chip-touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.activated(); }
+    }
+}
+
 component UsageRing inherits Rectangle {
     // Context-window usage, 0..100.
     in property <float> percent: 0;
@@ -881,7 +905,13 @@ export component AppWindow inherits Window {
                         padding-left: 4px;
                         padding-right: 2px;
 
-                        UsageRing { percent: root.context-percent; }
+                        // Left cluster: every item is a fixed 20px row so the
+                        // ring, dot, and counter share one center line.
+                        Rectangle {
+                            width: 16px;
+                            height: 20px;
+                            UsageRing { percent: root.context-percent; }
+                        }
                         if root.server-dot != 0: Rectangle {
                             width: 14px;
                             height: 20px;
@@ -899,6 +929,7 @@ export component AppWindow inherits Window {
                             }
                         }
                         Text {
+                            height: 20px;
                             text: root.status-text;
                             font-size: 11px;
                             color: Style.faint;
@@ -906,68 +937,21 @@ export component AppWindow inherits Window {
                         }
                         Rectangle { horizontal-stretch: 1; }
 
-                        Rectangle {
-                            width: attach-label.width + 10px;
-                            height: 20px;
-                            border-radius: 5px;
-                            background: attach-touch.has-hover ? Palette.alternate-background : transparent;
-                            attach-label := Text {
-                                text: "attach";
-                                font-size: 11px;
-                                color: Style.faint;
-                                vertical-alignment: center;
-                            }
-                            attach-touch := TouchArea {
-                                clicked => { root.attach-clicked(); }
-                            }
+                        StripChip {
+                            label: "attach";
+                            activated => { root.attach-clicked(); }
                         }
-
-                        Rectangle {
-                            width: tree-label.width + 10px;
-                            height: 20px;
-                            border-radius: 5px;
-                            background: tree-touch.has-hover ? Palette.alternate-background : transparent;
-                            tree-label := Text {
-                                text: "tree";
-                                font-size: 11px;
-                                color: Style.faint;
-                                vertical-alignment: center;
-                            }
-                            tree-touch := TouchArea {
-                                clicked => { root.open-tree(); }
-                            }
+                        StripChip {
+                            label: "tree";
+                            activated => { root.open-tree(); }
                         }
-
-                        Rectangle {
-                            width: models-label.width + 10px;
-                            height: 20px;
-                            border-radius: 5px;
-                            background: models-touch.has-hover ? Palette.alternate-background : transparent;
-                            models-label := Text {
-                                text: "models";
-                                font-size: 11px;
-                                color: Style.faint;
-                                vertical-alignment: center;
-                            }
-                            models-touch := TouchArea {
-                                clicked => { root.open-models(); }
-                            }
+                        StripChip {
+                            label: "models";
+                            activated => { root.open-models(); }
                         }
-
-                        Rectangle {
-                            width: density-label.width + 10px;
-                            height: 20px;
-                            border-radius: 5px;
-                            background: density-touch.has-hover ? Palette.alternate-background : transparent;
-                            density-label := Text {
-                                text: root.density == 0 ? "verbose" : root.density == 2 ? "summary" : "normal";
-                                font-size: 11px;
-                                color: Style.faint;
-                                vertical-alignment: center;
-                            }
-                            density-touch := TouchArea {
-                                clicked => { root.cycle-density(); }
-                            }
+                        StripChip {
+                            label: root.density == 0 ? "verbose" : root.density == 2 ? "summary" : "normal";
+                            activated => { root.cycle-density(); }
                         }
 
                         if root.thinking-list.length > 1: ComboBox {
