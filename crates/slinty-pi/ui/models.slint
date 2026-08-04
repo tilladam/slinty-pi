@@ -30,6 +30,8 @@ component CachedModelItem inherits Rectangle {
     border-radius: 6px;
     background: touch.has-hover ? Palette.alternate-background.transparentize(0.3) : transparent;
 
+    touch := TouchArea {}
+
     HorizontalLayout {
         padding: 8px;
         spacing: 8px;
@@ -90,8 +92,6 @@ component CachedModelItem inherits Rectangle {
             }
         }
     }
-
-    touch := TouchArea {}
 }
 
 component RouterModelItem inherits Rectangle {
@@ -102,6 +102,8 @@ component RouterModelItem inherits Rectangle {
     height: 40px;
     border-radius: 6px;
     background: touch.has-hover ? Palette.alternate-background.transparentize(0.3) : transparent;
+
+    touch := TouchArea {}
 
     HorizontalLayout {
         padding: 8px;
@@ -154,8 +156,6 @@ component RouterModelItem inherits Rectangle {
             }
         }
     }
-
-    touch := TouchArea {}
 }
 
 export component ModelsOverlay inherits Rectangle {
