@@ -7,6 +7,15 @@ providers through the same picker.
 
 See [CLAUDE.md](CLAUDE.md) for architecture notes and the full list of env-var test hooks.
 
+## Screenshots
+
+| | |
+|---|---|
+| ![Transcript](docs/screenshots/transcript.png) Streaming markdown, syntax-highlighted code, tables, and tool-call chips in the transcript. | ![Models panel](docs/screenshots/models.png) One panel for every backend: rapid-mlx, the llama.cpp router, Ollama, and cloud API keys. |
+| ![Hugging Face search](docs/screenshots/huggingface-search.png) Search and download GGUF models from Hugging Face without leaving the app. | |
+
+Captured in [demo mode](#demo-mode-no-pi-needed) with synthetic data — no real model calls or Hugging Face queries.
+
 ## Crates
 
 - `crates/pi-rpc` — typed client for pi's RPC mode: spawns `pi --mode rpc`, strict-LF JSONL
