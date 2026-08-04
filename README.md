@@ -1,8 +1,9 @@
 # slinty-pi
 
 A native desktop app for the [pi coding agent](https://pi.dev), built with Rust and
-[Slint](https://slint.dev). Local-first: designed around llama.cpp / Ollama / LM Studio, with
-cloud providers through the same picker.
+[Slint](https://slint.dev). Local-first: designed around [rapid-mlx](https://rapidmlx.com)
+(Apple Silicon) and llama.cpp's router, with Ollama detection/one-click setup and cloud
+providers through the same picker.
 
 See [PRODUCT_PLAN.md](PRODUCT_PLAN.md) for the full product plan and milestones, and
 [CLAUDE.md](CLAUDE.md) for architecture notes and the full list of env-var test hooks.
@@ -12,11 +13,14 @@ See [PRODUCT_PLAN.md](PRODUCT_PLAN.md) for the full product plan and milestones,
 **M0–M2 done, M3 (local models) well underway.** Streaming transcript (markdown, thinking blocks,
 collapsible tool-call chips), composer with attach/steer/abort, session sidebar with search/
 fork/clone/rename, a read-only branch-tree overlay, command palette, transcript density modes,
-and a models panel covering rapid-mlx, the llama.cpp router (load/unload, Hugging Face search
-and download), and a guided Ollama models.json editor. M4 (extension-UI protocol, permission
-gating, diff viewer, compaction UX) hasn't started yet. A first slice of M5 has landed ahead of
-the rest of that milestone — an app icon and `cargo-bundle` packaging (see below) — but signing,
-notarization, and the CI performance gate are still open.
+and a models panel covering rapid-mlx (detect/serve on Apple Silicon), the llama.cpp router
+(load/unload, Hugging Face search and download), Ollama (detection + one-click pi config), and
+free-text cloud API keys. Not landed yet: guided first-run onboarding — M3's exit criterion of
+reaching a working chat on a fresh machine without hand-editing `models.json` isn't met yet, since
+picking a served rapid-mlx/router model still requires a matching entry already configured there.
+M4 (extension-UI protocol, permission gating, diff viewer, compaction UX) hasn't started. A first
+slice of M5 has landed ahead of the rest of that milestone — an app icon and `cargo-bundle`
+packaging (see below) — but signing, notarization, and the CI performance gate are still open.
 
 ## Crates
 

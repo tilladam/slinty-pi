@@ -6,7 +6,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 slinty-pi is a native desktop frontend for the [pi coding agent](https://pi.dev), built with Rust
 and Slint. It drives `pi --mode rpc` as a subprocess (never forks pi's own logic) and is local-first:
-designed around llama.cpp / Ollama / LM Studio, with cloud providers through the same picker.
+designed around rapid-mlx (Apple Silicon) and llama.cpp's router, with Ollama detection/one-click
+setup and cloud providers through the same picker.
 `PRODUCT_PLAN.md` is the requirements baseline (vision, prior-art research on pi's RPC protocol,
 milestones M0–M5); read it for product/architecture rationale before making non-trivial changes.
 
@@ -29,7 +30,8 @@ SLINT_EMIT_DEBUG_INFO=1 SLINT_MCP_PORT=9315 cargo run -p slinty-pi --features sl
 Useful env vars for driving the UI without a display/accessibility automation (each is a
 `"<delay_ms>:<arg>"` test hook wired in `main.rs`, mirroring a real UI action):
 `SLINTY_SEND_AFTER`, `SLINTY_SWITCH_PROJECT_AFTER`, `SLINTY_SWITCH_SESSION_AFTER`,
-`SLINTY_NEW_SESSION_AFTER`, `SLINTY_DELETE_SESSION_AFTER`, `SLINTY_SIDEBAR_SEARCH_AFTER`,
+`SLINTY_NEW_SESSION_AFTER`, `SLINTY_DELETE_SESSION_AFTER`, `SLINTY_RENAME_SESSION_AFTER`,
+`SLINTY_SIDEBAR_SEARCH_AFTER`,
 `SLINTY_OPEN_TREE_AFTER`, `SLINTY_FORK_FROM_AFTER`, `SLINTY_OPEN_PALETTE_AFTER`,
 `SLINTY_PALETTE_QUERY_AFTER`, `SLINTY_PALETTE_EXEC_AFTER`, `SLINTY_ATTACH_AFTER`,
 `SLINTY_CYCLE_DENSITY_AFTER`, `SLINTY_RESUME_SESSION`, `SLINTY_DEMO_RATE`, `SLINTY_DEMO_AUTOSEND`,
