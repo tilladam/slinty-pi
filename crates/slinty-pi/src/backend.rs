@@ -214,10 +214,13 @@ pub fn code_lines_model(lines: &[highlight::CodeLine]) -> ModelRc<CodeLine> {
 }
 
 /// Convert row-major table cells into the Slint model, attaching each cell
-/// its column's stretch weight (from the column's longest cell, clamped so
-/// one verbose column can't starve the others entirely). Cells render with
-/// `preferred-width: 0` so column boundaries are identical in every row;
-/// the second return value is the table's estimated natural width in
+/// its column's width share (from the column's longest cell, clamped so one
+/// verbose column can't starve the others entirely), normalized so a row's
+/// weights sum to 1.0. The UI multiplies the block width by the share to get
+/// explicit, identical column boundaries in every row — explicit rather than
+/// stretch-negotiated, because stretch weights resolve before wrapped cell
+/// text knows its height at the final width, which made rows too short.
+/// The second return value is the table's estimated natural width in
 /// logical px (the UI caps it at the available span), so narrow tables
 /// don't stretch across the whole transcript.
 fn table_rows_model(rows: &[Vec<segmenter::TableCell>]) -> (ModelRc<TableRowCells>, f32) {
@@ -235,6 +238,8 @@ fn table_rows_model(rows: &[Vec<segmenter::TableCell>]) -> (ModelRc<TableRowCell
         .collect();
     // ~7px per character at the 12.5px table font, plus cell padding.
     let pref_width: f32 = weights.iter().map(|w| w * 7.0 + 18.0).sum();
+    let total: f32 = weights.iter().sum::<f32>().max(1.0);
+    let weights: Vec<f32> = weights.iter().map(|w| w / total).collect();
     let rows: Vec<TableRowCells> = rows
         .iter()
         .map(|row| {

@@ -387,16 +387,26 @@ component TableBlock inherits Rectangle {
         for row in rows: HorizontalLayout {
             spacing: 1px;
             for cell in row.cells: Rectangle {
-                // Width comes from the column weight alone (preferred 0), so
-                // every row computes identical column boundaries — content-
-                // driven preferred widths would leave the grid lines jagged.
-                preferred-width: 0px;
-                min-width: 24px;
-                horizontal-stretch: cell.weight;
+                // Explicit width (block width × the column's normalized
+                // share) instead of horizontal-stretch weights: stretch
+                // negotiation resolves before wrapped cell text knows its
+                // height at the final width, which sized rows too short —
+                // long cells overlapped the next row and the block clipped
+                // its last line. With definite widths the wrapped height is
+                // well-defined bottom-up and each row takes its tallest cell.
+                width: max(24px, (root.width - 2px - (row.cells.length - 1) * 1px) * cell.weight);
+                // Slint's box layouts compute row height before wrapped cell
+                // text knows its height at the final cell width, so tall cells
+                // overlapped the next row and the block clipped its last line.
+                // An explicit min-height from the text's implicit preferred
+                // height (which does track the text's actual width) forces the
+                // row to fit its tallest cell, while cells still stretch to
+                // the full row height so the grid stays uniform.
+                min-height: cell-text.preferred-height + 16px;
                 background: cell.header ? Style.card.darker(4%) : Style.card;
                 VerticalLayout {
                     padding: 8px;
-                    Text {
+                    cell-text := Text {
                         text: cell.text;
                         font-size: 12.5px;
                         font-weight: cell.header ? 700 : 400;
