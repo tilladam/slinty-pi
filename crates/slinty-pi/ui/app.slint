@@ -938,8 +938,16 @@ export component AppWindow inherits Window {
                                 clicked => { root.server-dot-clicked(); }
                             }
                         }
+                        // Session stats wrap onto a second 11px line inside the
+                        // ComboBox-height strip rather than growing sideways and
+                        // squeezing the model switcher into elision. (The switcher
+                        // pins its preferred width below, making this the strip's
+                        // flexible element.)
                         Text {
-                            height: 20px;
+                            max-width: 210px;
+                            max-height: 30px;
+                            wrap: word-wrap;
+                            overflow: elide;
                             text: root.status-text;
                             font-size: 11px;
                             color: Style.faint;
@@ -974,6 +982,10 @@ export component AppWindow inherits Window {
                             activated => { root.open-models(); }
                         }
                         ComboBox {
+                            // Don't cede width to a growing status line — hold
+                            // preferred size (capped for pathological names) and
+                            // let the status text wrap instead.
+                            min-width: min(self.preferred-width, 320px);
                             model: root.model-list;
                             current-index <=> root.model-index;
                             selected => { root.model-selected(self.current-index); }
