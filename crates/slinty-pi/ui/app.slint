@@ -148,17 +148,27 @@ component CopyButton inherits Rectangle {
 // controls.
 component StripChip inherits Rectangle {
     in property <string> label;
+    // Spoken name for assistive tech; matters when label is a glyph like ⚙︎.
+    in property <string> a11y-label: root.label;
+    in property <length> label-size: 11px;
     callback activated();
+    accessible-role: AccessibleRole.button;
+    accessible-label: root.a11y-label;
+    accessible-action-default => { root.activated(); }
     width: chip-label.width + 16px;
     height: 20px;
     border-radius: 5px;
     border-width: 1px;
     border-color: chip-touch.has-hover ? Style.dim : Style.hairline;
     background: chip-touch.has-hover ? Palette.alternate-background : transparent;
+    // Dim via opacity over a solid color rather than a transparentized color:
+    // emoji-rendered glyph labels (like ⚙︎) ignore `color` entirely, and the
+    // opacity values mirror Style.faint/Style.dim's alphas.
     chip-label := Text {
         text: root.label;
-        font-size: 11px;
-        color: chip-touch.has-hover ? Style.dim : Style.faint;
+        font-size: root.label-size;
+        color: Palette.foreground;
+        opacity: chip-touch.has-hover ? 0.55 : 0.35;
         vertical-alignment: center;
     }
     chip-touch := TouchArea {
@@ -946,10 +956,6 @@ export component AppWindow inherits Window {
                             activated => { root.open-tree(); }
                         }
                         StripChip {
-                            label: "models";
-                            activated => { root.open-models(); }
-                        }
-                        StripChip {
                             label: root.density == 0 ? "verbose" : root.density == 2 ? "summary" : "normal";
                             activated => { root.cycle-density(); }
                         }
@@ -958,6 +964,14 @@ export component AppWindow inherits Window {
                             model: root.thinking-list;
                             current-index <=> root.thinking-index;
                             selected => { root.thinking-selected(self.current-index); }
+                        }
+                        // Manage-the-roster entry point, adjacent to the
+                        // pick-from-the-roster switcher it configures.
+                        StripChip {
+                            label: "⚙︎";
+                            label-size: 13px;
+                            a11y-label: "manage models";
+                            activated => { root.open-models(); }
                         }
                         ComboBox {
                             model: root.model-list;
