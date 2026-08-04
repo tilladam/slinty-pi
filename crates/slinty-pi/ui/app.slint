@@ -910,49 +910,14 @@ export component AppWindow inherits Window {
                         }
                     }
 
+                    // Controls row + a dedicated full-width session-info line
+                    // beneath it: stats never compete with the switcher for
+                    // horizontal space, so neither wraps nor elides in normal use.
                     HorizontalLayout {
                         spacing: 8px;
                         padding-left: 4px;
                         padding-right: 2px;
 
-                        // Left cluster: every item is a fixed 20px row so the
-                        // ring, dot, and counter share one center line.
-                        Rectangle {
-                            width: 16px;
-                            height: 20px;
-                            UsageRing { percent: root.context-percent; }
-                        }
-                        if root.server-dot != 0: Rectangle {
-                            width: 14px;
-                            height: 20px;
-                            Rectangle {
-                                width: 8px;
-                                height: 8px;
-                                border-radius: 4px;
-                                background: root.server-dot == 2 ? #d35454
-                                    : root.server-dot == 3 ? #e2a53f
-                                    : #43a047;
-                            }
-                            TouchArea {
-                                mouse-cursor: pointer;
-                                clicked => { root.server-dot-clicked(); }
-                            }
-                        }
-                        // Session stats wrap onto a second 11px line inside the
-                        // ComboBox-height strip rather than growing sideways and
-                        // squeezing the model switcher into elision. (The switcher
-                        // pins its preferred width below, making this the strip's
-                        // flexible element.)
-                        Text {
-                            max-width: 210px;
-                            max-height: 30px;
-                            wrap: word-wrap;
-                            overflow: elide;
-                            text: root.status-text;
-                            font-size: 11px;
-                            color: Style.faint;
-                            vertical-alignment: center;
-                        }
                         Rectangle { horizontal-stretch: 1; }
 
                         StripChip {
@@ -982,9 +947,8 @@ export component AppWindow inherits Window {
                             activated => { root.open-models(); }
                         }
                         ComboBox {
-                            // Don't cede width to a growing status line — hold
-                            // preferred size (capped for pathological names) and
-                            // let the status text wrap instead.
+                            // Hold preferred size (capped for pathological model
+                            // names) rather than ceding width under pressure.
                             min-width: min(self.preferred-width, 320px);
                             model: root.model-list;
                             current-index <=> root.model-index;
@@ -999,6 +963,44 @@ export component AppWindow inherits Window {
                             primary: true;
                             clicked => { root.submit(); }
                         }
+                    }
+
+                    HorizontalLayout {
+                        spacing: 8px;
+                        padding-left: 4px;
+                        padding-right: 2px;
+
+                        // Every item is a fixed 20px row sharing one center line.
+                        Rectangle {
+                            width: 16px;
+                            height: 20px;
+                            UsageRing { percent: root.context-percent; }
+                        }
+                        if root.server-dot != 0: Rectangle {
+                            width: 14px;
+                            height: 20px;
+                            Rectangle {
+                                width: 8px;
+                                height: 8px;
+                                border-radius: 4px;
+                                background: root.server-dot == 2 ? #d35454
+                                    : root.server-dot == 3 ? #e2a53f
+                                    : #43a047;
+                            }
+                            TouchArea {
+                                mouse-cursor: pointer;
+                                clicked => { root.server-dot-clicked(); }
+                            }
+                        }
+                        Text {
+                            height: 20px;
+                            overflow: elide;
+                            text: root.status-text;
+                            font-size: 11px;
+                            color: Style.faint;
+                            vertical-alignment: center;
+                        }
+                        Rectangle { horizontal-stretch: 1; }
                     }
                 }
             }
