@@ -5,22 +5,7 @@ A native desktop app for the [pi coding agent](https://pi.dev), built with Rust 
 (Apple Silicon) and llama.cpp's router, with Ollama detection/one-click setup and cloud
 providers through the same picker.
 
-See [PRODUCT_PLAN.md](PRODUCT_PLAN.md) for the full product plan and milestones, and
-[CLAUDE.md](CLAUDE.md) for architecture notes and the full list of env-var test hooks.
-
-## Status
-
-**M0–M2 done, M3 (local models) well underway.** Streaming transcript (markdown, thinking blocks,
-collapsible tool-call chips), composer with attach/steer/abort, session sidebar with search/
-fork/clone/rename, a read-only branch-tree overlay, command palette, transcript density modes,
-and a models panel covering rapid-mlx (detect/serve on Apple Silicon), the llama.cpp router
-(load/unload, Hugging Face search and download), Ollama (detection + one-click pi config), and
-free-text cloud API keys. Not landed yet: guided first-run onboarding — M3's exit criterion of
-reaching a working chat on a fresh machine without hand-editing `models.json` isn't met yet, since
-picking a served rapid-mlx/router model still requires a matching entry already configured there.
-M4 (extension-UI protocol, permission gating, diff viewer, compaction UX) hasn't started. A first
-slice of M5 has landed ahead of the rest of that milestone — an app icon and `cargo-bundle`
-packaging (see below) — but signing, notarization, and the CI performance gate are still open.
+See [CLAUDE.md](CLAUDE.md) for architecture notes and the full list of env-var test hooks.
 
 ## Crates
 
@@ -64,34 +49,7 @@ open target/debug/bundle/osx/slinty-pi.app
 The app icon lives in `crates/slinty-pi/assets/icon/` (`icon.icns` / `icon.ico` / `icon.png`, all
 derived from one 1024px vector master); `icon.ico` is also embedded directly into the Windows
 `.exe` via `embed-resource` in `build.rs`, independent of `cargo-bundle`. Not done yet: signing,
-notarization, and stapling — see M5 in `PRODUCT_PLAN.md`.
-
-## Slint dependency
-
-`slint`, `i-slint-backend-winit`, and `slint-build` are path dependencies on a local
-`slint` checkout (master) at `/Users/till/Code/Rust/slint/slint`, not crates.io. This is
-needed for two things not yet in a published release (1.17.1 predates both):
-
-- the `mcp` feature (embedded MCP server for UI introspection/screenshots — see that
-  repo's `docs/development/mcp-server.md`)
-- [PR #11520](https://github.com/slint-ui/slint/pull/11520), which makes
-  `slint::platform::set_platform()` start that server automatically for custom-platform
-  apps like this one (`main.rs` installs a `CustomApplicationHandler` to see winit's
-  `WindowEvent::DroppedFile`, so it can't go through the default backend selector)
-
-`mcp` is not enabled by default (it pulls in a whole extra dependency tree — async-net,
-httparse, prost, protox, ...). Enable it per-invocation instead:
-
-```sh
-SLINT_EMIT_DEBUG_INFO=1 SLINT_MCP_PORT=9315 cargo run -p slinty-pi --features slint/mcp
-```
-
-`SLINT_EMIT_DEBUG_INFO=1` preserves element IDs/source locations, needed for full
-element introspection. Then talk JSON-RPC to `http://127.0.0.1:9315/mcp` (`tools/list`
-for the available tools — window/element inspection, screenshots, click/drag/key
-simulation). See the [official Slint AI-plugins skill](https://github.com/slint-ui/ai-plugins)
-(installed as a Claude Code plugin: `slint@slint`) for full usage details. Move these
-back to crates.io version pins once `mcp` and PR #11520 land in a release.
+notarization, and stapling.
 
 ## Tests
 
