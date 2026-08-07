@@ -40,7 +40,7 @@ pi-rpc = { path = "../pi-rpc" }
 # glutin/OpenGL — a deprecated compatibility layer on macOS — and re-tessellates
 # every path on the CPU each frame, which measurably loses to Skia's Metal
 # pipeline on transcript-heavy frames.
-slint = { path = "/Users/till/Code/Rust/slint/slint/api/rs/slint", features = ["renderer-winit-skia"] }
+slint = { git = "https://github.com/slint-ui/slint.git", features = ["renderer-winit-skia"] }
 tokio.workspace = true
 # preserve_order: models.json editing needs Map iteration/serialization to
 # follow the file's original key order, not alphabetical — see local::pi_config.
@@ -63,7 +63,7 @@ rfd = "0.17.2"
 # so we can see winit's WindowEvent::DroppedFile before Slint silently
 # discards it. See crates/slinty-pi/src/main.rs's platform setup and
 # attach.rs's doc comment.
-i-slint-backend-winit = { path = "/Users/till/Code/Rust/slint/slint/internal/backends/winit" }
+i-slint-backend-winit = { git = "https://github.com/slint-ui/slint.git" }
 winit = "0.30"
 reqwest = { version = "0.13.4", default-features = false, features = ["json", "rustls", "stream", "query"] }
 sysinfo = "0.39.6"
@@ -74,7 +74,7 @@ thiserror.workspace = true
 # Must match the `slint` runtime's source exactly (same reasoning as above) —
 # otherwise the compiled .slint code and the runtime types it references can
 # drift apart, which fails loudly at compile time (missing/renamed fields).
-slint-build = { path = "/Users/till/Code/Rust/slint/slint/api/rs/build" }
+slint-build = { git = "https://github.com/slint-ui/slint.git" }
 # Embeds icon.ico into the .exe itself (taskbar/Explorer icon) — separate from
 # cargo-bundle's .msi installer icon above. Deliberately NOT a
 # `[target.'cfg(windows)'.build-dependencies]` entry: Cargo evaluates that
