@@ -12,4 +12,6 @@ pub mod density;
 pub mod highlight;
 pub mod local;
 pub mod palette;
+#[cfg(test)]
+pub mod recording_ui_sink;
 pub mod segmenter;

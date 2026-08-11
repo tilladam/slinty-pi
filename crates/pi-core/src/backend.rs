@@ -128,7 +128,7 @@ impl std::fmt::Debug for Secret {
 // same locally).
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct RowSpec {
     pub kind: &'static str,
     /// Markdown for the styled field (prose only; code and tables render
@@ -228,6 +228,7 @@ pub trait UiSink: Send + Sync {
 
 /// UI-ready rapid-mlx panel data. `cached` rows are `(alias, hf_repo,
 /// human_size, fit_label)`.
+#[derive(Debug, Clone, PartialEq)]
 pub struct RapidMlxPanelData {
     pub version: Option<String>,
     pub running_summary: Option<String>,
@@ -237,6 +238,7 @@ pub struct RapidMlxPanelData {
 
 /// UI-ready router panel data. `models` rows are `(id, status_label, loaded,
 /// busy)`.
+#[derive(Debug, Clone, PartialEq)]
 pub struct RouterPanelData {
     pub status_label: String,
     pub base_url: String,
@@ -595,6 +597,239 @@ impl Transcript {
         };
         let _ = run.name;
         self.ui.set(run.row, spec);
+    }
+}
+
+#[cfg(test)]
+mod transcript_tests {
+    use super::*;
+    use crate::recording_ui_sink::{RecordingUiSink, UiEvent};
+
+    fn new_transcript() -> (Transcript, RecordingUiSink) {
+        let sink = RecordingUiSink::new();
+        let dark = Arc::new(AtomicBool::new(false));
+        let transcript = Transcript::new(Box::new(sink.clone()), dark);
+        (transcript, sink)
+    }
+
+    /// Unwrap a row event's `RowSpec`, panicking with a useful message on any
+    /// non-row event (`set_status`, `set_streaming`, ...).
+    fn row_spec(event: &UiEvent) -> &RowSpec {
+        match event {
+            UiEvent::Push(spec) | UiEvent::Set(_, spec) => spec,
+            other => panic!("expected a row event, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn agent_start_and_settled_toggle_streaming() {
+        let (mut transcript, sink) = new_transcript();
+        transcript.apply(&Event::AgentStart);
+        transcript.apply(&Event::AgentSettled);
+        assert_eq!(
+            sink.events(),
+            vec![UiEvent::SetStreaming(true), UiEvent::SetStreaming(false),]
+        );
+    }
+
+    #[test]
+    fn streaming_text_ends_as_a_single_first_prose_row() {
+        let (mut transcript, sink) = new_transcript();
+        transcript.apply(&Event::MessageStart {
+            message: serde_json::json!({"role": "assistant"}),
+        });
+        transcript.apply(&mk_delta(AssistantMessageEvent::TextStart {
+            content_index: 0,
+        }));
+        transcript.apply(&mk_delta(AssistantMessageEvent::TextDelta {
+            content_index: 0,
+            delta: "hel".to_string(),
+        }));
+        transcript.apply(&mk_delta(AssistantMessageEvent::TextEnd {
+            content_index: 0,
+            content: "hello world".to_string(),
+        }));
+
+        let rows = sink.rows();
+        let last = row_spec(rows.last().expect("at least one row event"));
+        assert_eq!(last.kind, "prose");
+        assert_eq!(last.markdown.as_deref(), Some("hello world"));
+        assert!(
+            last.first,
+            "first content row of a fresh assistant message starts a new group"
+        );
+        // Every row event before the last one addressed the same shadow
+        // index (0) — the coalesced-delta path only ever grows the
+        // transcript by one row for a single unbroken text stream.
+        for event in &rows {
+            match event {
+                UiEvent::Push(_) => {}
+                UiEvent::Set(index, _) => assert_eq!(*index, 0),
+                other => panic!("unexpected row event {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn thinking_block_collapses_to_one_not_running_row() {
+        let (mut transcript, sink) = new_transcript();
+        transcript.apply(&Event::MessageStart {
+            message: serde_json::json!({"role": "assistant"}),
+        });
+        transcript.apply(&mk_delta(AssistantMessageEvent::ThinkingStart));
+        transcript.apply(&mk_delta(AssistantMessageEvent::ThinkingDelta {
+            delta: "pondering".to_string(),
+        }));
+        transcript.apply(&mk_delta(AssistantMessageEvent::ThinkingEnd));
+
+        let rows = sink.rows();
+        let first_push = rows
+            .iter()
+            .find_map(|e| match e {
+                UiEvent::Push(spec) => Some(spec),
+                _ => None,
+            })
+            .expect("thinking start pushes a row immediately (so later deltas can address it)");
+        assert_eq!(first_push.kind, "thinking");
+        assert!(first_push.running, "still running when first pushed");
+        assert!(first_push.first);
+
+        let last = row_spec(rows.last().expect("at least one row event"));
+        assert_eq!(last.kind, "thinking");
+        assert_eq!(last.text, "pondering");
+        assert!(!last.running, "ThinkingEnd marks the row finished");
+    }
+
+    #[test]
+    fn tool_call_lifecycle_updates_the_same_row_from_running_to_done() {
+        let (mut transcript, sink) = new_transcript();
+        transcript.apply(&Event::ToolExecutionStart {
+            tool_call_id: "call_1".to_string(),
+            tool_name: "bash".to_string(),
+            args: serde_json::json!({"command": "cargo test"}),
+        });
+        transcript.apply(&Event::ToolExecutionEnd {
+            tool_call_id: "call_1".to_string(),
+            tool_name: "bash".to_string(),
+            result: serde_json::json!({"content": [{"type": "text", "text": "ok"}]}),
+            is_error: false,
+        });
+
+        let rows = sink.rows();
+        assert_eq!(rows.len(), 2, "one push (start) + one set (end)");
+        let UiEvent::Push(start) = &rows[0] else {
+            panic!("expected the first event to be a push, got {:?}", rows[0]);
+        };
+        assert_eq!(start.kind, "tool");
+        assert!(start.running);
+        assert!(start.text.contains("bash"));
+
+        let UiEvent::Set(index, end) = &rows[1] else {
+            panic!("expected the second event to be a set, got {:?}", rows[1]);
+        };
+        assert_eq!(
+            *index, 0,
+            "the tool result updates the row the start pushed"
+        );
+        assert!(!end.running);
+        assert!(end.text.starts_with('✓'), "text was {:?}", end.text);
+        assert!(end.detail.contains("ok"));
+    }
+
+    #[test]
+    fn tool_error_result_marks_the_row_failed_not_just_finished() {
+        let (mut transcript, sink) = new_transcript();
+        transcript.apply(&Event::ToolExecutionStart {
+            tool_call_id: "call_1".to_string(),
+            tool_name: "bash".to_string(),
+            args: serde_json::json!({"command": "false"}),
+        });
+        transcript.apply(&Event::ToolExecutionEnd {
+            tool_call_id: "call_1".to_string(),
+            tool_name: "bash".to_string(),
+            result: serde_json::json!({"content": [{"type": "text", "text": "boom"}]}),
+            is_error: true,
+        });
+
+        let rows = sink.rows();
+        let end = row_spec(&rows[1]);
+        assert!(end.text.starts_with('✗'), "text was {:?}", end.text);
+    }
+
+    #[test]
+    fn compaction_start_and_end_set_and_clear_the_status_text() {
+        let (mut transcript, sink) = new_transcript();
+        transcript.apply(&Event::CompactionStart {
+            reason: "context_limit".to_string(),
+        });
+        transcript.apply(&Event::CompactionEnd {
+            reason: "context_limit".to_string(),
+            result: serde_json::Value::Null,
+            aborted: false,
+            will_retry: false,
+            error_message: None,
+        });
+
+        assert_eq!(
+            sink.events(),
+            vec![
+                UiEvent::SetStatus("compacting context…".to_string()),
+                UiEvent::SetStatus(String::new()),
+            ]
+        );
+    }
+
+    #[test]
+    fn queue_update_reports_steering_then_follow_up_items_in_order() {
+        let (mut transcript, sink) = new_transcript();
+        transcript.apply(&Event::QueueUpdate {
+            steering: vec!["steer this".to_string()],
+            follow_up: vec!["then this".to_string(), "and this".to_string()],
+        });
+
+        assert_eq!(
+            sink.events(),
+            vec![UiEvent::SetQueue(vec![
+                ("steer", "steer this".to_string()),
+                ("follow-up", "then this".to_string()),
+                ("follow-up", "and this".to_string()),
+            ])]
+        );
+    }
+
+    #[test]
+    fn extension_error_becomes_an_error_note_row() {
+        let (mut transcript, sink) = new_transcript();
+        transcript.apply(&Event::ExtensionError {
+            extension_path: "/ext/foo.js".to_string(),
+            event: "tool_call".to_string(),
+            error: "boom".to_string(),
+        });
+
+        let rows = sink.rows();
+        let spec = row_spec(&rows[0]);
+        assert_eq!(spec.kind, "error");
+        assert!(spec.text.contains("boom"));
+    }
+
+    #[test]
+    fn reset_clears_the_ui_and_the_shadow_row_counter() {
+        let (mut transcript, sink) = new_transcript();
+        transcript.note("info", "one");
+        transcript.note("info", "two");
+        transcript.reset();
+        // After reset, the shadow counter is back to 0 — the next pushed row
+        // must be addressable at index 0 again, not 2.
+        transcript.note("info", "three");
+
+        let rows = sink.rows();
+        assert!(matches!(rows[0], UiEvent::Push(_)));
+        assert!(matches!(rows[1], UiEvent::Push(_)));
+        assert!(matches!(rows[2], UiEvent::Clear));
+        let UiEvent::Push(third) = &rows[3] else {
+            panic!("expected a push, got {:?}", rows[3]);
+        };
+        assert_eq!(third.text, "three");
     }
 }
 
