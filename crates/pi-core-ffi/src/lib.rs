@@ -99,6 +99,14 @@ enum ChatCmd {
         path: String,
         reply: oneshot::Sender<Result<(), String>>,
     },
+    /// (Re)spawns a managed `rapid-mlx serve <alias>` and, once ready, makes
+    /// it pi's active model — the one local-model action that needs the
+    /// live `PiClient` (`client.set_model(...)`), unlike everything else in
+    /// `LocalModelIndex`. See the SW4 plan's Design section.
+    ServeRapidMlxModel {
+        alias: String,
+        reply: oneshot::Sender<Result<(), String>>,
+    },
 }
 
 /// A single `pi --mode rpc` child process plus the tokio runtime that owns
@@ -258,6 +266,19 @@ impl PiSession {
         self.call(|reply| ChatCmd::SwitchSession { path, reply })
             .await
     }
+
+    /// (Re)spawns a managed `rapid-mlx serve <alias>`, waits for it to
+    /// become ready, then makes it pi's active model. Stops any
+    /// previously-managed server first — a model switch is a supervised
+    /// restart, not a hot swap, matching `pi_core::backend::
+    /// serve_rapid_mlx_model`. An already-running *external* server (or
+    /// anything else bound to the port) surfaces as a normal
+    /// "failed to become ready" error rather than being killed: this only
+    /// ever stops servers it itself spawned.
+    pub async fn serve_rapid_mlx_model(&self, alias: String) -> Result<(), PiSessionError> {
+        self.call(|reply| ChatCmd::ServeRapidMlxModel { alias, reply })
+            .await
+    }
 }
 
 // Plain (non-`#[uniffi::export]`) impl block: `#[uniffi::export]` treats
@@ -276,6 +297,13 @@ impl PiSession {
             .map_err(|_| PiSessionError::Action("session task ended".to_string()))?
             .map_err(PiSessionError::Action)
     }
+}
+
+/// A managed `rapid-mlx serve` child this `PiSession` itself spawned (never
+/// an external/unmanaged server) — stopped before starting a replacement,
+/// and (implicitly, via `Drop`/`kill_on_drop`) when `run()`'s task ends.
+struct Managed {
+    server: pi_local::rapid_mlx::ManagedServer,
 }
 
 /// Owns the live `PiClient` end-to-end: drains UI commands and pi's event
@@ -301,6 +329,10 @@ async fn run(
     dark: Arc<AtomicBool>,
     resume_session_path: Option<String>,
 ) {
+    // Set once `ServeRapidMlxModel` spawns a managed child, so a later call
+    // knows to stop it before starting a replacement — same loop-scoped-
+    // mutable-local pattern as `client`/`events` above.
+    let mut managed_rapid_mlx: Option<Managed> = None;
     if let Some(path) = resume_session_path {
         match do_switch_session(&client, &path).await {
             Ok(()) => hydrate_and_push(&client, sink.as_ref(), &dark).await,
@@ -392,6 +424,44 @@ async fn run(
                             }
                             Err(e) => {
                                 let _ = reply.send(Err(e));
+                            }
+                        }
+                    }
+                    Some(ChatCmd::ServeRapidMlxModel { alias, reply }) => {
+                        if let Some(prev) = managed_rapid_mlx.take() {
+                            let _ = prev.server.shutdown().await;
+                        }
+                        match pi_local::rapid_mlx::ManagedServer::spawn(
+                            pi_local::rapid_mlx::DEFAULT_BINARY,
+                            &alias,
+                            pi_local::panel::RAPID_MLX_PORT,
+                        ) {
+                            Ok(mut server) => match server.wait_ready(Duration::from_secs(180)).await {
+                                Ok(()) => {
+                                    managed_rapid_mlx = Some(Managed {
+                                        server,
+                                    });
+                                    let outcome = client
+                                        .set_model("rapid-mlx", &alias)
+                                        .await
+                                        .map(|_| ())
+                                        .map_err(|e| {
+                                            format!(
+                                                "rapid-mlx: {alias} is ready but pi couldn't \
+                                                 select it (is a matching entry configured in \
+                                                 models.json?): {e}"
+                                            )
+                                        });
+                                    let _ = reply.send(outcome);
+                                }
+                                Err(e) => {
+                                    let _ = reply
+                                        .send(Err(format!("rapid-mlx: {alias} failed to start: {e}")));
+                                }
+                            },
+                            Err(e) => {
+                                let _ =
+                                    reply.send(Err(format!("rapid-mlx: could not spawn serve: {e}")));
                             }
                         }
                     }
@@ -564,6 +634,9 @@ fn reply_demo_action(cmd: ChatCmd, sink: &dyn ChatSink) {
             let _ = reply.send(Ok(()));
         }
         ChatCmd::RenameSession { reply, .. } => {
+            let _ = reply.send(Ok(()));
+        }
+        ChatCmd::ServeRapidMlxModel { reply, .. } => {
             let _ = reply.send(Ok(()));
         }
         ChatCmd::Send(_) | ChatCmd::Abort => {
@@ -1093,6 +1166,24 @@ mod reply_demo_action_tests {
         assert!(
             sink.events.lock().unwrap().is_empty(),
             "renaming doesn't change which session is active"
+        );
+    }
+
+    #[tokio::test]
+    async fn serve_rapid_mlx_model_replies_ok_without_touching_active_session() {
+        let sink = RecordingSink::default();
+        let (tx, rx) = oneshot::channel();
+        reply_demo_action(
+            ChatCmd::ServeRapidMlxModel {
+                alias: "demo-model".to_string(),
+                reply: tx,
+            },
+            &sink,
+        );
+        assert_eq!(rx.await.unwrap(), Ok(()));
+        assert!(
+            sink.events.lock().unwrap().is_empty(),
+            "there's no real session to act on in demo mode"
         );
     }
 }
