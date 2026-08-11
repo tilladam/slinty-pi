@@ -41,6 +41,7 @@ impl ChatSink for PrintSink {
 ///   cargo run -p pi-core-ffi --example spike_check              # round trip
 ///   cargo run -p pi-core-ffi --example spike_check -- abort     # abort mid-stream
 ///   cargo run -p pi-core-ffi --example spike_check -- sessions  # new/rename/delete session
+///   cargo run -p pi-core-ffi --example spike_check -- history   # settle + switch_session hydration (SW3)
 ///
 /// The abort mode's outcome depends on how the configured pi model/
 /// extensions handle a "write something long" prompt: a plain conversational
@@ -127,6 +128,57 @@ fn main() {
                     }
                     None => eprintln!("no active session path known — skipping delete_session"),
                 }
+            });
+        }
+        Some("history") => {
+            let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
+            rt.block_on(async {
+                eprintln!("--- sending a prompt that should produce a code block ---");
+                session.send(
+                    "Reply with only a fenced rust code block containing exactly: fn main() {}"
+                        .to_string(),
+                );
+                // Generous margin: real model latency, not a fixed cadence
+                // like the demo streamer. AgentSettled -> hydrate_and_push
+                // is what should populate last_history.
+                tokio::time::sleep(Duration::from_secs(20)).await;
+
+                let after_send = sink.last_history.lock().unwrap().clone();
+                let kinds_after_send: Vec<String> =
+                    after_send.iter().map(|r| r.kind.clone()).collect();
+                eprintln!("history after send/settle: {kinds_after_send:?}");
+                assert!(
+                    !after_send.is_empty(),
+                    "expected on_history_replaced to have fired after the turn settled"
+                );
+
+                let path = sink
+                    .active_session
+                    .lock()
+                    .unwrap()
+                    .clone()
+                    .expect("expected an active session path after sending a prompt");
+
+                eprintln!(
+                    "--- switch_session({path}) to verify resume reproduces the same render ---"
+                );
+                session
+                    .switch_session(path)
+                    .await
+                    .expect("switch_session failed");
+
+                let after_resume = sink.last_history.lock().unwrap().clone();
+                let kinds_after_resume: Vec<String> =
+                    after_resume.iter().map(|r| r.kind.clone()).collect();
+                eprintln!("history after switch_session: {kinds_after_resume:?}");
+                assert_eq!(
+                    kinds_after_send, kinds_after_resume,
+                    "resuming the same session should render the same row kinds the live settle did"
+                );
+                assert!(
+                    after_resume.iter().any(|r| r.kind == "code"),
+                    "expected at least one code row, got kinds {kinds_after_resume:?}"
+                );
             });
         }
         _ => {

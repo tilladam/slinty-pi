@@ -3,7 +3,7 @@
 //! `From` conversions, same pattern as `session_index::SessionRecord: From<
 //! pi_sessions::SidebarRow>`.
 
-#[derive(uniffi::Record)]
+#[derive(Clone, uniffi::Record)]
 pub struct ColoredSpanRecord {
     pub text: String,
     pub red: u8,
@@ -23,7 +23,7 @@ impl From<pi_render::highlight::ColoredSpan> for ColoredSpanRecord {
     }
 }
 
-#[derive(uniffi::Record)]
+#[derive(Clone, uniffi::Record)]
 pub struct CodeLineRecord {
     pub spans: Vec<ColoredSpanRecord>,
 }
@@ -40,7 +40,7 @@ impl From<pi_render::highlight::CodeLine> for CodeLineRecord {
     }
 }
 
-#[derive(uniffi::Record)]
+#[derive(Clone, uniffi::Record)]
 pub struct TableCellRecord {
     pub text: String,
     pub header: bool,
@@ -57,7 +57,7 @@ impl From<pi_render::segmenter::TableCell> for TableCellRecord {
 
 /// Mirrors `pi_render::RowSpec` field-for-field; `kind` becomes an owned
 /// `String` (UniFFI has no `&'static str`).
-#[derive(uniffi::Record)]
+#[derive(Clone, uniffi::Record)]
 pub struct RowRecord {
     pub kind: String,
     pub markdown: Option<String>,
