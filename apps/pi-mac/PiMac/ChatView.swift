@@ -1,25 +1,23 @@
 import SwiftUI
 
-/// M0-equivalent spike surface (mirrors `PRODUCT_PLAN.md`'s own M0: prove
-/// the architecture end-to-end before real feature work): a composer, a
-/// plain-text-appending transcript, and a status line. Deliberately no
-/// markdown rendering, sessions, or model panel yet — see
+/// Chat detail pane: composer, plain-text-appending transcript, streaming
+/// status. Deliberately no markdown rendering yet — see
 /// docs/plans/SW1-ffi-spike-and-chat-window.md.
 struct ChatView: View {
-    @State private var viewModel = ChatViewModel()
+    var model: AppModel
     @State private var draft: String = ""
 
     var body: some View {
         VStack(spacing: 0) {
             ScrollViewReader { proxy in
                 ScrollView {
-                    Text(viewModel.transcript.isEmpty ? " " : viewModel.transcript)
+                    Text(model.transcript.isEmpty ? " " : model.transcript)
                         .font(.system(.body, design: .monospaced))
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding()
                         .id("transcript-end")
                 }
-                .onChange(of: viewModel.transcript) {
+                .onChange(of: model.transcript) {
                     proxy.scrollTo("transcript-end", anchor: .bottom)
                 }
             }
@@ -36,9 +34,9 @@ struct ChatView: View {
                     .background(.quaternary, in: RoundedRectangle(cornerRadius: 8))
                     .onSubmit(send)
 
-                if viewModel.isStreaming {
+                if model.isStreaming {
                     Button("Abort", role: .destructive) {
-                        viewModel.abort()
+                        model.abort()
                     }
                 } else {
                     Button("Send") {
@@ -50,21 +48,19 @@ struct ChatView: View {
             .padding(12)
         }
         .frame(minWidth: 480, minHeight: 360)
-        .task {
-            viewModel.start()
-        }
+        .navigationTitle(model.activeSessionPath == nil ? "New Session" : "pi")
     }
 
     private var statusBar: some View {
         HStack {
             Circle()
-                .fill(viewModel.isStreaming ? .green : .secondary)
+                .fill(model.isStreaming ? .green : .secondary)
                 .frame(width: 8, height: 8)
-            Text(viewModel.isStreaming ? "streaming…" : "idle")
+            Text(model.isStreaming ? "streaming…" : "idle")
                 .font(.caption)
                 .foregroundStyle(.secondary)
             Spacer()
-            if let statusMessage = viewModel.statusMessage {
+            if let statusMessage = model.statusMessage {
                 Text(statusMessage)
                     .font(.caption)
                     .foregroundStyle(.red)
@@ -78,11 +74,11 @@ struct ChatView: View {
     private func send() {
         let prompt = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !prompt.isEmpty else { return }
-        viewModel.send(prompt)
+        model.send(prompt)
         draft = ""
     }
 }
 
 #Preview {
-    ChatView()
+    ChatView(model: AppModel())
 }

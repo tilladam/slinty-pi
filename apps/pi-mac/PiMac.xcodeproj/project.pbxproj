@@ -9,15 +9,19 @@
 /* Begin PBXBuildFile section */
 		3FC1ECF2E681672FAF38C165 /* PiMacApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 86A91C1D0EE958145E2B7FBA /* PiMacApp.swift */; };
 		8CE91CE85E1166BA5C71413E /* ChatView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 482A0F1669E6FF6A90545385 /* ChatView.swift */; };
-		2D06D85C5242C590D955182D /* ChatViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = CB136EEEBB2354FB5BA2BC65 /* ChatViewModel.swift */; };
+		2D06D85C5242C590D955182D /* AppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = CB136EEEBB2354FB5BA2BC65 /* AppModel.swift */; };
 		0A8DA7080FAA59C0D5752069 /* pi_core_ffi.swift in Sources */ = {isa = PBXBuildFile; fileRef = 93A97F54DA13BD6180002DDA /* pi_core_ffi.swift */; };
+		69DB5AD51C80EF95A6A1BB31 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1DA6692E517D9BE29939E861 /* ContentView.swift */; };
+		CBD2A8CD7F35F4934147D41E /* SidebarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 75F2A2B404A96C539D91DE0C /* SidebarView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
 		86A91C1D0EE958145E2B7FBA /* PiMacApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PiMacApp.swift; sourceTree = "<group>"; };
 		482A0F1669E6FF6A90545385 /* ChatView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatView.swift; sourceTree = "<group>"; };
-		CB136EEEBB2354FB5BA2BC65 /* ChatViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatViewModel.swift; sourceTree = "<group>"; };
+		CB136EEEBB2354FB5BA2BC65 /* AppModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModel.swift; sourceTree = "<group>"; };
 		93A97F54DA13BD6180002DDA /* pi_core_ffi.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = pi_core_ffi.swift; sourceTree = "<group>"; };
+		1DA6692E517D9BE29939E861 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
+		75F2A2B404A96C539D91DE0C /* SidebarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SidebarView.swift; sourceTree = "<group>"; };
 		7C900BB47408588774DEFB3C /* PiMac.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = PiMac.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -45,8 +49,10 @@
 			isa = PBXGroup;
 			children = (
 				86A91C1D0EE958145E2B7FBA /* PiMacApp.swift */,
+				1DA6692E517D9BE29939E861 /* ContentView.swift */,
+				75F2A2B404A96C539D91DE0C /* SidebarView.swift */,
 				482A0F1669E6FF6A90545385 /* ChatView.swift */,
-				CB136EEEBB2354FB5BA2BC65 /* ChatViewModel.swift */,
+				CB136EEEBB2354FB5BA2BC65 /* AppModel.swift */,
 			);
 			path = PiMac;
 			sourceTree = "<group>";
@@ -152,8 +158,10 @@
 			buildActionMask = 2147483647;
 			files = (
 				3FC1ECF2E681672FAF38C165 /* PiMacApp.swift in Sources */,
+				69DB5AD51C80EF95A6A1BB31 /* ContentView.swift in Sources */,
+				CBD2A8CD7F35F4934147D41E /* SidebarView.swift in Sources */,
 				8CE91CE85E1166BA5C71413E /* ChatView.swift in Sources */,
-				2D06D85C5242C590D955182D /* ChatViewModel.swift in Sources */,
+				2D06D85C5242C590D955182D /* AppModel.swift in Sources */,
 				0A8DA7080FAA59C0D5752069 /* pi_core_ffi.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

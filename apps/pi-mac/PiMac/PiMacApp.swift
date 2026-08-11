@@ -4,7 +4,7 @@ import SwiftUI
 struct PiMacApp: App {
     var body: some Scene {
         WindowGroup {
-            ChatView()
+            ContentView()
         }
     }
 }
