@@ -14,10 +14,11 @@ crate-type = ["staticlib", "cdylib", "lib"]
 
 [dependencies]
 pi-rpc = { path = "../pi-rpc" }
+pi-sessions = { path = "../pi-sessions" }
 tokio.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
-uniffi = { version = "0.32.0", features = ["cli"] }
+uniffi = { version = "0.32.0", features = ["cli", "tokio"] }
 
 # Runs `uniffi-bindgen generate --library <cdylib/staticlib> --language swift`
 # against this crate without requiring a separately installed `uniffi-bindgen`

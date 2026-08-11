@@ -1,12 +1,13 @@
-//! UniFFI boundary for the SW1 spike: a minimal chat session over
-//! `pi --mode rpc`, exposed to Swift.
+//! UniFFI boundary for the SwiftUI app: a minimal chat session over
+//! `pi --mode rpc`, plus session/project browsing, exposed to Swift.
 //!
 //! Deliberately smaller than `pi_core::backend`'s full `UiSink`/`RowSpec`
 //! surface — this proves the FFI mechanism (a Rust trait implemented in
-//! Swift, called from a tokio worker thread) and one real prompt round-trip,
+//! Swift, called from a tokio worker thread) and real prompt round-trips,
 //! without guessing the eventual Swift-facing shape of markdown/table
 //! rendering before any real Swift UI exists to consume it. See
-//! `docs/plans/SW1-ffi-spike-and-chat-window.md`.
+//! `docs/plans/SW1-ffi-spike-and-chat-window.md` and the SW2 milestone in
+//! the project's swiftui-branch plan.
 //!
 //! Threading contract mirrors `pi_core::backend::UiSink`: `ChatSink` methods
 //! are `Send + Sync`, fire-and-forget, called from a tokio worker thread
@@ -14,11 +15,15 @@
 //! to `@MainActor` on every callback, the same responsibility
 //! `Weak::upgrade_in_event_loop` discharges on the Slint side.
 
+mod session_index;
+
 use std::sync::Arc;
 use std::time::Duration;
 
 use pi_rpc::{AssistantMessageEvent, Event, PiClient, PiError, PiOptions};
 use tokio::sync::mpsc;
+
+pub use session_index::{ProjectRecord, SessionIndex, SessionRecord};
 
 uniffi::setup_scaffolding!();
 
