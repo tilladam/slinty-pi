@@ -1265,50 +1265,10 @@ impl Sidebar {
             ui.set_sidebar_sessions(Vec::new());
             return;
         };
-        let all = self.meta_cache.list_sessions(&dir).unwrap_or_default();
-        let filtered: Vec<&pi_sessions::SessionMeta> = if self.query.is_empty() {
-            all.iter().collect()
-        } else {
-            pi_sessions::search(&all, &self.query)
-        };
-        let mut rows: Vec<(String, String, String, bool, String)> = filtered
+        let rows = pi_sessions::sidebar_rows(&self.meta_cache, &dir, &self.query, active)
             .into_iter()
-            .map(|m| {
-                let path = m.path.to_string_lossy().into_owned();
-                let is_active = active == Some(path.as_str());
-                (
-                    path,
-                    m.title().to_string(),
-                    relative_time(&m.last_timestamp),
-                    is_active,
-                    format_cost(m.total_cost),
-                )
-            })
+            .map(|r| (r.path, r.title, r.relative_time, r.active, r.cost))
             .collect();
-
-        // pi doesn't write a session's file until its first message, so a
-        // just-switched-to project's brand-new (still empty) session has no
-        // file for `meta_cache` to find yet — without this, the sidebar
-        // would show every *other* session but not the one you're actually
-        // in, until you send a message (which finally creates the file) or
-        // switch away and back (which happens to land on a now-existing
-        // file). Synthesize its row from what pi already told us via
-        // `get_state`, so "where you are" is never silently missing.
-        if let Some(active_path) = active {
-            if self.query.is_empty() && !rows.iter().any(|(path, ..)| path == active_path) {
-                rows.insert(
-                    0,
-                    (
-                        active_path.to_string(),
-                        "New session".to_string(),
-                        "just now".to_string(),
-                        true,
-                        String::new(),
-                    ),
-                );
-            }
-        }
-
         ui.set_sidebar_sessions(rows);
     }
 }
@@ -1415,77 +1375,6 @@ async fn active_session_path(client: &PiClient) -> Option<String> {
         .get("sessionFile")
         .and_then(|v| v.as_str())
         .map(str::to_string)
-}
-
-/// Sidebar cost label, e.g. "$0.0231". `""` (rendered as no label at all)
-/// below half a cent — mainly for local models, where cost is always 0.
-fn format_cost(total_cost: f64) -> String {
-    if total_cost < 0.005 {
-        String::new()
-    } else {
-        format!("${total_cost:.2}")
-    }
-}
-
-fn relative_time(iso_timestamp: &str) -> String {
-    let Ok(then) = chrono::DateTime::parse_from_rfc3339(iso_timestamp) else {
-        return String::new();
-    };
-    let secs = chrono::Utc::now()
-        .signed_duration_since(then.with_timezone(&chrono::Utc))
-        .num_seconds();
-    if secs < 60 {
-        "just now".to_string()
-    } else if secs < 3600 {
-        format!("{}m", secs / 60)
-    } else if secs < 86400 {
-        format!("{}h", secs / 3600)
-    } else if secs < 86400 * 7 {
-        format!("{}d", secs / 86400)
-    } else {
-        format!("{}w", secs / (86400 * 7))
-    }
-}
-
-#[cfg(test)]
-mod format_cost_tests {
-    use super::format_cost;
-
-    #[test]
-    fn zero_and_near_zero_cost_yields_empty_label() {
-        assert_eq!(format_cost(0.0), "");
-        assert_eq!(format_cost(0.001), "");
-    }
-
-    #[test]
-    fn non_trivial_cost_is_formatted_as_dollars() {
-        assert_eq!(format_cost(0.0231), "$0.02");
-        assert_eq!(format_cost(1.5), "$1.50");
-    }
-}
-
-#[cfg(test)]
-mod relative_time_tests {
-    use super::relative_time;
-    use chrono::{Duration, Utc};
-
-    fn iso(ago: Duration) -> String {
-        (Utc::now() - ago).to_rfc3339()
-    }
-
-    #[test]
-    fn buckets_by_magnitude() {
-        assert_eq!(relative_time(&iso(Duration::seconds(10))), "just now");
-        assert_eq!(relative_time(&iso(Duration::minutes(5))), "5m");
-        assert_eq!(relative_time(&iso(Duration::hours(3))), "3h");
-        assert_eq!(relative_time(&iso(Duration::days(2))), "2d");
-        assert_eq!(relative_time(&iso(Duration::days(15))), "2w");
-    }
-
-    #[test]
-    fn unparseable_timestamp_yields_empty_string() {
-        assert_eq!(relative_time("not a timestamp"), "");
-    }
 }
 
 pub async fn pi_backend(
