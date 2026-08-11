@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import os
 
 /// Drives one `PiSession` (a spawned `pi --mode rpc` child, owned entirely
 /// on the Rust side) plus the stateless `SessionIndex` browsing object, and
@@ -44,9 +45,22 @@ final class AppModel: ChatSink {
     private var session: PiSession?
     private let sessionIndex = SessionIndex()
     private let localModels = LocalModelIndex()
+    /// Same subsystem the Rust side's `tracing-oslog` subscriber uses (see
+    /// `pi-core-ffi`'s `ensure_logging_initialized`) — so every message
+    /// that's ever shown to the user, from either layer, ends up in the
+    /// same place in Console.app / `log stream`, not just a one-line status
+    /// caption that gets overwritten by the next event.
+    private let logger = Logger(subsystem: "dev.slinty-pi.pi-mac", category: "app")
 
     init() {
         currentProject = Self.loadLastProject()
+    }
+
+    /// Sets `statusMessage` and logs it — the only way `statusMessage`
+    /// should ever be assigned (see the doc comment on `logger`).
+    private func setStatus(_ message: String) {
+        logger.error("\(message)")
+        statusMessage = message
     }
 
     /// Spawns the `pi` child in `currentProject`, or — with `PI_MAC_DEMO` set
@@ -72,7 +86,7 @@ final class AppModel: ChatSink {
                     dark: dark
                 )
             } catch {
-                statusMessage = "Could not start pi: \(error)"
+                setStatus("Could not start pi: \(error)")
             }
         }
         Task { await refreshSidebar() }
@@ -85,7 +99,7 @@ final class AppModel: ChatSink {
 
     func send(_ prompt: String) {
         guard let session else {
-            statusMessage = "pi hasn't started yet"
+            setStatus("pi hasn't started yet")
             return
         }
         transcript += transcript.isEmpty ? "> \(prompt)\n\n" : "\n\n> \(prompt)\n\n"
@@ -122,7 +136,7 @@ final class AppModel: ChatSink {
             Self.saveLastProject(path)
             await refreshSidebar()
         } catch {
-            statusMessage = "Could not switch project: \(error)"
+            setStatus("Could not switch project: \(error)")
         }
     }
 
@@ -132,7 +146,7 @@ final class AppModel: ChatSink {
             try await session.newSession()
             await refreshSessions()
         } catch {
-            statusMessage = "Could not start a new session: \(error)"
+            setStatus("Could not start a new session: \(error)")
         }
     }
 
@@ -144,7 +158,7 @@ final class AppModel: ChatSink {
             try await session.deleteSession(path: path)
             await refreshSessions()
         } catch {
-            statusMessage = "Could not delete session: \(error)"
+            setStatus("Could not delete session: \(error)")
         }
     }
 
@@ -156,7 +170,7 @@ final class AppModel: ChatSink {
             try await session.renameSession(name: name)
             await refreshSessions()
         } catch {
-            statusMessage = "Could not rename session: \(error)"
+            setStatus("Could not rename session: \(error)")
         }
     }
 
@@ -170,7 +184,7 @@ final class AppModel: ChatSink {
         do {
             try await session.switchSession(path: path)
         } catch {
-            statusMessage = "Could not switch session: \(error)"
+            setStatus("Could not switch session: \(error)")
         }
     }
 
@@ -204,7 +218,7 @@ final class AppModel: ChatSink {
             try await session.serveRapidMlxModel(alias: alias)
             await refreshModelsPanel()
         } catch {
-            statusMessage = "Could not serve \(alias): \(error)"
+            setStatus("Could not serve \(alias): \(error)")
         }
     }
 
@@ -212,7 +226,7 @@ final class AppModel: ChatSink {
         do {
             try await localModels.startLoadRouterModel(id: id)
         } catch {
-            statusMessage = "Could not load \(id): \(error)"
+            setStatus("Could not load \(id): \(error)")
             return
         }
         await pollRouterUntilIdle()
@@ -222,7 +236,7 @@ final class AppModel: ChatSink {
         do {
             try await localModels.startUnloadRouterModel(id: id)
         } catch {
-            statusMessage = "Could not unload \(id): \(error)"
+            setStatus("Could not unload \(id): \(error)")
         }
         await pollRouterUntilIdle()
     }
@@ -233,7 +247,7 @@ final class AppModel: ChatSink {
         do {
             try await localModels.startDownloadRouterModel(model: model)
         } catch {
-            statusMessage = "Could not start download of \(model): \(error)"
+            setStatus("Could not start download of \(model): \(error)")
             return
         }
         await pollRouterUntilIdle()
@@ -243,7 +257,7 @@ final class AppModel: ChatSink {
         do {
             hfResults = try await localModels.searchHfModels(query: query)
         } catch {
-            statusMessage = "Hugging Face search failed: \(error)"
+            setStatus("Hugging Face search failed: \(error)")
             hfResults = []
         }
     }
@@ -252,7 +266,7 @@ final class AppModel: ChatSink {
         do {
             try await localModels.addOllamaToPi()
         } catch {
-            statusMessage = "Could not add Ollama models: \(error)"
+            setStatus("Could not add Ollama models: \(error)")
         }
     }
 
@@ -261,7 +275,7 @@ final class AppModel: ChatSink {
             try await localModels.saveApiKey(provider: provider, key: key)
             authEntries = await localModels.refreshAuthEntries()
         } catch {
-            statusMessage = "Could not save API key: \(error)"
+            setStatus("Could not save API key: \(error)")
         }
     }
 
@@ -330,7 +344,7 @@ final class AppModel: ChatSink {
 
     nonisolated func onError(message: String) {
         Task { @MainActor in
-            self.statusMessage = message
+            self.setStatus(message)
         }
     }
 
