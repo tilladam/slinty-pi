@@ -3977,6 +3977,21 @@ dependencies = [
 [[package]]
 name = "pi-core"
 version = "0.1.0"
+dependencies = [
+ "base64 0.23.0",
+ "directories",
+ "nucleo-matcher",
+ "pi-sessions",
+ "pulldown-cmark",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "syntect",
+ "sysinfo",
+ "tempfile",
+ "thiserror 2.0.19",
+ "tokio",
+]
 
 [[package]]
 name = "pi-rpc"
@@ -5229,24 +5244,17 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "arboard",
- "base64 0.23.0",
  "chrono",
- "directories",
  "embed-resource",
  "i-slint-backend-winit",
- "nucleo-matcher",
+ "pi-core",
  "pi-rpc",
  "pi-sessions",
- "pulldown-cmark",
- "reqwest",
  "rfd",
  "serde",
  "serde_json",
  "slint",
  "slint-build",
- "syntect",
- "sysinfo",
- "tempfile",
  "thiserror 2.0.19",
  "tokio",
  "tracing",

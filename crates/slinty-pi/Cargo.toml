@@ -21,6 +21,7 @@ category = "Developer Tool"
 
 [dependencies]
 pi-rpc = { path = "../pi-rpc" }
+pi-core = { path = "../pi-core" }
 # Path dependency on the local Slint checkout (master), not crates.io. Needed
 # for two things not yet in a published release (1.17.1 predates both):
 #   - the `mcp` feature (embedded MCP server, see mcp-server.md in that repo)
@@ -48,15 +49,10 @@ serde_json = { workspace = true, features = ["preserve_order"] }
 anyhow.workspace = true
 tracing.workspace = true
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-pulldown-cmark = "0.13.4"
 arboard = "3.6.1"
-syntect = { version = "5.3.0", default-features = false, features = ["default-fancy"] }
 trash = "5.2.6"
 chrono = { version = "0.4.45", default-features = false, features = ["clock"] }
 pi-sessions = { version = "0.1.0", path = "../pi-sessions" }
-directories = "6.0.0"
-nucleo-matcher = "0.3.1"
-base64 = "0.23.0"
 rfd = "0.17.2"
 # Internal Slint crate (not semver-stable, must match `slint`'s source exactly
 # — see the path dependency above); used to install a CustomApplicationHandler
@@ -65,8 +61,6 @@ rfd = "0.17.2"
 # attach.rs's doc comment.
 i-slint-backend-winit = { git = "https://github.com/slint-ui/slint.git" }
 winit = "0.30"
-reqwest = { version = "0.13.4", default-features = false, features = ["json", "rustls", "stream", "query"] }
-sysinfo = "0.39.6"
 serde = { workspace = true, features = ["derive"] }
 thiserror.workspace = true
 
@@ -85,5 +79,3 @@ slint-build = { git = "https://github.com/slint-ui/slint.git" }
 # non-Windows targets, so this is safe (and cheap) to keep unconditional.
 embed-resource = "3.0"
 
-[dev-dependencies]
-tempfile = "3.27.0"

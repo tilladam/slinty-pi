@@ -20,15 +20,16 @@ use pi_rpc::{
     PiError, PiOptions, ThinkingLevel,
 };
 
-use crate::attach;
-use crate::demo_sessions;
-use crate::local;
-use crate::palette;
-use crate::segmenter::{self, segment_markdown, Segment};
 use crate::{
-    highlight, AppWindow, CachedModelRow, CodeLine, ColoredSpan, HfResultRow, PaletteRow,
-    QueueItem, RouterModelRow, Row, SessionRow, TableCell, TableRowCells, TreeRow,
+    AppWindow, CachedModelRow, CodeLine, ColoredSpan, HfResultRow, PaletteRow, QueueItem,
+    RouterModelRow, Row, SessionRow, TableCell, TableRowCells, TreeRow,
 };
+use pi_core::attach;
+use pi_core::demo_sessions;
+use pi_core::highlight;
+use pi_core::local;
+use pi_core::palette;
+use pi_core::segmenter::{self, segment_markdown, Segment};
 
 const TEXT_FLUSH: Duration = Duration::from_millis(33);
 const TOOL_FLUSH: Duration = Duration::from_millis(100);

@@ -4,3 +4,11 @@
 //! event stream is projected onto plain `RowSpec` values pushed through a
 //! `UiSink` trait, so any frontend (Slint today, others later) can implement
 //! that one trait instead of duplicating the state machine that drives pi.
+
+pub mod attach;
+pub mod demo_sessions;
+pub mod density;
+pub mod highlight;
+pub mod local;
+pub mod palette;
+pub mod segmenter;

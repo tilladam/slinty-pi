@@ -6,3 +6,18 @@ license.workspace = true
 description = "UI-toolkit-agnostic core: drives pi-rpc, projects events onto rows, session/model orchestration. Shared by slinty-pi (Slint) and any other frontend."
 
 [dependencies]
+pi-sessions = { path = "../pi-sessions" }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true, features = ["preserve_order"] }
+thiserror.workspace = true
+tokio.workspace = true
+pulldown-cmark = "0.13.4"
+syntect = { version = "5.3.0", default-features = false, features = ["default-fancy"] }
+nucleo-matcher = "0.3.1"
+base64 = "0.23.0"
+sysinfo = "0.39.6"
+directories = "6.0.0"
+reqwest = { version = "0.13.4", default-features = false, features = ["json", "rustls", "stream", "query"] }
+
+[dev-dependencies]
+tempfile = "3.27.0"

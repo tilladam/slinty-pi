@@ -4,14 +4,7 @@
 //! pi child process (see `backend`). `SLINTY_DEMO=1` runs a synthetic stream
 //! through the same rendering path instead of spawning pi.
 
-mod attach;
 mod backend;
-mod demo_sessions;
-mod density;
-mod highlight;
-mod local;
-mod palette;
-mod segmenter;
 
 use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -21,6 +14,7 @@ use slint::{ComponentHandle, Model, ModelRc, VecModel};
 use tokio::sync::mpsc;
 
 use backend::UiCmd;
+use pi_core::{density, highlight};
 
 slint::include_modules!();
 
