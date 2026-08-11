@@ -1,4 +1,4 @@
-use pi_core_ffi::{ChatSink, PiSession};
+use pi_core_ffi::{ChatSink, PiSession, RowRecord};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -6,6 +6,7 @@ use std::time::Duration;
 struct PrintSink {
     chars_received: AtomicUsize,
     active_session: Mutex<Option<String>>,
+    last_history: Mutex<Vec<RowRecord>>,
 }
 
 impl ChatSink for PrintSink {
@@ -26,6 +27,11 @@ impl ChatSink for PrintSink {
     fn on_active_session_changed(&self, path: Option<String>) {
         eprintln!("active_session_changed: {path:?}");
         *self.active_session.lock().unwrap() = path;
+    }
+    fn on_history_replaced(&self, rows: Vec<RowRecord>) {
+        let kinds: Vec<&str> = rows.iter().map(|r| r.kind.as_str()).collect();
+        eprintln!("history_replaced: {} rows, kinds={kinds:?}", rows.len());
+        *self.last_history.lock().unwrap() = rows;
     }
 }
 
@@ -57,12 +63,13 @@ fn main() {
     let sink = Arc::new(PrintSink {
         chars_received: AtomicUsize::new(0),
         active_session: Mutex::new(None),
+        last_history: Mutex::new(Vec::new()),
     });
     let cwd = std::env::current_dir()
         .expect("current dir")
         .display()
         .to_string();
-    let session = PiSession::new(sink.clone(), cwd).expect("PiSession::new failed");
+    let session = PiSession::new(sink.clone(), cwd, None, true).expect("PiSession::new failed");
     // Let the constructor's initial on_active_session_changed land before
     // any mode below reads sink.active_session.
     std::thread::sleep(Duration::from_millis(200));

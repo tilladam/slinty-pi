@@ -1,13 +1,13 @@
-//! UniFFI boundary for the SwiftUI app: a minimal chat session over
-//! `pi --mode rpc`, plus session/project browsing, exposed to Swift.
+//! UniFFI boundary for the SwiftUI app: a chat session over `pi --mode rpc`,
+//! session/project browsing, and (SW3) history hydration/rendering, exposed
+//! to Swift.
 //!
-//! Deliberately smaller than `pi_core::backend`'s full `UiSink`/`RowSpec`
-//! surface — this proves the FFI mechanism (a Rust trait implemented in
-//! Swift, called from a tokio worker thread) and real prompt round-trips,
-//! without guessing the eventual Swift-facing shape of markdown/table
-//! rendering before any real Swift UI exists to consume it. See
-//! `docs/plans/SW1-ffi-spike-and-chat-window.md` and the SW2 milestone in
-//! the project's swiftui-branch plan.
+//! `ChatSink` stays smaller than `pi_core::backend`'s full `UiSink` (no
+//! local-model/palette/tree surface — SW4+ scope), but as of SW3 it does
+//! push rendered rows: `pi-render` (the same crate `pi-core` uses for its
+//! Slint live-streaming path) turns a `get_messages` payload into
+//! `RowSpec`s, mirrored across FFI as `RowRecord`. See the SW3 milestone in
+//! the project's swiftui-branch plan for the rendering-strategy rationale.
 //!
 //! Threading contract mirrors `pi_core::backend::UiSink`: `ChatSink` methods
 //! are `Send + Sync`, fire-and-forget, called from a tokio worker thread
@@ -19,6 +19,7 @@ mod row;
 mod session_index;
 
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -40,13 +41,21 @@ pub trait ChatSink: Send + Sync {
     fn on_error(&self, message: String);
     /// Fired once right after the session comes up, and again after every
     /// successful action that changes *which* session is active
-    /// (`switch_project`, `new_session`, or `delete_session` when the
-    /// deleted path was active). `None` when there's no active session file
-    /// yet (pi hasn't written one — no messages sent since the last reset).
-    /// Swift's contract: clear the visible transcript, and feed this value
-    /// into `SessionIndex.list_sessions`'s `active_path` param for row
-    /// highlighting.
+    /// (`switch_project`, `new_session`, `switch_session`, or
+    /// `delete_session` when the deleted path was active). `None` when
+    /// there's no active session file yet. Purely a path/sidebar-
+    /// highlighting signal as of SW3 — feed it into `SessionIndex.
+    /// list_sessions`'s `active_path` param; `on_history_replaced` (not
+    /// this) is the single source of truth for what's currently rendered in
+    /// the transcript.
     fn on_active_session_changed(&self, path: Option<String>);
+    /// Replaces the entire rendered transcript with `rows`, richly rendered
+    /// (markdown/code/tables — see `RowRecord`). Fired after every
+    /// session-changing action (empty for a fresh session, populated for a
+    /// resumed one) and after every turn settles, re-rendering the
+    /// just-finalized turn in place of the plain-text streaming bubble
+    /// `on_text_delta` built up during it.
+    fn on_history_replaced(&self, rows: Vec<RowRecord>);
 }
 
 #[derive(Debug, thiserror::Error, uniffi::Error)]
@@ -75,6 +84,13 @@ enum ChatCmd {
         name: String,
         reply: oneshot::Sender<Result<(), String>>,
     },
+    /// Load a different session file within the same project (no respawn) —
+    /// the sidebar-click "switch" action, and (via `PiSession::new`'s
+    /// `resume_session_path`) the launch-time "restore" one.
+    SwitchSession {
+        path: String,
+        reply: oneshot::Sender<Result<(), String>>,
+    },
 }
 
 /// A single `pi --mode rpc` child process plus the tokio runtime that owns
@@ -84,6 +100,11 @@ enum ChatCmd {
 #[derive(uniffi::Object)]
 pub struct PiSession {
     cmd_tx: mpsc::UnboundedSender<ChatCmd>,
+    /// Read by `hydrate_and_push` on every hydrate/settle, mirroring
+    /// `pi_core::backend::Transcript`'s own `dark: Arc<AtomicBool>` field —
+    /// a theme flip doesn't retroactively re-color already-rendered rows,
+    /// only the next hydrate/settle, same staleness Slint accepts today.
+    dark: Arc<AtomicBool>,
     // Keeps the runtime (and therefore the spawned event-loop task and the
     // `pi` child it owns) alive for as long as Swift holds this object.
     _runtime: tokio::runtime::Runtime,
@@ -93,11 +114,21 @@ pub struct PiSession {
 impl PiSession {
     /// Spawns `pi --mode rpc` in `cwd` and starts forwarding its events to
     /// `sink`. Blocks (briefly — a process spawn + RPC handshake) until the
-    /// child is up or has failed to start. Fires an initial
-    /// `on_active_session_changed` once the child reports its starting
-    /// state.
+    /// child is up or has failed to start. If `resume_session_path` is
+    /// given, resumes and hydrates it before the first
+    /// `on_active_session_changed`/`on_history_replaced` pair fires —
+    /// launch-time session restore, mirroring `pi_core::backend::
+    /// pi_backend`'s `resume_on_first_spawn`. That hydration itself happens
+    /// asynchronously on the spawned event-loop task, not here, so this
+    /// constructor doesn't block on it (a large session's `get_messages`
+    /// fetch shouldn't stall whatever thread calls `PiSession.init`).
     #[uniffi::constructor]
-    pub fn new(sink: Arc<dyn ChatSink>, cwd: String) -> Result<Self, PiSessionError> {
+    pub fn new(
+        sink: Arc<dyn ChatSink>,
+        cwd: String,
+        resume_session_path: Option<String>,
+        dark: bool,
+    ) -> Result<Self, PiSessionError> {
         let runtime = tokio::runtime::Runtime::new()
             .map_err(|e| PiSessionError::Spawn(format!("could not start a tokio runtime: {e}")))?;
         runtime.block_on(ensure_usable_path());
@@ -109,31 +140,45 @@ impl PiSession {
             .block_on(PiClient::spawn(opts))
             .map_err(|e| PiSessionError::Spawn(e.to_string()))?;
         let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
-        runtime.spawn(run(client, events, cmd_rx, sink));
+        let dark = Arc::new(AtomicBool::new(dark));
+        runtime.spawn(run(
+            client,
+            events,
+            cmd_rx,
+            sink,
+            dark.clone(),
+            resume_session_path,
+        ));
         Ok(Self {
             cmd_tx,
+            dark,
             _runtime: runtime,
         })
     }
 
     /// A synthetic session that never spawns `pi`: every `send` streams a
     /// short canned reply through the same `ChatSink` callbacks a real
-    /// session uses, at roughly the same cadence. Mirrors `SLINTY_DEMO=1`'s
-    /// role for the Slint app — demoable without `pi` installed, and a
-    /// display-less perf/frame-rate check independent of a live model.
+    /// session uses, at roughly the same cadence, then pushes a couple of
+    /// synthetic `RowRecord`s (prose + syntax-highlighted code) through
+    /// `on_history_replaced` so the rich-rendering path is exercisable
+    /// without `pi` installed. Mirrors `SLINTY_DEMO=1`'s role for the Slint
+    /// app — demoable without `pi`, and a display-less perf/frame-rate
+    /// check independent of a live model.
     ///
     /// Deliberately its own small synthetic streamer rather than reusing
-    /// `pi_core::backend::demo_backend`: that function drives a `UiSink`
-    /// (`RowSpec`s, session hydration, model panels — the full surface this
-    /// crate's `ChatSink` intentionally doesn't expose yet, see the crate
-    /// doc comment), so there's nothing for it to plug into here.
+    /// `pi_core::backend::demo_backend`: that function drives the full
+    /// `UiSink` surface (local-model panels, palette, tree — SW4+ scope
+    /// this crate's `ChatSink` doesn't expose), so there's nothing for it to
+    /// plug into here.
     #[uniffi::constructor]
     pub fn new_demo(sink: Arc<dyn ChatSink>) -> Self {
         let runtime = tokio::runtime::Runtime::new().expect("tokio runtime for demo session");
         let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
-        runtime.spawn(run_demo(cmd_rx, sink));
+        let dark = Arc::new(AtomicBool::new(true));
+        runtime.spawn(run_demo(cmd_rx, sink, dark.clone()));
         Self {
             cmd_tx,
+            dark,
             _runtime: runtime,
         }
     }
@@ -147,6 +192,13 @@ impl PiSession {
 
     pub fn abort(&self) {
         let _ = self.cmd_tx.send(ChatCmd::Abort);
+    }
+
+    /// Updates the theme `hydrate_and_push` highlights against on the next
+    /// hydrate/settle (not retroactively). Swift calls this once at startup
+    /// and again on every `colorScheme` change.
+    pub fn set_dark_mode(&self, dark: bool) {
+        self.dark.store(dark, Ordering::Relaxed);
     }
 }
 
@@ -189,6 +241,15 @@ impl PiSession {
         self.call(|reply| ChatCmd::RenameSession { name, reply })
             .await
     }
+
+    /// Loads `path` (must be a session file within the current project) and
+    /// replaces the transcript with its history via `on_history_replaced`.
+    /// Fires `on_active_session_changed` on success — the sidebar's
+    /// click-to-resume action.
+    pub async fn switch_session(&self, path: String) -> Result<(), PiSessionError> {
+        self.call(|reply| ChatCmd::SwitchSession { path, reply })
+            .await
+    }
 }
 
 // Plain (non-`#[uniffi::export]`) impl block: `#[uniffi::export]` treats
@@ -221,12 +282,23 @@ impl PiSession {
 /// `streaming`). The old `client` (and its child, `kill_on_drop`) is only
 /// dropped once the *new* one has spawned successfully, so a failed
 /// `switch_project` leaves the session fully usable rather than clientless.
+///
+/// If `resume_session_path` is set, resumes and hydrates it before the
+/// first `on_active_session_changed` — see `PiSession::new`.
 async fn run(
     mut client: PiClient,
     mut events: mpsc::UnboundedReceiver<Event>,
     mut cmd_rx: mpsc::UnboundedReceiver<ChatCmd>,
     sink: Arc<dyn ChatSink>,
+    dark: Arc<AtomicBool>,
+    resume_session_path: Option<String>,
 ) {
+    if let Some(path) = resume_session_path {
+        match do_switch_session(&client, &path).await {
+            Ok(()) => hydrate_and_push(&client, sink.as_ref(), &dark).await,
+            Err(e) => sink.on_error(format!("could not restore last session: {e}")),
+        }
+    }
     sink.on_active_session_changed(active_session_path(&client).await);
     loop {
         tokio::select! {
@@ -248,6 +320,13 @@ async fn run(
                             Ok((new_client, new_events)) => {
                                 client = new_client; // old client (+ child, kill_on_drop) dropped here
                                 events = new_events;
+                                // A brand-new project has no active session yet — an
+                                // unconditional clear, not a `get_messages` round trip
+                                // (that's `hydrate_and_push`, reserved for a session
+                                // known to already exist), matching
+                                // `pi_core::backend`'s own plain `transcript.reset()`
+                                // handling of `SwitchProject`/`NewSession`.
+                                sink.on_history_replaced(Vec::new());
                                 sink.on_active_session_changed(active_session_path(&client).await);
                                 let _ = reply.send(Ok(()));
                             }
@@ -262,6 +341,7 @@ async fn run(
                                 let _ = reply.send(Err("cancelled by an extension".to_string()));
                             }
                             Ok(_) => {
+                                sink.on_history_replaced(Vec::new());
                                 sink.on_active_session_changed(active_session_path(&client).await);
                                 let _ = reply.send(Ok(()));
                             }
@@ -286,6 +366,7 @@ async fn run(
                                     "deleted the open session but could not start a new one: {e}"
                                 ));
                             }
+                            sink.on_history_replaced(Vec::new());
                             sink.on_active_session_changed(active_session_path(&client).await);
                         }
                         let _ = reply.send(outcome);
@@ -293,6 +374,18 @@ async fn run(
                     Some(ChatCmd::RenameSession { name, reply }) => {
                         let outcome = client.set_session_name(name).await.map_err(|e| describe(&e));
                         let _ = reply.send(outcome);
+                    }
+                    Some(ChatCmd::SwitchSession { path, reply }) => {
+                        match do_switch_session(&client, &path).await {
+                            Ok(()) => {
+                                hydrate_and_push(&client, sink.as_ref(), &dark).await;
+                                sink.on_active_session_changed(active_session_path(&client).await);
+                                let _ = reply.send(Ok(()));
+                            }
+                            Err(e) => {
+                                let _ = reply.send(Err(e));
+                            }
+                        }
                     }
                     None => return,
                 }
@@ -303,6 +396,13 @@ async fn run(
                     return;
                 };
                 apply(&event, sink.as_ref());
+                // Re-render the whole transcript from `get_messages` truth
+                // once the turn is fully done, rather than porting
+                // `pi_core::backend::Transcript`'s incremental live-flush
+                // machinery across FFI — see the SW3 plan's Design section.
+                if matches!(event, Event::AgentSettled) {
+                    hydrate_and_push(&client, sink.as_ref(), &dark).await;
+                }
             }
         }
     }
@@ -321,19 +421,66 @@ async fn active_session_path(client: &PiClient) -> Option<String> {
         .map(str::to_string)
 }
 
+/// `get_messages` -> `pi_render::hydrate_rowspecs` -> `on_history_replaced`,
+/// mirroring `pi_core::backend::hydrate_active_session`'s shape exactly.
+/// Re-renders the *entire* current transcript from `get_messages` truth
+/// rather than incrementally patching in new rows — sidesteps needing to
+/// replicate `hydrate_rowspecs`' tool-result-patches-an-earlier-row logic
+/// against a partial tail. Only called where a session file is already
+/// known to exist (an explicit resume, or right after a turn just wrote
+/// one) — never for a brand-new/empty session, where `on_history_replaced(
+/// Vec::new())` is used directly instead (see the `SwitchProject`/
+/// `NewSession`/`DeleteSession` arms in [`run`]).
+async fn hydrate_and_push(client: &PiClient, sink: &dyn ChatSink, dark: &AtomicBool) {
+    match client.get_messages().await {
+        Ok(data) => {
+            let messages = data
+                .get("messages")
+                .and_then(|m| m.as_array())
+                .cloned()
+                .unwrap_or_default();
+            let rows = pi_render::hydrate_rowspecs(&messages, dark.load(Ordering::Relaxed));
+            sink.on_history_replaced(rows.into_iter().map(RowRecord::from).collect());
+        }
+        Err(e) => sink.on_error(format!("could not load session messages: {e}")),
+    }
+}
+
+/// `client.switch_session(path)` plus the extension-cancelled check —
+/// shared by launch-time restore and an explicit `switch_session` action.
+/// Mirrors `pi_core::backend::resume_session`'s cancelled-check, minus the
+/// hydration step (the caller decides when to call [`hydrate_and_push`]).
+async fn do_switch_session(client: &PiClient, path: &str) -> Result<(), String> {
+    match client.switch_session(path).await {
+        Ok(data) if data.get("cancelled").and_then(|v| v.as_bool()) == Some(true) => {
+            Err("cancelled by an extension".to_string())
+        }
+        Ok(_) => Ok(()),
+        Err(e) => Err(describe(&e)),
+    }
+}
+
 const DEMO_REPLY: &str =
     "Hello from demo mode — this reply is synthetic, streamed without spawning pi.";
 const DEMO_CHUNK_CHARS: usize = 5;
 const DEMO_CHUNK_DELAY: Duration = Duration::from_millis(60);
+const DEMO_CODE: &str = "fn main() {\n    println!(\"hello from demo mode\");\n}";
 
 /// Synthetic counterpart to [`run`]: never touches a real `PiClient`, just
 /// streams [`DEMO_REPLY`] in small chunks through the same `ChatSink`
-/// callbacks on every `Send`, abortable mid-stream like the real path. The
-/// 4 session-lifecycle actions reply `Ok(())` immediately (there's no real
-/// session to act on) rather than being silently dropped — a dropped
-/// `oneshot::Sender` would otherwise resolve Swift's `await` to an error,
-/// making demo mode look broken for every sidebar action.
-async fn run_demo(mut cmd_rx: mpsc::UnboundedReceiver<ChatCmd>, sink: Arc<dyn ChatSink>) {
+/// callbacks on every `Send`, abortable mid-stream like the real path, then
+/// (unless aborted) pushes [`demo_rows`] through `on_history_replaced` —
+/// the demo-mode counterpart to [`run`]'s real `AgentSettled` -> `hydrate_
+/// and_push` hydration, so the rich-rendering path is exercisable without
+/// `pi` installed. The session-lifecycle actions reply `Ok(())` immediately
+/// (there's no real session to act on) rather than being silently dropped —
+/// a dropped `oneshot::Sender` would otherwise resolve Swift's `await` to
+/// an error, making demo mode look broken for every sidebar action.
+async fn run_demo(
+    mut cmd_rx: mpsc::UnboundedReceiver<ChatCmd>,
+    sink: Arc<dyn ChatSink>,
+    dark: Arc<AtomicBool>,
+) {
     sink.on_active_session_changed(None);
     while let Some(cmd) = cmd_rx.recv().await {
         match cmd {
@@ -362,6 +509,7 @@ async fn run_demo(mut cmd_rx: mpsc::UnboundedReceiver<ChatCmd>, sink: Arc<dyn Ch
                 }
                 if !aborted {
                     sink.on_turn_end();
+                    sink.on_history_replaced(demo_rows(dark.load(Ordering::Relaxed)));
                 }
                 sink.on_streaming_changed(false);
             }
@@ -371,11 +519,39 @@ async fn run_demo(mut cmd_rx: mpsc::UnboundedReceiver<ChatCmd>, sink: Arc<dyn Ch
     }
 }
 
+/// A prose row plus a syntax-highlighted code row — enough for `RowRecord`
+/// rendering to be visibly exercised (markdown *and* `code_lines`/
+/// `ColoredSpan`s) without a real `pi` session to hydrate from.
+fn demo_rows(dark: bool) -> Vec<RowRecord> {
+    let prose = pi_render::RowSpec {
+        kind: "prose",
+        markdown: Some(DEMO_REPLY.to_string()),
+        first: true,
+        raw: DEMO_REPLY.to_string(),
+        ..pi_render::RowSpec::default()
+    };
+    let code = pi_render::RowSpec {
+        kind: "code",
+        code_lines: pi_render::highlight::highlight_lines(DEMO_CODE, "rust", dark),
+        text: DEMO_CODE.to_string(),
+        lang: "rust".to_string(),
+        raw: DEMO_CODE.to_string(),
+        ..pi_render::RowSpec::default()
+    };
+    vec![prose, code].into_iter().map(RowRecord::from).collect()
+}
+
 fn reply_demo_action(cmd: ChatCmd, sink: &dyn ChatSink) {
     match cmd {
         ChatCmd::SwitchProject { reply, .. }
         | ChatCmd::NewSession { reply }
         | ChatCmd::DeleteSession { reply, .. } => {
+            sink.on_history_replaced(Vec::new());
+            sink.on_active_session_changed(None);
+            let _ = reply.send(Ok(()));
+        }
+        ChatCmd::SwitchSession { reply, .. } => {
+            sink.on_history_replaced(demo_rows(true));
             sink.on_active_session_changed(None);
             let _ = reply.send(Ok(()));
         }
@@ -610,7 +786,7 @@ mod merge_path_vars_tests {
 
 #[cfg(test)]
 mod test_support {
-    use super::ChatSink;
+    use super::{ChatSink, RowRecord};
     use std::sync::Mutex;
 
     /// Records every `ChatSink` call as a short tagged string, in order —
@@ -642,6 +818,12 @@ mod test_support {
                 .lock()
                 .unwrap()
                 .push(format!("active_session:{path:?}"));
+        }
+        fn on_history_replaced(&self, rows: Vec<RowRecord>) {
+            self.events
+                .lock()
+                .unwrap()
+                .push(format!("history_replaced:{}", rows.len()));
         }
     }
 }
@@ -734,11 +916,18 @@ mod run_demo_tests {
     use super::test_support::RecordingSink;
     use super::*;
 
+    fn spawn_demo(
+        sink: Arc<RecordingSink>,
+    ) -> (mpsc::UnboundedSender<ChatCmd>, tokio::task::JoinHandle<()>) {
+        let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
+        let dark = Arc::new(AtomicBool::new(true));
+        (cmd_tx, tokio::spawn(run_demo(cmd_rx, sink, dark)))
+    }
+
     #[tokio::test]
     async fn a_send_streams_the_full_reply_then_settles() {
         let sink = Arc::new(RecordingSink::default());
-        let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
-        let demo = tokio::spawn(run_demo(cmd_rx, sink.clone()));
+        let (cmd_tx, demo) = spawn_demo(sink.clone());
         cmd_tx.send(ChatCmd::Send("hi".to_string())).unwrap();
         // A closed *and empty* command channel makes the inner select's
         // `cmd_rx.recv()` branch resolve immediately (there's nothing left
@@ -761,11 +950,16 @@ mod run_demo_tests {
         assert_eq!(events[1], "streaming:true");
         assert_eq!(events.last(), Some(&"streaming:false".to_string()));
         assert_eq!(
-            events[events.len() - 2],
+            events[events.len() - 3],
             "turn_end",
-            "turn_end fires before the final streaming:false"
+            "turn_end fires before history_replaced and the final streaming:false"
         );
-        let reassembled: String = events[2..events.len() - 2]
+        assert_eq!(
+            events[events.len() - 2],
+            "history_replaced:2",
+            "settling pushes the synthetic prose+code demo rows"
+        );
+        let reassembled: String = events[2..events.len() - 3]
             .iter()
             .map(|e| e.strip_prefix("delta:").expect("only deltas in between"))
             .collect();
@@ -775,8 +969,7 @@ mod run_demo_tests {
     #[tokio::test]
     async fn abort_mid_stream_stops_before_turn_end() {
         let sink = Arc::new(RecordingSink::default());
-        let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
-        let demo = tokio::spawn(run_demo(cmd_rx, sink.clone()));
+        let (cmd_tx, demo) = spawn_demo(sink.clone());
         cmd_tx.send(ChatCmd::Send("hi".to_string())).unwrap();
         // Give the first chunk's sleep a moment to be in-flight, then abort
         // before the reply finishes streaming.
@@ -800,7 +993,7 @@ mod reply_demo_action_tests {
     use super::*;
 
     #[tokio::test]
-    async fn switch_project_replies_ok_and_clears_active_session() {
+    async fn switch_project_replies_ok_and_clears_history_and_active_session() {
         let sink = RecordingSink::default();
         let (tx, rx) = oneshot::channel();
         reply_demo_action(
@@ -813,24 +1006,30 @@ mod reply_demo_action_tests {
         assert_eq!(rx.await.unwrap(), Ok(()));
         assert_eq!(
             *sink.events.lock().unwrap(),
-            vec!["active_session:None".to_string()]
+            vec![
+                "history_replaced:0".to_string(),
+                "active_session:None".to_string()
+            ]
         );
     }
 
     #[tokio::test]
-    async fn new_session_replies_ok_and_clears_active_session() {
+    async fn new_session_replies_ok_and_clears_history_and_active_session() {
         let sink = RecordingSink::default();
         let (tx, rx) = oneshot::channel();
         reply_demo_action(ChatCmd::NewSession { reply: tx }, &sink);
         assert_eq!(rx.await.unwrap(), Ok(()));
         assert_eq!(
             *sink.events.lock().unwrap(),
-            vec!["active_session:None".to_string()]
+            vec![
+                "history_replaced:0".to_string(),
+                "active_session:None".to_string()
+            ]
         );
     }
 
     #[tokio::test]
-    async fn delete_session_replies_ok_and_clears_active_session() {
+    async fn delete_session_replies_ok_and_clears_history_and_active_session() {
         let sink = RecordingSink::default();
         let (tx, rx) = oneshot::channel();
         reply_demo_action(
@@ -843,7 +1042,31 @@ mod reply_demo_action_tests {
         assert_eq!(rx.await.unwrap(), Ok(()));
         assert_eq!(
             *sink.events.lock().unwrap(),
-            vec!["active_session:None".to_string()]
+            vec![
+                "history_replaced:0".to_string(),
+                "active_session:None".to_string()
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn switch_session_replies_ok_and_pushes_demo_history() {
+        let sink = RecordingSink::default();
+        let (tx, rx) = oneshot::channel();
+        reply_demo_action(
+            ChatCmd::SwitchSession {
+                path: "/x".to_string(),
+                reply: tx,
+            },
+            &sink,
+        );
+        assert_eq!(rx.await.unwrap(), Ok(()));
+        assert_eq!(
+            *sink.events.lock().unwrap(),
+            vec![
+                "history_replaced:2".to_string(),
+                "active_session:None".to_string()
+            ]
         );
     }
 
