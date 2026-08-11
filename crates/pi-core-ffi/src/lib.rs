@@ -64,6 +64,7 @@ impl PiSession {
     pub fn new(sink: Arc<dyn ChatSink>) -> Result<Self, PiSessionError> {
         let runtime = tokio::runtime::Runtime::new()
             .map_err(|e| PiSessionError::Spawn(format!("could not start a tokio runtime: {e}")))?;
+        runtime.block_on(ensure_usable_path());
         let (client, events) = runtime
             .block_on(PiClient::spawn(PiOptions::default()))
             .map_err(|e| PiSessionError::Spawn(e.to_string()))?;
@@ -222,6 +223,184 @@ fn apply(event: &Event, sink: &dyn ChatSink) {
 
 fn describe(e: &PiError) -> String {
     e.to_string()
+}
+
+/// Ensures `pi` — and whatever `pi` itself shells out to (it's commonly a
+/// `#!/usr/bin/env node` script, so the OS needs `node` on `PATH` just to
+/// execute the shebang; `pi`'s own tool calls need a working `PATH` too) —
+/// is actually reachable by this process, not merely locatable in
+/// isolation. Works around a macOS-specific gap: a `.app` bundle launched
+/// normally (Finder double-click, Dock, Xcode's own Run) gets a minimal
+/// default `PATH` (`/usr/bin:/bin:/usr/sbin:/sbin`) that doesn't include
+/// wherever the user's shell rc files put `pi`/`node` (Homebrew's
+/// `/opt/homebrew/bin`, npm global bins, nvm/asdf shims, ...) — only a
+/// terminal-launched process (`cargo run`, a shell) inherits that.
+///
+/// Merges the *whole* `PATH` from the user's login shell into this
+/// process's environment (the same fix Electron's `fix-path` / VS Code use
+/// for this exact problem) rather than just resolving the one directory
+/// `pi` happens to live in, since `pi` and its children need more than that
+/// one binary to be reachable. A no-op (and doesn't bother asking the
+/// shell) whenever `pi` already resolves — the common case for a
+/// terminal-launched dev build.
+async fn ensure_usable_path() {
+    if let Some(path_var) = std::env::var_os("PATH") {
+        if find_in_path_var("pi", &path_var).is_some() {
+            return;
+        }
+    }
+    let Some(login_path) = login_shell_path().await else {
+        return;
+    };
+    let current = std::env::var_os("PATH").unwrap_or_default();
+    let merged = merge_path_vars(&current, &login_path);
+    // SAFETY: called once, synchronously, before `PiSession::new` spawns any
+    // other thread that could read `PATH` concurrently.
+    unsafe {
+        std::env::set_var("PATH", merged);
+    }
+}
+
+/// First `PATH`-entry match for `name`, if any.
+fn find_in_path_var(name: &str, path_var: &std::ffi::OsStr) -> Option<std::path::PathBuf> {
+    std::env::split_paths(path_var)
+        .map(|dir| dir.join(name))
+        .find(|candidate| candidate.is_file())
+}
+
+/// `current`'s directories, followed by any of `additional`'s directories
+/// not already present — order preserved, no duplicates. Drops empty
+/// components from either side: `split_paths` yields one for an empty
+/// `OsStr`, and on Unix an empty `PATH` component conventionally means "the
+/// current directory," not "nothing" — never worth adding implicitly.
+fn merge_path_vars(current: &std::ffi::OsStr, additional: &str) -> std::ffi::OsString {
+    let is_real = |dir: &std::path::PathBuf| !dir.as_os_str().is_empty();
+    let mut dirs: Vec<std::path::PathBuf> =
+        std::env::split_paths(current).filter(is_real).collect();
+    for dir in std::env::split_paths(additional).filter(is_real) {
+        if !dirs.contains(&dir) {
+            dirs.push(dir);
+        }
+    }
+    std::env::join_paths(dirs).unwrap_or_else(|_| current.to_os_string())
+}
+
+/// Runs `$SHELL -l -c 'echo -n "$PATH"'` (login, not interactive — Homebrew's
+/// own install instructions put its `shellenv` line in `.zprofile`/`.profile`,
+/// which a login shell sources regardless of interactivity, so `-l` alone is
+/// enough and avoids `-i`'s hazards: prompt theming, plugin managers, or
+/// anything else that assumes a real TTY). Bounded by a timeout since an rc
+/// file could in principle hang; `None` on any failure leaves `PATH` alone.
+async fn login_shell_path() -> Option<String> {
+    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string());
+    let output = tokio::time::timeout(
+        Duration::from_secs(3),
+        tokio::process::Command::new(&shell)
+            .arg("-l")
+            .arg("-c")
+            .arg("echo -n \"$PATH\"")
+            .output(),
+    )
+    .await
+    .ok()?
+    .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    String::from_utf8(output.stdout).ok()
+}
+
+#[cfg(test)]
+mod find_in_path_var_tests {
+    use super::find_in_path_var;
+    use std::env::join_paths;
+    use std::ffi::OsStr;
+    use std::fs;
+
+    #[test]
+    fn empty_path_finds_nothing() {
+        assert_eq!(find_in_path_var("pi", OsStr::new("")), None);
+    }
+
+    #[test]
+    fn finds_an_executable_in_one_of_several_directories() {
+        let empty_dir = tempfile::tempdir().unwrap();
+        let bin_dir = tempfile::tempdir().unwrap();
+        let pi_path = bin_dir.path().join("pi");
+        fs::write(&pi_path, "#!/bin/sh\necho hi\n").unwrap();
+
+        let path_var = join_paths([empty_dir.path(), bin_dir.path()]).unwrap();
+        let found = find_in_path_var("pi", &path_var).expect("pi should be found");
+        assert_eq!(found, pi_path);
+    }
+
+    #[test]
+    fn returns_the_first_match_in_path_order() {
+        let first = tempfile::tempdir().unwrap();
+        let second = tempfile::tempdir().unwrap();
+        fs::write(first.path().join("pi"), "first").unwrap();
+        fs::write(second.path().join("pi"), "second").unwrap();
+
+        let path_var = join_paths([first.path(), second.path()]).unwrap();
+        let found = find_in_path_var("pi", &path_var).unwrap();
+        assert_eq!(found, first.path().join("pi"));
+    }
+
+    #[test]
+    fn a_directory_named_pi_does_not_count_as_a_match() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir(dir.path().join("pi")).unwrap();
+
+        let path_var = join_paths([dir.path()]).unwrap();
+        assert_eq!(find_in_path_var("pi", &path_var), None);
+    }
+}
+
+#[cfg(test)]
+mod merge_path_vars_tests {
+    use super::merge_path_vars;
+    use std::env::split_paths;
+    use std::ffi::OsStr;
+    use std::path::PathBuf;
+
+    fn dirs(path_var: &std::ffi::OsStr) -> Vec<PathBuf> {
+        split_paths(path_var).collect()
+    }
+
+    #[test]
+    fn current_directories_come_first_unchanged() {
+        let merged = merge_path_vars(OsStr::new("/usr/bin:/bin"), "/opt/homebrew/bin");
+        assert_eq!(
+            dirs(&merged),
+            vec![
+                PathBuf::from("/usr/bin"),
+                PathBuf::from("/bin"),
+                PathBuf::from("/opt/homebrew/bin"),
+            ]
+        );
+    }
+
+    #[test]
+    fn duplicates_from_additional_are_dropped() {
+        let merged = merge_path_vars(
+            OsStr::new("/usr/bin:/opt/homebrew/bin"),
+            "/opt/homebrew/bin:/opt/homebrew/sbin",
+        );
+        assert_eq!(
+            dirs(&merged),
+            vec![
+                PathBuf::from("/usr/bin"),
+                PathBuf::from("/opt/homebrew/bin"),
+                PathBuf::from("/opt/homebrew/sbin"),
+            ]
+        );
+    }
+
+    #[test]
+    fn empty_current_still_picks_up_everything_additional() {
+        let merged = merge_path_vars(OsStr::new(""), "/opt/homebrew/bin");
+        assert_eq!(dirs(&merged), vec![PathBuf::from("/opt/homebrew/bin")]);
+    }
 }
 
 #[cfg(test)]
