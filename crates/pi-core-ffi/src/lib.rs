@@ -17,11 +17,12 @@
 
 mod session_index;
 
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
 use pi_rpc::{AssistantMessageEvent, Event, PiClient, PiError, PiOptions};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
 
 pub use session_index::{ProjectRecord, SessionIndex, SessionRecord};
 
@@ -35,17 +36,43 @@ pub trait ChatSink: Send + Sync {
     fn on_turn_end(&self);
     fn on_streaming_changed(&self, streaming: bool);
     fn on_error(&self, message: String);
+    /// Fired once right after the session comes up, and again after every
+    /// successful action that changes *which* session is active
+    /// (`switch_project`, `new_session`, or `delete_session` when the
+    /// deleted path was active). `None` when there's no active session file
+    /// yet (pi hasn't written one — no messages sent since the last reset).
+    /// Swift's contract: clear the visible transcript, and feed this value
+    /// into `SessionIndex.list_sessions`'s `active_path` param for row
+    /// highlighting.
+    fn on_active_session_changed(&self, path: Option<String>);
 }
 
 #[derive(Debug, thiserror::Error, uniffi::Error)]
 pub enum PiSessionError {
     #[error("failed to start pi: {0}")]
     Spawn(String),
+    #[error("{0}")]
+    Action(String),
 }
 
 enum ChatCmd {
     Send(String),
     Abort,
+    SwitchProject {
+        path: String,
+        reply: oneshot::Sender<Result<(), String>>,
+    },
+    NewSession {
+        reply: oneshot::Sender<Result<(), String>>,
+    },
+    DeleteSession {
+        path: String,
+        reply: oneshot::Sender<Result<(), String>>,
+    },
+    RenameSession {
+        name: String,
+        reply: oneshot::Sender<Result<(), String>>,
+    },
 }
 
 /// A single `pi --mode rpc` child process plus the tokio runtime that owns
@@ -62,16 +89,22 @@ pub struct PiSession {
 
 #[uniffi::export]
 impl PiSession {
-    /// Spawns `pi --mode rpc` in the current working directory and starts
-    /// forwarding its events to `sink`. Blocks (briefly — a process spawn +
-    /// RPC handshake) until the child is up or has failed to start.
+    /// Spawns `pi --mode rpc` in `cwd` and starts forwarding its events to
+    /// `sink`. Blocks (briefly — a process spawn + RPC handshake) until the
+    /// child is up or has failed to start. Fires an initial
+    /// `on_active_session_changed` once the child reports its starting
+    /// state.
     #[uniffi::constructor]
-    pub fn new(sink: Arc<dyn ChatSink>) -> Result<Self, PiSessionError> {
+    pub fn new(sink: Arc<dyn ChatSink>, cwd: String) -> Result<Self, PiSessionError> {
         let runtime = tokio::runtime::Runtime::new()
             .map_err(|e| PiSessionError::Spawn(format!("could not start a tokio runtime: {e}")))?;
         runtime.block_on(ensure_usable_path());
+        let opts = PiOptions {
+            cwd: Some(PathBuf::from(cwd)),
+            ..Default::default()
+        };
         let (client, events) = runtime
-            .block_on(PiClient::spawn(PiOptions::default()))
+            .block_on(PiClient::spawn(opts))
             .map_err(|e| PiSessionError::Spawn(e.to_string()))?;
         let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
         runtime.spawn(run(client, events, cmd_rx, sink));
@@ -115,16 +148,84 @@ impl PiSession {
     }
 }
 
+/// Session-lifecycle actions: `async`/`Result`-returning, unlike `send`/
+/// `abort`. Those are fire-and-forget because streaming is inherently async
+/// and pushed; these are one-shot RPCs with a real completion point, and
+/// Swift's "trigger the action, then re-fetch the session list" pattern
+/// would otherwise race the RPC against the refetch if these were also
+/// fire-and-forget.
+#[uniffi::export(async_runtime = "tokio")]
+impl PiSession {
+    /// Kills the current `pi` child and respawns it in `path`, always with a
+    /// fresh session (never `--continue`) — so there's never a "transcript
+    /// looks empty but pi secretly has context" mismatch. Fires
+    /// `on_active_session_changed` on success.
+    pub async fn switch_project(&self, path: String) -> Result<(), PiSessionError> {
+        self.call(|reply| ChatCmd::SwitchProject { path, reply })
+            .await
+    }
+
+    /// Starts a fresh session within the current project. Fires
+    /// `on_active_session_changed` on success.
+    pub async fn new_session(&self) -> Result<(), PiSessionError> {
+        self.call(|reply| ChatCmd::NewSession { reply }).await
+    }
+
+    /// Moves any listed session's file to the OS trash — not just the
+    /// active one. If the deleted path was active, also starts a fresh
+    /// session (so the live child keeps working against a file that still
+    /// exists) and fires `on_active_session_changed`.
+    pub async fn delete_session(&self, path: String) -> Result<(), PiSessionError> {
+        self.call(|reply| ChatCmd::DeleteSession { path, reply })
+            .await
+    }
+
+    /// Renames the currently *active* session — `pi`'s `set_session_name`
+    /// takes no path argument, so this can't target any other session
+    /// without first switching to it.
+    pub async fn rename_session(&self, name: String) -> Result<(), PiSessionError> {
+        self.call(|reply| ChatCmd::RenameSession { name, reply })
+            .await
+    }
+}
+
+// Plain (non-`#[uniffi::export]`) impl block: `#[uniffi::export]` treats
+// every method in an attributed block as exportable, and `impl Trait`
+// arguments (used by `call` below) aren't valid in that position — so this
+// private helper has to live outside both exported blocks.
+impl PiSession {
+    async fn call(
+        &self,
+        build: impl FnOnce(oneshot::Sender<Result<(), String>>) -> ChatCmd,
+    ) -> Result<(), PiSessionError> {
+        let (reply_tx, reply_rx) = oneshot::channel();
+        let _ = self.cmd_tx.send(build(reply_tx));
+        reply_rx
+            .await
+            .map_err(|_| PiSessionError::Action("session task ended".to_string()))?
+            .map_err(PiSessionError::Action)
+    }
+}
+
 /// Owns the live `PiClient` end-to-end: drains UI commands and pi's event
 /// stream, forwarding the minimal slice `ChatSink` cares about. Exits (and
 /// drops `client`, killing the child) when the command channel closes —
 /// Swift dropping its last `PiSession` reference is what triggers that.
+///
+/// `client`/`events` are `let mut` locals, not fields — `SwitchProject`
+/// reassigns them in place to respawn `pi` in a new cwd, the same
+/// loop-scoped-mutable-local pattern `pi_core::backend::run_session` already
+/// uses for its own per-spawn state (`models`, `thinking_levels`,
+/// `streaming`). The old `client` (and its child, `kill_on_drop`) is only
+/// dropped once the *new* one has spawned successfully, so a failed
+/// `switch_project` leaves the session fully usable rather than clientless.
 async fn run(
-    client: PiClient,
+    mut client: PiClient,
     mut events: mpsc::UnboundedReceiver<Event>,
     mut cmd_rx: mpsc::UnboundedReceiver<ChatCmd>,
     sink: Arc<dyn ChatSink>,
 ) {
+    sink.on_active_session_changed(active_session_path(&client).await);
     loop {
         tokio::select! {
             cmd = cmd_rx.recv() => {
@@ -138,6 +239,58 @@ async fn run(
                         if let Err(e) = client.abort().await {
                             sink.on_error(describe(&e));
                         }
+                    }
+                    Some(ChatCmd::SwitchProject { path, reply }) => {
+                        let opts = PiOptions { cwd: Some(PathBuf::from(&path)), ..Default::default() };
+                        match PiClient::spawn(opts).await {
+                            Ok((new_client, new_events)) => {
+                                client = new_client; // old client (+ child, kill_on_drop) dropped here
+                                events = new_events;
+                                sink.on_active_session_changed(active_session_path(&client).await);
+                                let _ = reply.send(Ok(()));
+                            }
+                            Err(e) => {
+                                let _ = reply.send(Err(describe(&e))); // old client/events untouched
+                            }
+                        }
+                    }
+                    Some(ChatCmd::NewSession { reply }) => {
+                        match client.new_session(None).await {
+                            Ok(data) if data.get("cancelled").and_then(|v| v.as_bool()) == Some(true) => {
+                                let _ = reply.send(Err("cancelled by an extension".to_string()));
+                            }
+                            Ok(_) => {
+                                sink.on_active_session_changed(active_session_path(&client).await);
+                                let _ = reply.send(Ok(()));
+                            }
+                            Err(e) => {
+                                let _ = reply.send(Err(describe(&e)));
+                            }
+                        }
+                    }
+                    Some(ChatCmd::DeleteSession { path, reply }) => {
+                        let is_active = active_session_path(&client).await.as_deref() == Some(path.as_str());
+                        let target = PathBuf::from(&path);
+                        let outcome = match tokio::task::spawn_blocking(move || trash::delete(&target)).await {
+                            Ok(Ok(())) => Ok(()),
+                            Ok(Err(e)) => Err(format!("could not delete session: {e}")),
+                            Err(e) => Err(format!("delete task failed: {e}")),
+                        };
+                        if outcome.is_ok() && is_active {
+                            // The file is already gone regardless of what an extension
+                            // thinks; start fresh either way so the session stays usable.
+                            if let Err(e) = client.new_session(None).await {
+                                sink.on_error(format!(
+                                    "deleted the open session but could not start a new one: {e}"
+                                ));
+                            }
+                            sink.on_active_session_changed(active_session_path(&client).await);
+                        }
+                        let _ = reply.send(outcome);
+                    }
+                    Some(ChatCmd::RenameSession { name, reply }) => {
+                        let outcome = client.set_session_name(name).await.map_err(|e| describe(&e));
+                        let _ = reply.send(outcome);
                     }
                     None => return,
                 }
@@ -153,6 +306,19 @@ async fn run(
     }
 }
 
+/// pi's `sessionFile` from `get_state`, or `None` if it can't be fetched —
+/// reimplemented here (not pulled from `pi-core`) matching this crate's
+/// existing posture, see the crate doc comment.
+async fn active_session_path(client: &PiClient) -> Option<String> {
+    client
+        .get_state()
+        .await
+        .ok()?
+        .get("sessionFile")
+        .and_then(|v| v.as_str())
+        .map(str::to_string)
+}
+
 const DEMO_REPLY: &str =
     "Hello from demo mode — this reply is synthetic, streamed without spawning pi.";
 const DEMO_CHUNK_CHARS: usize = 5;
@@ -160,31 +326,63 @@ const DEMO_CHUNK_DELAY: Duration = Duration::from_millis(60);
 
 /// Synthetic counterpart to [`run`]: never touches a real `PiClient`, just
 /// streams [`DEMO_REPLY`] in small chunks through the same `ChatSink`
-/// callbacks on every `Send`, abortable mid-stream like the real path.
+/// callbacks on every `Send`, abortable mid-stream like the real path. The
+/// 4 session-lifecycle actions reply `Ok(())` immediately (there's no real
+/// session to act on) rather than being silently dropped — a dropped
+/// `oneshot::Sender` would otherwise resolve Swift's `await` to an error,
+/// making demo mode look broken for every sidebar action.
 async fn run_demo(mut cmd_rx: mpsc::UnboundedReceiver<ChatCmd>, sink: Arc<dyn ChatSink>) {
+    sink.on_active_session_changed(None);
     while let Some(cmd) = cmd_rx.recv().await {
-        let ChatCmd::Send(_) = cmd else {
-            continue; // Abort with nothing streaming is a no-op.
-        };
-        sink.on_streaming_changed(true);
-        let mut aborted = false;
-        for chunk in chunks(DEMO_REPLY, DEMO_CHUNK_CHARS) {
-            tokio::select! {
-                _ = tokio::time::sleep(DEMO_CHUNK_DELAY) => {
-                    sink.on_text_delta(chunk.to_string());
-                }
-                next = cmd_rx.recv() => {
-                    if matches!(next, Some(ChatCmd::Abort) | None) {
-                        aborted = true;
-                        break;
+        match cmd {
+            ChatCmd::Send(_) => {
+                sink.on_streaming_changed(true);
+                let mut aborted = false;
+                for chunk in chunks(DEMO_REPLY, DEMO_CHUNK_CHARS) {
+                    tokio::select! {
+                        _ = tokio::time::sleep(DEMO_CHUNK_DELAY) => {
+                            sink.on_text_delta(chunk.to_string());
+                        }
+                        next = cmd_rx.recv() => {
+                            match next {
+                                Some(ChatCmd::Abort) | None => {
+                                    aborted = true;
+                                    break;
+                                }
+                                // A sidebar action arriving mid-stream: reply so
+                                // Swift's await doesn't error on a dropped
+                                // sender, without otherwise disturbing the
+                                // in-flight demo stream.
+                                Some(other) => reply_demo_action(other, sink.as_ref()),
+                            }
+                        }
                     }
                 }
+                if !aborted {
+                    sink.on_turn_end();
+                }
+                sink.on_streaming_changed(false);
             }
+            ChatCmd::Abort => {} // nothing streaming; no-op
+            other => reply_demo_action(other, sink.as_ref()),
         }
-        if !aborted {
-            sink.on_turn_end();
+    }
+}
+
+fn reply_demo_action(cmd: ChatCmd, sink: &dyn ChatSink) {
+    match cmd {
+        ChatCmd::SwitchProject { reply, .. }
+        | ChatCmd::NewSession { reply }
+        | ChatCmd::DeleteSession { reply, .. } => {
+            sink.on_active_session_changed(None);
+            let _ = reply.send(Ok(()));
         }
-        sink.on_streaming_changed(false);
+        ChatCmd::RenameSession { reply, .. } => {
+            let _ = reply.send(Ok(()));
+        }
+        ChatCmd::Send(_) | ChatCmd::Abort => {
+            unreachable!("Send/Abort are handled by run_demo's own match arms")
+        }
     }
 }
 
@@ -437,6 +635,12 @@ mod test_support {
         fn on_error(&self, message: String) {
             self.events.lock().unwrap().push(format!("error:{message}"));
         }
+        fn on_active_session_changed(&self, path: Option<String>) {
+            self.events
+                .lock()
+                .unwrap()
+                .push(format!("active_session:{path:?}"));
+        }
     }
 }
 
@@ -547,14 +751,19 @@ mod run_demo_tests {
         demo.await.unwrap();
 
         let events = sink.events.lock().unwrap();
-        assert_eq!(events.first(), Some(&"streaming:true".to_string()));
+        assert_eq!(
+            events.first(),
+            Some(&"active_session:None".to_string()),
+            "run_demo fires an initial on_active_session_changed(None) before anything streams"
+        );
+        assert_eq!(events[1], "streaming:true");
         assert_eq!(events.last(), Some(&"streaming:false".to_string()));
         assert_eq!(
             events[events.len() - 2],
             "turn_end",
             "turn_end fires before the final streaming:false"
         );
-        let reassembled: String = events[1..events.len() - 2]
+        let reassembled: String = events[2..events.len() - 2]
             .iter()
             .map(|e| e.strip_prefix("delta:").expect("only deltas in between"))
             .collect();
@@ -580,5 +789,77 @@ mod run_demo_tests {
             "aborted streams never fire turn_end: {events:?}"
         );
         assert_eq!(events.last(), Some(&"streaming:false".to_string()));
+    }
+}
+
+#[cfg(test)]
+mod reply_demo_action_tests {
+    use super::test_support::RecordingSink;
+    use super::*;
+
+    #[tokio::test]
+    async fn switch_project_replies_ok_and_clears_active_session() {
+        let sink = RecordingSink::default();
+        let (tx, rx) = oneshot::channel();
+        reply_demo_action(
+            ChatCmd::SwitchProject {
+                path: "/x".to_string(),
+                reply: tx,
+            },
+            &sink,
+        );
+        assert_eq!(rx.await.unwrap(), Ok(()));
+        assert_eq!(
+            *sink.events.lock().unwrap(),
+            vec!["active_session:None".to_string()]
+        );
+    }
+
+    #[tokio::test]
+    async fn new_session_replies_ok_and_clears_active_session() {
+        let sink = RecordingSink::default();
+        let (tx, rx) = oneshot::channel();
+        reply_demo_action(ChatCmd::NewSession { reply: tx }, &sink);
+        assert_eq!(rx.await.unwrap(), Ok(()));
+        assert_eq!(
+            *sink.events.lock().unwrap(),
+            vec!["active_session:None".to_string()]
+        );
+    }
+
+    #[tokio::test]
+    async fn delete_session_replies_ok_and_clears_active_session() {
+        let sink = RecordingSink::default();
+        let (tx, rx) = oneshot::channel();
+        reply_demo_action(
+            ChatCmd::DeleteSession {
+                path: "/x".to_string(),
+                reply: tx,
+            },
+            &sink,
+        );
+        assert_eq!(rx.await.unwrap(), Ok(()));
+        assert_eq!(
+            *sink.events.lock().unwrap(),
+            vec!["active_session:None".to_string()]
+        );
+    }
+
+    #[tokio::test]
+    async fn rename_session_replies_ok_without_touching_active_session() {
+        let sink = RecordingSink::default();
+        let (tx, rx) = oneshot::channel();
+        reply_demo_action(
+            ChatCmd::RenameSession {
+                name: "x".to_string(),
+                reply: tx,
+            },
+            &sink,
+        );
+        assert_eq!(rx.await.unwrap(), Ok(()));
+        assert!(
+            sink.events.lock().unwrap().is_empty(),
+            "renaming doesn't change which session is active"
+        );
     }
 }

@@ -18,6 +18,7 @@ pi-sessions = { path = "../pi-sessions" }
 tokio.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
+trash = "5.2.6"
 uniffi = { version = "0.32.0", features = ["cli", "tokio"] }
 
 # Runs `uniffi-bindgen generate --library <cdylib/staticlib> --language swift`
