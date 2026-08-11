@@ -13,6 +13,7 @@
 		0A8DA7080FAA59C0D5752069 /* pi_core_ffi.swift in Sources */ = {isa = PBXBuildFile; fileRef = 93A97F54DA13BD6180002DDA /* pi_core_ffi.swift */; };
 		69DB5AD51C80EF95A6A1BB31 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1DA6692E517D9BE29939E861 /* ContentView.swift */; };
 		CBD2A8CD7F35F4934147D41E /* SidebarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 75F2A2B404A96C539D91DE0C /* SidebarView.swift */; };
+		A1156509D6E56DC6930B236A /* RowView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9358DE6D28FA55AA0416E595 /* RowView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -22,6 +23,7 @@
 		93A97F54DA13BD6180002DDA /* pi_core_ffi.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = pi_core_ffi.swift; sourceTree = "<group>"; };
 		1DA6692E517D9BE29939E861 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		75F2A2B404A96C539D91DE0C /* SidebarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SidebarView.swift; sourceTree = "<group>"; };
+		9358DE6D28FA55AA0416E595 /* RowView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RowView.swift; sourceTree = "<group>"; };
 		7C900BB47408588774DEFB3C /* PiMac.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = PiMac.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -53,6 +55,7 @@
 				75F2A2B404A96C539D91DE0C /* SidebarView.swift */,
 				482A0F1669E6FF6A90545385 /* ChatView.swift */,
 				CB136EEEBB2354FB5BA2BC65 /* AppModel.swift */,
+				9358DE6D28FA55AA0416E595 /* RowView.swift */,
 			);
 			path = PiMac;
 			sourceTree = "<group>";
@@ -162,6 +165,7 @@
 				CBD2A8CD7F35F4934147D41E /* SidebarView.swift in Sources */,
 				8CE91CE85E1166BA5C71413E /* ChatView.swift in Sources */,
 				2D06D85C5242C590D955182D /* AppModel.swift in Sources */,
+				A1156509D6E56DC6930B236A /* RowView.swift in Sources */,
 				0A8DA7080FAA59C0D5752069 /* pi_core_ffi.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

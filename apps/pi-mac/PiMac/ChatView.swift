@@ -1,8 +1,10 @@
 import SwiftUI
 
-/// Chat detail pane: composer, plain-text-appending transcript, streaming
-/// status. Deliberately no markdown rendering yet — see
-/// docs/plans/SW1-ffi-spike-and-chat-window.md.
+/// Chat detail pane: composer, a `RowRecord`-rendered transcript (rich
+/// markdown/code/tables, replacing SW1/SW2's plain-text-only display), plus
+/// an ephemeral plain-text bubble for whichever turn is still streaming —
+/// `AppModel.onHistoryReplaced` clears it and hands back richly-rendered
+/// rows once the turn settles (see `pi-core-ffi`'s `hydrate_and_push`).
 struct ChatView: View {
     var model: AppModel
     @State private var draft: String = ""
@@ -11,11 +13,22 @@ struct ChatView: View {
         VStack(spacing: 0) {
             ScrollViewReader { proxy in
                 ScrollView {
-                    Text(model.transcript.isEmpty ? " " : model.transcript)
-                        .font(.system(.body, design: .monospaced))
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding()
-                        .id("transcript-end")
+                    LazyVStack(alignment: .leading, spacing: 10) {
+                        ForEach(Array(model.rows.enumerated()), id: \.offset) { _, row in
+                            RowView(row: row)
+                        }
+                        if !model.transcript.isEmpty {
+                            Text(model.transcript)
+                                .font(.system(.body, design: .monospaced))
+                                .textSelection(.enabled)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding()
+                    .id("transcript-end")
+                }
+                .onChange(of: model.rows.count) {
+                    proxy.scrollTo("transcript-end", anchor: .bottom)
                 }
                 .onChange(of: model.transcript) {
                     proxy.scrollTo("transcript-end", anchor: .bottom)

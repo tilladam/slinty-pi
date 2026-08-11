@@ -2,10 +2,8 @@ import SwiftUI
 import AppKit
 
 /// Session browsing + lifecycle actions: list, switch project, new, delete,
-/// rename. Deliberately *not* click-to-resume — non-active rows are
-/// informational only (dimmed, no tap action) until a later milestone
-/// decides how to hydrate/render an existing session's history across the
-/// FFI boundary (see docs/plans SW3).
+/// rename, and — as of SW3 — click a non-active row to resume it (loads its
+/// history via `AppModel.switchSession`/`ChatSink.onHistoryReplaced`).
 struct SidebarView: View {
     var model: AppModel
 
@@ -15,6 +13,11 @@ struct SidebarView: View {
     var body: some View {
         List(model.sessions, id: \.path) { session in
             SessionRowView(session: session)
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    guard !session.active else { return }
+                    Task { await model.switchSession(to: session.path) }
+                }
                 .contextMenu {
                     if session.active {
                         Button("Rename…") {

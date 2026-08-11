@@ -1,11 +1,11 @@
 import SwiftUI
 
 /// Top-level shell: a sidebar (project switcher + session list — browse,
-/// switch project, new/delete/rename; *not* resuming an existing session's
-/// history, deferred until a rich-content-over-FFI answer exists, see
-/// docs/plans SW3) and the chat detail pane.
+/// switch project, new/delete/rename, and, as of SW3, click-to-resume) and
+/// the chat detail pane.
 struct ContentView: View {
     @State private var model = AppModel()
+    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         NavigationSplitView {
@@ -14,7 +14,10 @@ struct ContentView: View {
             ChatView(model: model)
         }
         .task {
-            model.start()
+            model.start(dark: colorScheme == .dark)
+        }
+        .onChange(of: colorScheme) {
+            model.setDarkMode(colorScheme == .dark)
         }
     }
 }
