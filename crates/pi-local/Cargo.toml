@@ -1,0 +1,17 @@
+[package]
+name = "pi-local"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+description = "Local-model backend foundation: rapid-mlx CLI integration, a llama.cpp router HTTP client, Hugging Face GGUF search, Ollama detection, ~/.pi/agent/{auth,models}.json handling, and system RAM-fit estimation. Toolkit- and frontend-agnostic. Shared by pi-core (Slint) and pi-core-ffi (Swift)."
+
+[dependencies]
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true, features = ["preserve_order"] }
+thiserror.workspace = true
+tokio.workspace = true
+reqwest = { version = "0.13.4", default-features = false, features = ["json", "rustls", "stream", "query"] }
+sysinfo = "0.39.6"
+
+[dev-dependencies]
+tempfile = "3.27.0"

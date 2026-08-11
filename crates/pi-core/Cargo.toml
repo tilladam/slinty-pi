@@ -9,6 +9,7 @@ description = "UI-toolkit-agnostic core: drives pi-rpc, projects events onto row
 pi-rpc = { path = "../pi-rpc" }
 pi-sessions = { path = "../pi-sessions" }
 pi-render = { path = "../pi-render" }
+pi-local = { path = "../pi-local" }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true, features = ["preserve_order"] }
 thiserror.workspace = true
@@ -16,9 +17,7 @@ tracing.workspace = true
 tokio.workspace = true
 nucleo-matcher = "0.3.1"
 base64 = "0.23.0"
-sysinfo = "0.39.6"
 directories = "6.0.0"
-reqwest = { version = "0.13.4", default-features = false, features = ["json", "rustls", "stream", "query"] }
 trash = "5.2.6"
 
 [dev-dependencies]

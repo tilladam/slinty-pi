@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/pi-rpc", "crates/pi-sessions", "crates/pi-render", "crates/pi-core", "crates/pi-core-ffi", "crates/slinty-pi"]
+members = ["crates/pi-rpc", "crates/pi-sessions", "crates/pi-render", "crates/pi-local", "crates/pi-core", "crates/pi-core-ffi", "crates/slinty-pi"]
 
 [workspace.package]
 edition = "2021"

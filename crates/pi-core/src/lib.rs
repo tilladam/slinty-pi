@@ -9,7 +9,6 @@ pub mod attach;
 pub mod backend;
 pub mod demo_sessions;
 pub mod density;
-pub mod local;
 pub mod palette;
 #[cfg(test)]
 pub mod recording_ui_sink;
@@ -20,3 +19,10 @@ pub mod recording_ui_sink;
 // crate (also depended on directly by `pi-core-ffi`, which doesn't otherwise
 // depend on `pi-core`).
 pub use pi_render::{highlight, segmenter};
+
+// Re-exported so every existing `crate::local::...`/`local::...` call site
+// throughout `backend.rs` keeps resolving unchanged now that `local/*` lives
+// in the lean, shared `pi-local` crate (also depended on directly by
+// `pi-core-ffi`'s `LocalModelIndex`, which doesn't otherwise depend on
+// `pi-core`).
+pub use pi_local as local;

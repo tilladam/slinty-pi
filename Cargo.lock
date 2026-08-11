@@ -4150,13 +4150,12 @@ dependencies = [
  "base64 0.23.0",
  "directories",
  "nucleo-matcher",
+ "pi-local",
  "pi-render",
  "pi-rpc",
  "pi-sessions",
- "reqwest",
  "serde",
  "serde_json",
- "sysinfo",
  "tempfile",
  "thiserror 2.0.19",
  "tokio",
@@ -4179,6 +4178,19 @@ dependencies = [
  "tracing-subscriber",
  "trash",
  "uniffi",
+]
+
+[[package]]
+name = "pi-local"
+version = "0.1.0"
+dependencies = [
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sysinfo",
+ "tempfile",
+ "thiserror 2.0.19",
+ "tokio",
 ]
 
 [[package]]
