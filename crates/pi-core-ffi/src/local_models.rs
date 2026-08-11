@@ -135,6 +135,7 @@ pub struct LocalModelIndex;
 impl LocalModelIndex {
     #[uniffi::constructor]
     pub fn new() -> Self {
+        crate::ensure_logging_initialized();
         Self
     }
 

@@ -39,6 +39,31 @@ pub use session_index::{ProjectRecord, SessionIndex, SessionRecord};
 
 uniffi::setup_scaffolding!();
 
+/// Installs `tracing-oslog` as the process's `tracing` subscriber, so a
+/// compiled `PiMac.app` has somewhere for its diagnostics to go — without
+/// this, every `tracing::*!` call in this crate and `pi-rpc` (including one
+/// that forwards `pi`'s own child-process stderr) is a silent no-op, since
+/// nothing else installs a subscriber inside the shipped app. Idempotent
+/// (the `Once` guard) and safe to call from every constructor that might run
+/// first (`PiSession::new`/`new_demo`, `LocalModelIndex::new`).
+///
+/// `examples/spike_check.rs` already installs its own `tracing_subscriber::
+/// fmt()` subscriber in its `main()`, *before* constructing a `PiSession` —
+/// `tracing`'s global default can only be set once process-wide, so
+/// `try_init()`'s `Err` there is expected and deliberately discarded: that
+/// dev tool keeps its own stderr output unchanged, and only a real app
+/// (where nothing has claimed the slot yet) actually gets `tracing-oslog`.
+fn ensure_logging_initialized() {
+    use tracing_subscriber::layer::SubscriberExt;
+    use tracing_subscriber::util::SubscriberInitExt;
+    static INIT: std::sync::Once = std::sync::Once::new();
+    INIT.call_once(|| {
+        let _ = tracing_subscriber::registry()
+            .with(tracing_oslog::OsLogger::new("dev.slinty-pi.pi-mac", "rust"))
+            .try_init();
+    });
+}
+
 /// Backend -> UI push. Implemented in Swift; called from Rust on a tokio
 /// worker thread.
 #[uniffi::export(with_foreign)]
@@ -145,16 +170,22 @@ impl PiSession {
         resume_session_path: Option<String>,
         dark: bool,
     ) -> Result<Self, PiSessionError> {
-        let runtime = tokio::runtime::Runtime::new()
-            .map_err(|e| PiSessionError::Spawn(format!("could not start a tokio runtime: {e}")))?;
+        ensure_logging_initialized();
+        let runtime = tokio::runtime::Runtime::new().map_err(|e| {
+            let message = format!("could not start a tokio runtime: {e}");
+            tracing::error!("{message}");
+            PiSessionError::Spawn(message)
+        })?;
         runtime.block_on(ensure_usable_path());
         let opts = PiOptions {
             cwd: Some(PathBuf::from(cwd)),
             ..Default::default()
         };
-        let (client, events) = runtime
-            .block_on(PiClient::spawn(opts))
-            .map_err(|e| PiSessionError::Spawn(e.to_string()))?;
+        let (client, events) = runtime.block_on(PiClient::spawn(opts)).map_err(|e| {
+            let message = e.to_string();
+            tracing::error!("failed to start pi: {message}");
+            PiSessionError::Spawn(message)
+        })?;
         let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
         let dark = Arc::new(AtomicBool::new(dark));
         runtime.spawn(run(
@@ -188,6 +219,7 @@ impl PiSession {
     /// plug into here.
     #[uniffi::constructor]
     pub fn new_demo(sink: Arc<dyn ChatSink>) -> Self {
+        ensure_logging_initialized();
         let runtime = tokio::runtime::Runtime::new().expect("tokio runtime for demo session");
         let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
         let dark = Arc::new(AtomicBool::new(true));
@@ -336,7 +368,10 @@ async fn run(
     if let Some(path) = resume_session_path {
         match do_switch_session(&client, &path).await {
             Ok(()) => hydrate_and_push(&client, sink.as_ref(), &dark).await,
-            Err(e) => sink.on_error(format!("could not restore last session: {e}")),
+            Err(e) => report_error(
+                sink.as_ref(),
+                format!("could not restore last session: {e}"),
+            ),
         }
     }
     sink.on_active_session_changed(active_session_path(&client).await);
@@ -346,12 +381,12 @@ async fn run(
                 match cmd {
                     Some(ChatCmd::Send(text)) => {
                         if let Err(e) = client.prompt(text).await {
-                            sink.on_error(describe(&e));
+                            report_error(sink.as_ref(), describe(&e));
                         }
                     }
                     Some(ChatCmd::Abort) => {
                         if let Err(e) = client.abort().await {
-                            sink.on_error(describe(&e));
+                            report_error(sink.as_ref(), describe(&e));
                         }
                     }
                     Some(ChatCmd::SwitchProject { path, reply }) => {
@@ -402,9 +437,12 @@ async fn run(
                             // The file is already gone regardless of what an extension
                             // thinks; start fresh either way so the session stays usable.
                             if let Err(e) = client.new_session(None).await {
-                                sink.on_error(format!(
-                                    "deleted the open session but could not start a new one: {e}"
-                                ));
+                                report_error(
+                                    sink.as_ref(),
+                                    format!(
+                                        "deleted the open session but could not start a new one: {e}"
+                                    ),
+                                );
                             }
                             sink.on_history_replaced(Vec::new());
                             sink.on_active_session_changed(active_session_path(&client).await);
@@ -470,7 +508,7 @@ async fn run(
             }
             event = events.recv() => {
                 let Some(event) = event else {
-                    sink.on_error("pi exited".to_string());
+                    report_error(sink.as_ref(), "pi exited".to_string());
                     return;
                 };
                 apply(&event, sink.as_ref());
@@ -520,7 +558,7 @@ async fn hydrate_and_push(client: &PiClient, sink: &dyn ChatSink, dark: &AtomicB
             let rows = pi_render::hydrate_rowspecs(&messages, dark.load(Ordering::Relaxed));
             sink.on_history_replaced(rows.into_iter().map(RowRecord::from).collect());
         }
-        Err(e) => sink.on_error(format!("could not load session messages: {e}")),
+        Err(e) => report_error(sink, format!("could not load session messages: {e}")),
     }
 }
 
@@ -678,13 +716,23 @@ fn apply(event: &Event, sink: &dyn ChatSink) {
         Event::MessageUpdate {
             assistant_message_event: AssistantMessageEvent::Error { reason },
             ..
-        } if reason != "aborted" => sink.on_error(format!("model error: {reason}")),
+        } if reason != "aborted" => report_error(sink, format!("model error: {reason}")),
         _ => {}
     }
 }
 
 fn describe(e: &PiError) -> String {
     e.to_string()
+}
+
+/// `ChatSink::on_error`'s single call site, everywhere — guarantees every
+/// push-based chat/session error is also captured via `tracing` (and, once
+/// `ensure_logging_initialized` has run, macOS unified logging), not just
+/// shown as a one-line status caption that gets overwritten by the next
+/// event.
+fn report_error(sink: &dyn ChatSink, message: String) {
+    tracing::error!("{message}");
+    sink.on_error(message);
 }
 
 /// Ensures `pi` — and whatever `pi` itself shells out to (it's commonly a
@@ -712,10 +760,15 @@ async fn ensure_usable_path() {
         }
     }
     let Some(login_path) = login_shell_path().await else {
+        tracing::warn!(
+            "pi not found on PATH, and the login-shell PATH lookup itself failed or timed out \
+             — proceeding with the original PATH unchanged"
+        );
         return;
     };
     let current = std::env::var_os("PATH").unwrap_or_default();
     let merged = merge_path_vars(&current, &login_path);
+    tracing::debug!("pi not found on PATH; merged in the login shell's PATH");
     // SAFETY: called once, synchronously, before `PiSession::new` spawns any
     // other thread that could read `PATH` concurrently.
     unsafe {
