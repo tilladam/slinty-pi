@@ -2,9 +2,10 @@ import SwiftUI
 
 /// Chat detail pane: composer, a `RowRecord`-rendered transcript (rich
 /// markdown/code/tables, replacing SW1/SW2's plain-text-only display), plus
-/// an ephemeral plain-text bubble for whichever turn is still streaming —
-/// `AppModel.onHistoryReplaced` clears it and hands back richly-rendered
-/// rows once the turn settles (see `pi-core-ffi`'s `hydrate_and_push`).
+/// a richly-rendered, throttled live preview (`model.streamingRows`) for
+/// whichever turn is still streaming — `AppModel.onHistoryReplaced` clears
+/// it and hands back the finalized rows once the turn settles (see
+/// `pi-core-ffi`'s `hydrate_and_push`).
 struct ChatView: View {
     var model: AppModel
     @State private var draft: String = ""
@@ -17,10 +18,8 @@ struct ChatView: View {
                         ForEach(Array(model.rows.enumerated()), id: \.offset) { _, row in
                             RowView(row: row)
                         }
-                        if !model.transcript.isEmpty {
-                            Text(model.transcript)
-                                .font(.system(.body, design: .monospaced))
-                                .textSelection(.enabled)
+                        ForEach(Array(model.streamingRows.enumerated()), id: \.offset) { _, row in
+                            RowView(row: row)
                         }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -30,7 +29,7 @@ struct ChatView: View {
                 .onChange(of: model.rows.count) {
                     proxy.scrollTo("transcript-end", anchor: .bottom)
                 }
-                .onChange(of: model.transcript) {
+                .onChange(of: model.streamingRows.count) {
                     proxy.scrollTo("transcript-end", anchor: .bottom)
                 }
             }

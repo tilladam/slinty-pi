@@ -20,10 +20,16 @@ final class AppModel: ChatSink {
     /// turn — the single source of truth for transcript content as of SW3
     /// (`onHistoryReplaced`, not `onActiveSessionChanged`, owns this).
     private(set) var rows: [RowRecord] = []
-    /// Plain-text bubble for whichever reply is still streaming; cleared
-    /// the moment `onHistoryReplaced` delivers the finalized, richly-
-    /// rendered rows for that same turn.
-    private(set) var transcript: String = ""
+    /// Plain-text accumulator for whichever reply is still streaming — no
+    /// longer rendered directly (see `streamingRows`); kept private since
+    /// nothing outside this class needs to read it.
+    private var transcript: String = ""
+    /// Richly-rendered preview of `transcript`, refreshed on a throttled
+    /// ~33ms cadence via `PiSession.previewRows` while a reply streams —
+    /// closes the gap where streamed replies showed raw markdown until the
+    /// turn settled. Cleared whenever `transcript` itself is (turn end,
+    /// history replaced).
+    private(set) var streamingRows: [RowRecord] = []
     private(set) var isStreaming: Bool = false
     private(set) var statusMessage: String?
     /// Path/sidebar-highlighting only — see `onActiveSessionChanged`'s doc
@@ -45,6 +51,14 @@ final class AppModel: ChatSink {
     private var session: PiSession?
     private let sessionIndex = SessionIndex()
     private let localModels = LocalModelIndex()
+    /// Throttle state for `scheduleStreamPreview` — mirrors (not literally
+    /// ports) `pi_core::backend::Transcript::flush_stream`'s `TEXT_FLUSH`
+    /// (33ms) gating: a burst of deltas within the window coalesces into
+    /// one `previewRows` call once it elapses, rather than one call per
+    /// delta.
+    private static let previewFlushInterval: Duration = .milliseconds(33)
+    private var lastPreviewFlush: ContinuousClock.Instant?
+    private var pendingPreviewTask: Task<Void, Never>?
     /// Same subsystem the Rust side's `tracing-oslog` subscriber uses (see
     /// `pi-core-ffi`'s `ensure_logging_initialized`) — so every message
     /// that's ever shown to the user, from either layer, ends up in the
@@ -327,12 +341,16 @@ final class AppModel: ChatSink {
     nonisolated func onTextDelta(delta: String) {
         Task { @MainActor in
             self.transcript += delta
+            self.scheduleStreamPreview()
         }
     }
 
     nonisolated func onTurnEnd() {
         Task { @MainActor in
             self.transcript += "\n"
+            self.pendingPreviewTask?.cancel()
+            self.pendingPreviewTask = nil
+            self.streamingRows = []
         }
     }
 
@@ -362,6 +380,38 @@ final class AppModel: ChatSink {
         Task { @MainActor in
             self.rows = rows
             self.transcript = ""
+            self.pendingPreviewTask?.cancel()
+            self.pendingPreviewTask = nil
+            self.streamingRows = []
         }
+    }
+
+    // MARK: - Live streaming preview (throttled `previewRows` calls)
+
+    /// Coalesces bursts of `onTextDelta` calls into one `previewRows` call
+    /// per `previewFlushInterval`, the same shape `flush_stream`'s
+    /// `last_flush.elapsed() >= TEXT_FLUSH` gate produces on the Rust side:
+    /// a delta arriving right after a flush waits out the rest of the
+    /// window; a delta arriving after a long gap flushes immediately.
+    /// Only one preview refresh is ever scheduled/in-flight at a time —
+    /// a second call while one is already pending is a no-op.
+    private func scheduleStreamPreview() {
+        guard pendingPreviewTask == nil else { return }
+        let elapsed = lastPreviewFlush?.duration(to: .now) ?? Self.previewFlushInterval
+        let delay = max(.zero, Self.previewFlushInterval - elapsed)
+        pendingPreviewTask = Task { [weak self] in
+            if delay > .zero {
+                try? await Task.sleep(for: delay)
+            }
+            guard let self, !Task.isCancelled else { return }
+            await self.refreshStreamPreview()
+        }
+    }
+
+    private func refreshStreamPreview() async {
+        guard let session else { return }
+        pendingPreviewTask = nil
+        lastPreviewFlush = .now
+        streamingRows = await session.previewRows(markdown: transcript)
     }
 }
