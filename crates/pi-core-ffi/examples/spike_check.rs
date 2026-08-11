@@ -1,4 +1,4 @@
-use pi_core_ffi::{ChatSink, PiSession, RowRecord};
+use pi_core_ffi::{ChatSink, LocalModelIndex, PiSession, RowRecord};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -42,6 +42,13 @@ impl ChatSink for PrintSink {
 ///   cargo run -p pi-core-ffi --example spike_check -- abort     # abort mid-stream
 ///   cargo run -p pi-core-ffi --example spike_check -- sessions  # new/rename/delete session
 ///   cargo run -p pi-core-ffi --example spike_check -- history   # settle + switch_session hydration (SW3)
+///   cargo run -p pi-core-ffi --example spike_check -- models    # LocalModelIndex refresh/search (SW4)
+///
+/// The `models` mode's rapid-mlx/router/Ollama checks are tolerant of the
+/// underlying tool not being installed/running (matching this project's
+/// convention, e.g. `local::hf`/`local::rapid_mlx`'s own live tests) —
+/// only `search_hf_models` (a real network call to a public API with no
+/// local dependency) is asserted on for real results.
 ///
 /// The abort mode's outcome depends on how the configured pi model/
 /// extensions handle a "write something long" prompt: a plain conversational
@@ -178,6 +185,58 @@ fn main() {
                 assert!(
                     after_resume.iter().any(|r| r.kind == "code"),
                     "expected at least one code row, got kinds {kinds_after_resume:?}"
+                );
+            });
+        }
+        Some("models") => {
+            let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
+            rt.block_on(async {
+                let index = LocalModelIndex::new();
+
+                eprintln!("--- refresh_rapid_mlx_panel() ---");
+                let rapid_mlx = index.refresh_rapid_mlx_panel().await;
+                eprintln!(
+                    "rapid-mlx: version={:?} running_summary={:?} cached={} catalog_count={}",
+                    rapid_mlx.version,
+                    rapid_mlx.running_summary,
+                    rapid_mlx.cached.len(),
+                    rapid_mlx.catalog_count
+                );
+
+                eprintln!("--- refresh_router_panel() ---");
+                let router = index.refresh_router_panel().await;
+                eprintln!(
+                    "router: status={} base_url={} models={}",
+                    router.status_label,
+                    router.base_url,
+                    router.models.len()
+                );
+
+                eprintln!("--- refresh_ollama_panel() ---");
+                let ollama = index.refresh_ollama_panel().await;
+                eprintln!(
+                    "ollama: detected={} summary={:?} model_count={}",
+                    ollama.detected, ollama.summary, ollama.model_count
+                );
+
+                eprintln!("--- refresh_auth_entries() ---");
+                let auth = index.refresh_auth_entries().await;
+                eprintln!("auth entries: {auth:?}");
+
+                eprintln!("--- search_hf_models(\"phi-4\") ---");
+                let results = index
+                    .search_hf_models("phi-4".to_string())
+                    .await
+                    .expect("hf search failed");
+                eprintln!("hf search: {} results", results.len());
+                assert!(
+                    !results.is_empty(),
+                    "expected at least one real HF search result for 'phi-4'"
+                );
+                let first = &results[0];
+                eprintln!(
+                    "first result: {} gated={} downloads={} quants={:?}",
+                    first.id, first.gated, first.downloads, first.quants
                 );
             });
         }
