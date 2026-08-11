@@ -1,0 +1,12 @@
+[package]
+name = "pi-render"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+description = "Stateless message/segment -> row rendering: markdown segmentation, syntax highlighting, and session-history hydration into RowSpecs. Shared by pi-core (live streaming) and pi-core-ffi (Swift history hydration), kept lean (no reqwest/sysinfo/directories) so it's cheap to pull into either."
+
+[dependencies]
+pi-rpc = { path = "../pi-rpc" }
+serde_json = { workspace = true, features = ["preserve_order"] }
+pulldown-cmark = "0.13.4"
+syntect = { version = "5.3.0", default-features = false, features = ["default-fancy"] }

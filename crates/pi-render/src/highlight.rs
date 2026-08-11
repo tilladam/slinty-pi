@@ -2,12 +2,14 @@
 //!
 //! Highlights with syntect and returns one [`CodeLine`] (a `Vec<ColoredSpan>`)
 //! per source line — plain data, cheap to compute off the UI thread and
-//! trivial to turn into Slint's per-span model (a nested `for line in
-//! code-lines: for span in line.spans: Text { color: span.color }`), unlike
-//! routing colored code through `StyledText::from_markdown`, which needed
-//! every span escaped and indentation faked with NBSP to survive markdown
-//! parsing. Copy actions use the original code string directly; nothing here
-//! is lossy or needs unescaping.
+//! trivial to turn into any frontend's per-span model (Slint: a nested `for
+//! line in code-lines: for span in line.spans: Text { color: span.color }`;
+//! SwiftUI: the same shape per `RowRecord`), unlike routing colored code
+//! through a markdown renderer, which would need every span escaped and
+//! indentation faked to survive markdown parsing. Copy actions use the
+//! original code string directly; nothing here is lossy or needs
+//! unescaping. Every span's color is pre-resolved to a concrete `(u8, u8,
+//! u8)` RGB triple — a consumer needs no syntect theme/asset data of its own.
 
 use std::sync::OnceLock;
 

@@ -9,9 +9,14 @@ pub mod attach;
 pub mod backend;
 pub mod demo_sessions;
 pub mod density;
-pub mod highlight;
 pub mod local;
 pub mod palette;
 #[cfg(test)]
 pub mod recording_ui_sink;
-pub mod segmenter;
+
+// Re-exported so existing `pi_core::highlight`/`pi_core::segmenter` call
+// sites (slinty-pi's `code_lines_model`/`table_rows_model`) keep resolving
+// unchanged now that these modules live in the lean, shared `pi-render`
+// crate (also depended on directly by `pi-core-ffi`, which doesn't otherwise
+// depend on `pi-core`).
+pub use pi_render::{highlight, segmenter};

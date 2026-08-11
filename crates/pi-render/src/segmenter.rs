@@ -1,10 +1,12 @@
 //! Splits assistant markdown into renderable segments.
 //!
-//! Slint's `StyledText` handles an inline CommonMark subset (bold, italic,
-//! strikethrough, inline code, links, lists, `<u>`, `<font color>`), but not
-//! headings, fenced code blocks, tables, images, or block quotes. So we walk
-//! the source with pulldown-cmark at block level and hand prose blocks to
-//! StyledText verbatim while extracting the constructs it can't render.
+//! Every consuming frontend's native inline renderer (Slint's `StyledText`,
+//! SwiftUI's `AttributedString(markdown:)`) already handles an inline
+//! CommonMark subset (bold, italic, strikethrough, inline code, links,
+//! lists), but not headings, fenced code blocks, tables, images, or block
+//! quotes. So we walk the source with pulldown-cmark at block level and hand
+//! prose blocks to that native renderer verbatim while extracting the
+//! constructs it can't render.
 //!
 //! Re-segmenting runs on every streaming flush (~30 Hz) over the growing
 //! message, so this stays allocation-light and single-pass. pulldown-cmark

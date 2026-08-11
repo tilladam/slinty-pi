@@ -4150,13 +4150,12 @@ dependencies = [
  "base64 0.23.0",
  "directories",
  "nucleo-matcher",
+ "pi-render",
  "pi-rpc",
  "pi-sessions",
- "pulldown-cmark",
  "reqwest",
  "serde",
  "serde_json",
- "syntect",
  "sysinfo",
  "tempfile",
  "thiserror 2.0.19",
@@ -4179,6 +4178,16 @@ dependencies = [
  "tracing-subscriber",
  "trash",
  "uniffi",
+]
+
+[[package]]
+name = "pi-render"
+version = "0.1.0"
+dependencies = [
+ "pi-rpc",
+ "pulldown-cmark",
+ "serde_json",
+ "syntect",
 ]
 
 [[package]]
