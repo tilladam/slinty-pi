@@ -13,7 +13,8 @@ use std::sync::Arc;
 use slint::{ComponentHandle, Model, ModelRc, VecModel};
 use tokio::sync::mpsc;
 
-use backend::UiCmd;
+use backend::SlintUi;
+use pi_core::backend::{Secret, UiCmd};
 use pi_core::{density, highlight};
 
 slint::include_modules!();
@@ -84,7 +85,7 @@ fn main() -> anyhow::Result<()> {
         app.on_save_api_key(move |provider, key| {
             let _ = tx.send(UiCmd::SaveApiKey {
                 provider: provider.to_string(),
-                key: backend::Secret(key.to_string()),
+                key: Secret(key.to_string()),
             });
         });
         let tx = cmd_tx.clone();
@@ -251,10 +252,11 @@ fn main() -> anyhow::Result<()> {
 
     let weak = app.as_weak();
     let dark_flag = dark.clone();
+    let ui: Box<dyn pi_core::backend::UiSink> = Box::new(SlintUi::new(weak));
     if std::env::var("SLINTY_DEMO").is_ok() {
-        rt.spawn(backend::demo_backend(weak, dark_flag, cmd_rx));
+        rt.spawn(pi_core::backend::demo_backend(ui, dark_flag, cmd_rx));
     } else {
-        rt.spawn(backend::pi_backend(weak, dark_flag, cmd_rx));
+        rt.spawn(pi_core::backend::pi_backend(ui, dark_flag, cmd_rx));
     }
 
     // The sidebar sends these from real UI actions; each is also reachable

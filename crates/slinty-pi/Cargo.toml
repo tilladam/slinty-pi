@@ -20,7 +20,6 @@ icon = ["assets/icon/icon.icns", "assets/icon/icon.ico"]
 category = "Developer Tool"
 
 [dependencies]
-pi-rpc = { path = "../pi-rpc" }
 pi-core = { path = "../pi-core" }
 # Path dependency on the local Slint checkout (master), not crates.io. Needed
 # for two things not yet in a published release (1.17.1 predates both):
@@ -43,16 +42,10 @@ pi-core = { path = "../pi-core" }
 # pipeline on transcript-heavy frames.
 slint = { git = "https://github.com/slint-ui/slint.git", features = ["renderer-winit-skia"] }
 tokio.workspace = true
-# preserve_order: models.json editing needs Map iteration/serialization to
-# follow the file's original key order, not alphabetical — see local::pi_config.
-serde_json = { workspace = true, features = ["preserve_order"] }
 anyhow.workspace = true
 tracing.workspace = true
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 arboard = "3.6.1"
-trash = "5.2.6"
-chrono = { version = "0.4.45", default-features = false, features = ["clock"] }
-pi-sessions = { version = "0.1.0", path = "../pi-sessions" }
 rfd = "0.17.2"
 # Internal Slint crate (not semver-stable, must match `slint`'s source exactly
 # — see the path dependency above); used to install a CustomApplicationHandler
@@ -61,8 +54,6 @@ rfd = "0.17.2"
 # attach.rs's doc comment.
 i-slint-backend-winit = { git = "https://github.com/slint-ui/slint.git" }
 winit = "0.30"
-serde = { workspace = true, features = ["derive"] }
-thiserror.workspace = true
 
 [build-dependencies]
 # Must match the `slint` runtime's source exactly (same reasoning as above) —

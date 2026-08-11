@@ -6,6 +6,7 @@
 //! that one trait instead of duplicating the state machine that drives pi.
 
 pub mod attach;
+pub mod backend;
 pub mod demo_sessions;
 pub mod density;
 pub mod highlight;
