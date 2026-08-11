@@ -311,6 +311,18 @@ impl PiSession {
         self.call(|reply| ChatCmd::ServeRapidMlxModel { alias, reply })
             .await
     }
+
+    /// Richly-renders `markdown` (typically the in-flight streaming buffer)
+    /// without touching `client`/`events`/the command channel at all — a
+    /// stateless, side-effect-free segment-and-map, reusing whatever theme
+    /// `set_dark_mode` last set. Swift calls this on a throttled ~33ms
+    /// cadence while a reply streams, mirroring (not literally porting)
+    /// `pi_core::backend::Transcript::flush_stream`'s cadence — see the
+    /// "Live markdown/code rendering while a reply is streaming" plan
+    /// section for the full rationale.
+    pub async fn preview_rows(&self, markdown: String) -> Vec<RowRecord> {
+        preview_rows(&markdown, self.dark.load(Ordering::Relaxed))
+    }
 }
 
 // Plain (non-`#[uniffi::export]`) impl block: `#[uniffi::export]` treats
@@ -559,6 +571,59 @@ async fn hydrate_and_push(client: &PiClient, sink: &dyn ChatSink, dark: &AtomicB
             sink.on_history_replaced(rows.into_iter().map(RowRecord::from).collect());
         }
         Err(e) => report_error(sink, format!("could not load session messages: {e}")),
+    }
+}
+
+/// Segments `markdown` fresh (no diffing/state) and maps each segment to a
+/// `RowRecord` — the same building blocks `pi_core::backend::Transcript::
+/// flush_stream` uses for Slint's live 33ms flush, minus the index-aligned
+/// `set`/`truncate` bookkeeping that only makes sense against an imperative,
+/// addressable row model. Swift instead fully replaces its `streamingRows`
+/// array on every throttled call, so a plain fresh `Vec` is all this needs
+/// to produce. `i == 0` mirrors `flush_stream`'s own `first` flag (only the
+/// first segment of a streaming region counts as a message's lead row).
+fn preview_rows(markdown: &str, dark: bool) -> Vec<RowRecord> {
+    pi_render::segmenter::segment_markdown(markdown)
+        .iter()
+        .enumerate()
+        .map(|(i, seg)| RowRecord::from(pi_render::spec_for_segment(seg, i == 0, dark, markdown)))
+        .collect()
+}
+
+#[cfg(test)]
+mod preview_rows_tests {
+    use super::preview_rows;
+
+    #[test]
+    fn empty_markdown_yields_no_rows() {
+        assert!(preview_rows("", true).is_empty());
+    }
+
+    #[test]
+    fn unclosed_fence_streams_as_a_code_row() {
+        let rows = preview_rows("Look:\n\n```python\nprint('hi')\nx = ", true);
+        assert_eq!(
+            rows.iter().map(|r| r.kind.as_str()).collect::<Vec<_>>(),
+            vec!["prose", "code"]
+        );
+        assert_eq!(rows[1].lang, "python");
+        assert!(rows[1].text.contains("print('hi')"));
+    }
+
+    #[test]
+    fn only_the_first_segment_is_flagged_first() {
+        let rows = preview_rows("# Heading\n\nSome prose.", true);
+        assert_eq!(rows.len(), 2);
+        assert!(rows[0].first);
+        assert!(!rows[1].first);
+    }
+
+    #[test]
+    fn growing_buffer_yields_more_rows() {
+        let first = preview_rows("# Heading", true);
+        let second = preview_rows("# Heading\n\nMore text arrives.", true);
+        assert_eq!(first.len(), 1);
+        assert_eq!(second.len(), 2);
     }
 }
 
