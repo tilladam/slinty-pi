@@ -9,6 +9,7 @@ struct SidebarView: View {
 
     @State private var isRenaming = false
     @State private var renameText = ""
+    @State private var showModels = false
 
     var body: some View {
         List(model.sessions, id: \.path) { session in
@@ -49,6 +50,15 @@ struct SidebarView: View {
                 }
                 .help("Switch to a different project directory")
             }
+            ToolbarItem {
+                Button {
+                    showModels = true
+                } label: {
+                    Label("Models", systemImage: "cpu")
+                }
+                .help("Browse and manage local models")
+                .keyboardShortcut("m")
+            }
         }
         .alert("Rename Session", isPresented: $isRenaming) {
             TextField("Name", text: $renameText)
@@ -56,6 +66,9 @@ struct SidebarView: View {
             Button("Rename") {
                 Task { await model.renameActiveSession(to: renameText) }
             }
+        }
+        .sheet(isPresented: $showModels) {
+            ModelsPanelView(model: model)
         }
     }
 
