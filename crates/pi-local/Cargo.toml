@@ -11,7 +11,13 @@ serde_json = { workspace = true, features = ["preserve_order"] }
 thiserror.workspace = true
 tokio.workspace = true
 reqwest = { version = "0.13.4", default-features = false, features = ["json", "rustls", "stream", "query"] }
-sysinfo = "0.39.6"
+# Only the memory-stats API `system_fit.rs` uses — the default feature set
+# (specifically its macOS `users` enumeration code) references Apple's
+# OpenDirectory framework, which a Rust staticlib doesn't declare a link
+# requirement for the way a `cargo build` binary does; Xcode's own linker
+# then can't resolve those symbols when linking PiCoreFFI.xcframework. Not
+# needed anyway — `SystemMemory` only reads memory, never users.
+sysinfo = { version = "0.39.6", default-features = false, features = ["system"] }
 
 [dev-dependencies]
 tempfile = "3.27.0"

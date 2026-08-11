@@ -33,8 +33,17 @@ final class AppModel: ChatSink {
     private(set) var projects: [ProjectRecord] = []
     private(set) var sessions: [SessionRecord] = []
 
+    // MARK: - Models panel (SW4)
+
+    private(set) var rapidMlxPanel: RapidMlxPanelRecord?
+    private(set) var routerPanel: RouterPanelRecord?
+    private(set) var ollamaPanel: OllamaPanelRecord?
+    private(set) var authEntries: [String] = []
+    private(set) var hfResults: [HfResultRecord] = []
+
     private var session: PiSession?
     private let sessionIndex = SessionIndex()
+    private let localModels = LocalModelIndex()
 
     init() {
         currentProject = Self.loadLastProject()
@@ -162,6 +171,112 @@ final class AppModel: ChatSink {
             try await session.switchSession(path: path)
         } catch {
             statusMessage = "Could not switch session: \(error)"
+        }
+    }
+
+    // MARK: - Models panel: browsing (pull-based, same shape as the sidebar)
+
+    /// Refreshes all four sections concurrently. Kept as one call for the
+    /// panel's "open" moment; `loadRouterModel`/`unloadRouterModel`/
+    /// `downloadHfModel`'s own polling only ever re-fetches the router
+    /// section on its own — collecting rapid-mlx state shells out to the
+    /// CLI a handful of times, which a router-only poll tick must not
+    /// repeat (see `LocalModelIndex`'s doc comment).
+    func refreshModelsPanel() async {
+        async let rapidMlx = localModels.refreshRapidMlxPanel()
+        async let router = localModels.refreshRouterPanel()
+        async let ollama = localModels.refreshOllamaPanel()
+        async let auth = localModels.refreshAuthEntries()
+        rapidMlxPanel = await rapidMlx
+        routerPanel = await router
+        ollamaPanel = await ollama
+        authEntries = await auth
+    }
+
+    // MARK: - Models panel: actions
+
+    /// (Re)spawns a managed rapid-mlx server and makes it pi's active model
+    /// — the one local-model action that goes through `PiSession`, not
+    /// `LocalModelIndex` (see `PiSession.serveRapidMlxModel`'s doc comment).
+    func serveRapidMlx(alias: String) async {
+        guard let session else { return }
+        do {
+            try await session.serveRapidMlxModel(alias: alias)
+            await refreshModelsPanel()
+        } catch {
+            statusMessage = "Could not serve \(alias): \(error)"
+        }
+    }
+
+    func loadRouterModel(id: String) async {
+        do {
+            try await localModels.startLoadRouterModel(id: id)
+        } catch {
+            statusMessage = "Could not load \(id): \(error)"
+            return
+        }
+        await pollRouterUntilIdle()
+    }
+
+    func unloadRouterModel(id: String) async {
+        do {
+            try await localModels.startUnloadRouterModel(id: id)
+        } catch {
+            statusMessage = "Could not unload \(id): \(error)"
+        }
+        await pollRouterUntilIdle()
+    }
+
+    /// `model` is `"owner/repo:quant"`, as built by `HfSearchView`'s quant
+    /// chips.
+    func downloadHfModel(_ model: String) async {
+        do {
+            try await localModels.startDownloadRouterModel(model: model)
+        } catch {
+            statusMessage = "Could not start download of \(model): \(error)"
+            return
+        }
+        await pollRouterUntilIdle()
+    }
+
+    func searchHfModels(query: String) async {
+        do {
+            hfResults = try await localModels.searchHfModels(query: query)
+        } catch {
+            statusMessage = "Hugging Face search failed: \(error)"
+            hfResults = []
+        }
+    }
+
+    func addOllamaToPi() async {
+        do {
+            try await localModels.addOllamaToPi()
+        } catch {
+            statusMessage = "Could not add Ollama models: \(error)"
+        }
+    }
+
+    func saveApiKey(provider: String, key: String) async {
+        do {
+            try await localModels.saveApiKey(provider: provider, key: key)
+            authEntries = await localModels.refreshAuthEntries()
+        } catch {
+            statusMessage = "Could not save API key: \(error)"
+        }
+    }
+
+    /// Polls the router section every 500ms until nothing is loading/
+    /// downloading, or 120s elapse — the Swift-side counterpart to
+    /// `pi_core::backend::poll_router_until_idle`, deliberately not ported
+    /// as a blocking Rust call (see `LocalModelIndex.startLoadRouterModel`'s
+    /// doc comment).
+    private func pollRouterUntilIdle() async {
+        let deadline = Date().addingTimeInterval(120)
+        while true {
+            routerPanel = await localModels.refreshRouterPanel()
+            let busy = routerPanel?.models.contains(where: { $0.busy }) ?? false
+            guard busy, Date() < deadline else { return }
+            try? await Task.sleep(for: .milliseconds(500))
         }
     }
 
