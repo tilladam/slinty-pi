@@ -1313,6 +1313,99 @@ impl Sidebar {
     }
 }
 
+#[cfg(test)]
+mod sidebar_tests {
+    use super::*;
+    use crate::recording_ui_sink::{RecordingUiSink, UiEvent};
+
+    fn sidebar_rows(sink: &RecordingUiSink) -> Vec<(String, String, String, bool, String)> {
+        sink.events()
+            .into_iter()
+            .find_map(|e| match e {
+                UiEvent::SetSidebarSessions(rows) => Some(rows),
+                _ => None,
+            })
+            .expect("set_sidebar_sessions was called")
+    }
+
+    #[test]
+    fn no_project_selected_yields_an_empty_sidebar() {
+        let sidebar = Sidebar::new();
+        let sink = RecordingUiSink::new();
+        sidebar.refresh_sessions_with_active(None, &sink);
+        assert_eq!(sidebar_rows(&sink), Vec::new());
+    }
+
+    #[test]
+    fn lists_both_fixture_sessions_with_none_active_when_active_is_unset() {
+        let tmp = tempfile::tempdir().unwrap();
+        let demo = demo_sessions::setup_at(tmp.path().to_path_buf());
+        let sidebar = Sidebar {
+            sessions_root: Some(demo.sessions_root),
+            meta_cache: pi_sessions::MetaCache::new(),
+            cwd: Some(demo.cwd),
+            query: String::new(),
+            other_projects: Vec::new(),
+        };
+        let sink = RecordingUiSink::new();
+        sidebar.refresh_sessions_with_active(None, &sink);
+        let rows = sidebar_rows(&sink);
+        assert_eq!(rows.len(), 2);
+        assert!(rows.iter().all(|(_, _, _, active, _)| !active));
+    }
+
+    #[test]
+    fn marks_the_matching_row_active_without_synthesizing_one() {
+        let tmp = tempfile::tempdir().unwrap();
+        let demo = demo_sessions::setup_at(tmp.path().to_path_buf());
+        let dir = pi_sessions::project_session_dir(&demo.sessions_root, &demo.cwd);
+        let existing = pi_sessions::list_sessions(&dir).unwrap()[0]
+            .path
+            .to_string_lossy()
+            .into_owned();
+        let sidebar = Sidebar {
+            sessions_root: Some(demo.sessions_root),
+            meta_cache: pi_sessions::MetaCache::new(),
+            cwd: Some(demo.cwd),
+            query: String::new(),
+            other_projects: Vec::new(),
+        };
+        let sink = RecordingUiSink::new();
+        sidebar.refresh_sessions_with_active(Some(&existing), &sink);
+        let rows = sidebar_rows(&sink);
+        assert_eq!(rows.len(), 2, "no extra row synthesized");
+        let active_rows: Vec<_> = rows.iter().filter(|(_, _, _, active, _)| *active).collect();
+        assert_eq!(active_rows.len(), 1);
+        assert_eq!(active_rows[0].0, existing);
+    }
+
+    /// pi doesn't write a session's file until its first message, so a
+    /// brand-new session's path isn't in `list_sessions` yet — the sidebar
+    /// must still show it, synthesized from the active path `get_state`
+    /// reported, or "where you are" silently disappears (see the doc comment
+    /// on `refresh_sessions_with_active`).
+    #[test]
+    fn synthesizes_a_row_for_an_active_session_not_yet_on_disk() {
+        let tmp = tempfile::tempdir().unwrap();
+        let demo = demo_sessions::setup_at(tmp.path().to_path_buf());
+        let sidebar = Sidebar {
+            sessions_root: Some(demo.sessions_root),
+            meta_cache: pi_sessions::MetaCache::new(),
+            cwd: Some(demo.cwd),
+            query: String::new(),
+            other_projects: Vec::new(),
+        };
+        let sink = RecordingUiSink::new();
+        let brand_new = "/does/not/exist/on/disk.jsonl";
+        sidebar.refresh_sessions_with_active(Some(brand_new), &sink);
+        let rows = sidebar_rows(&sink);
+        assert_eq!(rows.len(), 3, "2 fixture sessions + 1 synthesized");
+        assert_eq!(rows[0].0, brand_new);
+        assert_eq!(rows[0].1, "New session");
+        assert!(rows[0].3, "synthesized row is marked active");
+    }
+}
+
 /// pi's `sessionFile` from `get_state`, or `None` if it can't be fetched.
 async fn active_session_path(client: &PiClient) -> Option<String> {
     client
@@ -3659,6 +3752,30 @@ fn format_tokens(n: u64) -> String {
         format!("{:.1}k", n as f64 / 1_000.0)
     } else {
         n.to_string()
+    }
+}
+
+#[cfg(test)]
+mod format_tokens_tests {
+    use super::format_tokens;
+
+    #[test]
+    fn below_one_thousand_is_a_bare_integer() {
+        assert_eq!(format_tokens(0), "0");
+        assert_eq!(format_tokens(999), "999");
+    }
+
+    #[test]
+    fn thousands_get_a_k_suffix() {
+        assert_eq!(format_tokens(1_000), "1.0k");
+        assert_eq!(format_tokens(48_000), "48.0k");
+        assert_eq!(format_tokens(999_499), "999.5k");
+    }
+
+    #[test]
+    fn millions_get_an_m_suffix() {
+        assert_eq!(format_tokens(1_000_000), "1.0M");
+        assert_eq!(format_tokens(2_500_000), "2.5M");
     }
 }
 

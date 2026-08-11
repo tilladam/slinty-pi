@@ -27,7 +27,9 @@ pub fn setup() -> DemoProject {
 /// Same as [`setup`], but writes into an arbitrary `sessions_root` instead of
 /// the shared demo-mode path — lets tests use their own isolated temp
 /// directory rather than racing each other over the fixed production one.
-fn setup_at(sessions_root: PathBuf) -> DemoProject {
+/// `pub(crate)` so `backend`'s `Sidebar` tests can reuse the same known-good
+/// fixtures instead of hand-writing session files.
+pub(crate) fn setup_at(sessions_root: PathBuf) -> DemoProject {
     let cwd = PathBuf::from("/demo/slinty-pi");
     let dir = pi_sessions::project_session_dir(&sessions_root, &cwd);
     let _ = std::fs::create_dir_all(&dir);
