@@ -4,11 +4,13 @@
 //! `docs/session-format.md` in pi-coding-agent for the on-disk schema this
 //! is built against.
 
+mod rows;
 mod scan;
 mod tree;
 pub mod types;
 mod watch;
 
+pub use rows::{sidebar_rows, SidebarRow};
 pub use scan::{
     decode_project_dir, default_sessions_root, encode_project_dir, list_projects, list_sessions,
     parse_meta, project_session_dir, search, MetaCache, Project, SessionMeta,
