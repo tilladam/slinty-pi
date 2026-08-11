@@ -9,6 +9,8 @@
 # build (two `cargo build --target`s + `lipo`, or multiple `-library` entries
 # on `-create-xcframework`) is scoped to a later milestone once the FFI
 # surface has stabilized — see docs/plans/SW1-ffi-spike-and-chat-window.md.
+. ~/.cargo/env
+
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
