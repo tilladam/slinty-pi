@@ -15,6 +15,7 @@
 //! to `@MainActor` on every callback, the same responsibility
 //! `Weak::upgrade_in_event_loop` discharges on the Slint side.
 
+mod row;
 mod session_index;
 
 use std::path::PathBuf;
@@ -24,6 +25,7 @@ use std::time::Duration;
 use pi_rpc::{AssistantMessageEvent, Event, PiClient, PiError, PiOptions};
 use tokio::sync::{mpsc, oneshot};
 
+pub use row::{CodeLineRecord, ColoredSpanRecord, RowRecord, TableCellRecord};
 pub use session_index::{ProjectRecord, SessionIndex, SessionRecord};
 
 uniffi::setup_scaffolding!();

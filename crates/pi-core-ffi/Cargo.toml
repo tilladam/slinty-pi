@@ -15,6 +15,7 @@ crate-type = ["staticlib", "cdylib", "lib"]
 [dependencies]
 pi-rpc = { path = "../pi-rpc" }
 pi-sessions = { path = "../pi-sessions" }
+pi-render = { path = "../pi-render" }
 tokio.workspace = true
 thiserror.workspace = true
 tracing.workspace = true

@@ -4168,6 +4168,7 @@ dependencies = [
 name = "pi-core-ffi"
 version = "0.1.0"
 dependencies = [
+ "pi-render",
  "pi-rpc",
  "pi-sessions",
  "serde_json",
