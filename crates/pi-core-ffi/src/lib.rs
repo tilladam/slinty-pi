@@ -15,6 +15,7 @@
 //! `Weak::upgrade_in_event_loop` discharges on the Slint side.
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use pi_rpc::{AssistantMessageEvent, Event, PiClient, PiError, PiOptions};
 use tokio::sync::mpsc;
@@ -74,6 +75,28 @@ impl PiSession {
         })
     }
 
+    /// A synthetic session that never spawns `pi`: every `send` streams a
+    /// short canned reply through the same `ChatSink` callbacks a real
+    /// session uses, at roughly the same cadence. Mirrors `SLINTY_DEMO=1`'s
+    /// role for the Slint app — demoable without `pi` installed, and a
+    /// display-less perf/frame-rate check independent of a live model.
+    ///
+    /// Deliberately its own small synthetic streamer rather than reusing
+    /// `pi_core::backend::demo_backend`: that function drives a `UiSink`
+    /// (`RowSpec`s, session hydration, model panels — the full surface this
+    /// crate's `ChatSink` intentionally doesn't expose yet, see the crate
+    /// doc comment), so there's nothing for it to plug into here.
+    #[uniffi::constructor]
+    pub fn new_demo(sink: Arc<dyn ChatSink>) -> Self {
+        let runtime = tokio::runtime::Runtime::new().expect("tokio runtime for demo session");
+        let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
+        runtime.spawn(run_demo(cmd_rx, sink));
+        Self {
+            cmd_tx,
+            _runtime: runtime,
+        }
+    }
+
     /// Send a prompt. Fire-and-forget: errors surface via
     /// `ChatSink::on_error`, not a return value, matching this crate's
     /// push-based design.
@@ -124,6 +147,62 @@ async fn run(
     }
 }
 
+const DEMO_REPLY: &str =
+    "Hello from demo mode — this reply is synthetic, streamed without spawning pi.";
+const DEMO_CHUNK_CHARS: usize = 5;
+const DEMO_CHUNK_DELAY: Duration = Duration::from_millis(60);
+
+/// Synthetic counterpart to [`run`]: never touches a real `PiClient`, just
+/// streams [`DEMO_REPLY`] in small chunks through the same `ChatSink`
+/// callbacks on every `Send`, abortable mid-stream like the real path.
+async fn run_demo(mut cmd_rx: mpsc::UnboundedReceiver<ChatCmd>, sink: Arc<dyn ChatSink>) {
+    while let Some(cmd) = cmd_rx.recv().await {
+        let ChatCmd::Send(_) = cmd else {
+            continue; // Abort with nothing streaming is a no-op.
+        };
+        sink.on_streaming_changed(true);
+        let mut aborted = false;
+        for chunk in chunks(DEMO_REPLY, DEMO_CHUNK_CHARS) {
+            tokio::select! {
+                _ = tokio::time::sleep(DEMO_CHUNK_DELAY) => {
+                    sink.on_text_delta(chunk.to_string());
+                }
+                next = cmd_rx.recv() => {
+                    if matches!(next, Some(ChatCmd::Abort) | None) {
+                        aborted = true;
+                        break;
+                    }
+                }
+            }
+        }
+        if !aborted {
+            sink.on_turn_end();
+        }
+        sink.on_streaming_changed(false);
+    }
+}
+
+/// Split into ~n-char chunks on char boundaries (crude token simulation) —
+/// same shape as `pi_core::backend`'s demo chunker, reimplemented here since
+/// this crate doesn't depend on pi-core (see the crate doc comment).
+fn chunks(s: &str, n: usize) -> Vec<&str> {
+    let mut out = Vec::new();
+    let mut start = 0;
+    let mut count = 0;
+    for (i, _) in s.char_indices() {
+        if count == n {
+            out.push(&s[start..i]);
+            start = i;
+            count = 0;
+        }
+        count += 1;
+    }
+    if start < s.len() {
+        out.push(&s[start..]);
+    }
+    out
+}
+
 fn apply(event: &Event, sink: &dyn ChatSink) {
     match event {
         Event::AgentStart => sink.on_streaming_changed(true),
@@ -146,13 +225,16 @@ fn describe(e: &PiError) -> String {
 }
 
 #[cfg(test)]
-mod apply_tests {
-    use super::*;
+mod test_support {
+    use super::ChatSink;
     use std::sync::Mutex;
 
+    /// Records every `ChatSink` call as a short tagged string, in order —
+    /// shared by `apply_tests` (synchronous, one event at a time) and
+    /// `run_demo_tests` (a real streamed sequence).
     #[derive(Default)]
-    struct RecordingSink {
-        events: Mutex<Vec<String>>,
+    pub struct RecordingSink {
+        pub events: Mutex<Vec<String>>,
     }
 
     impl ChatSink for RecordingSink {
@@ -172,6 +254,12 @@ mod apply_tests {
             self.events.lock().unwrap().push(format!("error:{message}"));
         }
     }
+}
+
+#[cfg(test)]
+mod apply_tests {
+    use super::test_support::RecordingSink;
+    use super::*;
 
     fn mk_delta(delta: AssistantMessageEvent) -> Event {
         Event::MessageUpdate {
@@ -248,5 +336,65 @@ mod apply_tests {
         let sink = RecordingSink::default();
         apply(&Event::TurnStart, &sink);
         assert!(sink.events.lock().unwrap().is_empty());
+    }
+}
+
+#[cfg(test)]
+mod run_demo_tests {
+    use super::test_support::RecordingSink;
+    use super::*;
+
+    #[tokio::test]
+    async fn a_send_streams_the_full_reply_then_settles() {
+        let sink = Arc::new(RecordingSink::default());
+        let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
+        let demo = tokio::spawn(run_demo(cmd_rx, sink.clone()));
+        cmd_tx.send(ChatCmd::Send("hi".to_string())).unwrap();
+        // A closed *and empty* command channel makes the inner select's
+        // `cmd_rx.recv()` branch resolve immediately (there's nothing left
+        // to wait for), which run_demo treats the same as an explicit Abort
+        // — so the sender must outlive the whole reply, not just the Send.
+        // Real-time wait (not paused time): the full reply is well under a
+        // second at DEMO_CHUNK_DELAY's cadence, so a generous fixed margin
+        // keeps this simple and doesn't depend on paused-time/spawned-task
+        // interaction subtleties.
+        tokio::time::sleep(Duration::from_secs(3)).await;
+        drop(cmd_tx);
+        demo.await.unwrap();
+
+        let events = sink.events.lock().unwrap();
+        assert_eq!(events.first(), Some(&"streaming:true".to_string()));
+        assert_eq!(events.last(), Some(&"streaming:false".to_string()));
+        assert_eq!(
+            events[events.len() - 2],
+            "turn_end",
+            "turn_end fires before the final streaming:false"
+        );
+        let reassembled: String = events[1..events.len() - 2]
+            .iter()
+            .map(|e| e.strip_prefix("delta:").expect("only deltas in between"))
+            .collect();
+        assert_eq!(reassembled, DEMO_REPLY);
+    }
+
+    #[tokio::test]
+    async fn abort_mid_stream_stops_before_turn_end() {
+        let sink = Arc::new(RecordingSink::default());
+        let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
+        let demo = tokio::spawn(run_demo(cmd_rx, sink.clone()));
+        cmd_tx.send(ChatCmd::Send("hi".to_string())).unwrap();
+        // Give the first chunk's sleep a moment to be in-flight, then abort
+        // before the reply finishes streaming.
+        tokio::time::sleep(DEMO_CHUNK_DELAY / 2).await;
+        cmd_tx.send(ChatCmd::Abort).unwrap();
+        drop(cmd_tx);
+        demo.await.unwrap();
+
+        let events = sink.events.lock().unwrap();
+        assert!(
+            !events.contains(&"turn_end".to_string()),
+            "aborted streams never fire turn_end: {events:?}"
+        );
+        assert_eq!(events.last(), Some(&"streaming:false".to_string()));
     }
 }

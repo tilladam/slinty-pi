@@ -20,10 +20,16 @@ final class ChatViewModel: ChatSink {
 
     private var session: PiSession?
 
-    /// Spawns the `pi` child. Safe to call more than once; only the first
-    /// call does anything.
+    /// Spawns the `pi` child, or — with `PI_MAC_DEMO` set in the
+    /// environment — starts a synthetic session that streams a canned reply
+    /// without `pi` installed (mirrors `SLINTY_DEMO=1` for the Slint app).
+    /// Safe to call more than once; only the first call does anything.
     func start() {
         guard session == nil else { return }
+        if ProcessInfo.processInfo.environment["PI_MAC_DEMO"] != nil {
+            session = PiSession.newDemo(sink: self)
+            return
+        }
         do {
             session = try PiSession(sink: self)
         } catch {
