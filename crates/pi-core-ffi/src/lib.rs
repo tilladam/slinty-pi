@@ -1,13 +1,16 @@
 //! UniFFI boundary for the SwiftUI app: a chat session over `pi --mode rpc`,
-//! session/project browsing, and (SW3) history hydration/rendering, exposed
-//! to Swift.
+//! session/project browsing, history hydration/rendering (SW3), and (SW4)
+//! local-model browsing/management, exposed to Swift.
 //!
 //! `ChatSink` stays smaller than `pi_core::backend`'s full `UiSink` (no
-//! local-model/palette/tree surface — SW4+ scope), but as of SW3 it does
-//! push rendered rows: `pi-render` (the same crate `pi-core` uses for its
-//! Slint live-streaming path) turns a `get_messages` payload into
-//! `RowSpec`s, mirrored across FFI as `RowRecord`. See the SW3 milestone in
-//! the project's swiftui-branch plan for the rendering-strategy rationale.
+//! palette/tree surface), but pushes rendered rows: `pi-render` (the same
+//! crate `pi-core` uses for its Slint live-streaming path) turns a
+//! `get_messages` payload into `RowSpec`s, mirrored across FFI as
+//! `RowRecord`. See the SW3 milestone in the project's swiftui-branch plan
+//! for the rendering-strategy rationale. `LocalModelIndex` similarly reuses
+//! `pi-local` (the same crate `pi-core` uses for rapid-mlx/router/HF/Ollama/
+//! auth) rather than reimplementing that HTTP/CLI/file-I/O logic — see the
+//! SW4 milestone.
 //!
 //! Threading contract mirrors `pi_core::backend::UiSink`: `ChatSink` methods
 //! are `Send + Sync`, fire-and-forget, called from a tokio worker thread
@@ -15,6 +18,7 @@
 //! to `@MainActor` on every callback, the same responsibility
 //! `Weak::upgrade_in_event_loop` discharges on the Slint side.
 
+mod local_models;
 mod row;
 mod session_index;
 
@@ -26,6 +30,10 @@ use std::time::Duration;
 use pi_rpc::{AssistantMessageEvent, Event, PiClient, PiError, PiOptions};
 use tokio::sync::{mpsc, oneshot};
 
+pub use local_models::{
+    CachedModelRecord, HfResultRecord, LocalModelError, LocalModelIndex, OllamaPanelRecord,
+    RapidMlxPanelRecord, RouterModelRecord, RouterPanelRecord,
+};
 pub use row::{CodeLineRecord, ColoredSpanRecord, RowRecord, TableCellRecord};
 pub use session_index::{ProjectRecord, SessionIndex, SessionRecord};
 
