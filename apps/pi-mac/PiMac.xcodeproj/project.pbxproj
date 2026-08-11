@@ -1,0 +1,294 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 56;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		3FC1ECF2E681672FAF38C165 /* PiMacApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 86A91C1D0EE958145E2B7FBA /* PiMacApp.swift */; };
+		8CE91CE85E1166BA5C71413E /* ChatView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 482A0F1669E6FF6A90545385 /* ChatView.swift */; };
+		2D06D85C5242C590D955182D /* ChatViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = CB136EEEBB2354FB5BA2BC65 /* ChatViewModel.swift */; };
+		0A8DA7080FAA59C0D5752069 /* pi_core_ffi.swift in Sources */ = {isa = PBXBuildFile; fileRef = 93A97F54DA13BD6180002DDA /* pi_core_ffi.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		86A91C1D0EE958145E2B7FBA /* PiMacApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PiMacApp.swift; sourceTree = "<group>"; };
+		482A0F1669E6FF6A90545385 /* ChatView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatView.swift; sourceTree = "<group>"; };
+		CB136EEEBB2354FB5BA2BC65 /* ChatViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatViewModel.swift; sourceTree = "<group>"; };
+		93A97F54DA13BD6180002DDA /* pi_core_ffi.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = pi_core_ffi.swift; sourceTree = "<group>"; };
+		7C900BB47408588774DEFB3C /* PiMac.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = PiMac.app; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		2741511154683F1FA4E32C95 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		64F8AD7375A6A3115432CD58 = {
+			isa = PBXGroup;
+			children = (
+				09FA3BFEBFF069601860B32C /* PiMac */,
+				CD84DED7F3B7594D511F9F3A /* Generated */,
+				7EACED0FD2F85297E2F26AD9 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		09FA3BFEBFF069601860B32C /* PiMac */ = {
+			isa = PBXGroup;
+			children = (
+				86A91C1D0EE958145E2B7FBA /* PiMacApp.swift */,
+				482A0F1669E6FF6A90545385 /* ChatView.swift */,
+				CB136EEEBB2354FB5BA2BC65 /* ChatViewModel.swift */,
+			);
+			path = PiMac;
+			sourceTree = "<group>";
+		};
+		CD84DED7F3B7594D511F9F3A /* Generated */ = {
+			isa = PBXGroup;
+			children = (
+				93A97F54DA13BD6180002DDA /* pi_core_ffi.swift */,
+			);
+			path = Generated;
+			sourceTree = "<group>";
+		};
+		7EACED0FD2F85297E2F26AD9 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				7C900BB47408588774DEFB3C /* PiMac.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		F7CA60D3B56377D71471E126 /* PiMac */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = BD20BB8D0001FF81A321FA91 /* Build configuration list for PBXNativeTarget "PiMac" */;
+			buildPhases = (
+				09A8E3A0AC25A331B2EAAE62 /* Build pi-core-ffi (Rust) */,
+				51C74968BACA86CCDE237810 /* Sources */,
+				2741511154683F1FA4E32C95 /* Frameworks */,
+				200400FC6D67E0625EF17E54 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = PiMac;
+			productName = PiMac;
+			productReference = 7C900BB47408588774DEFB3C /* PiMac.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		7EAF24DB5EBFFD43878E1EE1 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 1600;
+				LastUpgradeCheck = 1600;
+			};
+			buildConfigurationList = 3FA0B2D80D7C6B5CFE1C93DC /* Build configuration list for PBXProject "PiMac" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = 64F8AD7375A6A3115432CD58;
+			productRefGroup = 7EACED0FD2F85297E2F26AD9 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				F7CA60D3B56377D71471E126 /* PiMac */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		200400FC6D67E0625EF17E54 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		09A8E3A0AC25A331B2EAAE62 /* Build pi-core-ffi (Rust) */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputPaths = (
+			);
+			name = "Build pi-core-ffi (Rust)";
+			outputPaths = (
+				"$(SRCROOT)/Generated/pi_core_ffi.swift",
+				"$(SRCROOT)/PiCoreFFI.xcframework/macos-arm64/libpi_core_ffi.a",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "\"$SRCROOT/scripts/build-rust.sh\"\n";
+			showEnvVarsInLog = 0;
+		};
+/* End PBXShellScriptBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		51C74968BACA86CCDE237810 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				3FC1ECF2E681672FAF38C165 /* PiMacApp.swift in Sources */,
+				8CE91CE85E1166BA5C71413E /* ChatView.swift in Sources */,
+				2D06D85C5242C590D955182D /* ChatViewModel.swift in Sources */,
+				0A8DA7080FAA59C0D5752069 /* pi_core_ffi.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		1CCF2C690B0BD3E34773C6B8 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = macosx;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 6.0;
+			};
+			name = Debug;
+		};
+		2BFAE51FC70C8101A56F0580 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				SDKROOT = macosx;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_VERSION = 6.0;
+			};
+			name = Release;
+		};
+		CB1E33954A90A89048807CA2 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_GENERATE_ASSET_SYMBOLS = NO;
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				INFOPLIST_KEY_NSPrincipalClass = NSApplication;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				LIBRARY_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(SRCROOT)/PiCoreFFI.xcframework/macos-arm64",
+				);
+				MARKETING_VERSION = 0.1;
+				OTHER_LDFLAGS = (
+					"$(inherited)",
+					"-lpi_core_ffi",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "dev.slinty-pi.pi-mac";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_INCLUDE_PATHS = "$(SRCROOT)/Generated/Headers";
+			};
+			name = Debug;
+		};
+		FFD51CB15B27D397E8275562 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_GENERATE_ASSET_SYMBOLS = NO;
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				INFOPLIST_KEY_NSPrincipalClass = NSApplication;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				LIBRARY_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(SRCROOT)/PiCoreFFI.xcframework/macos-arm64",
+				);
+				MARKETING_VERSION = 0.1;
+				OTHER_LDFLAGS = (
+					"$(inherited)",
+					"-lpi_core_ffi",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "dev.slinty-pi.pi-mac";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_INCLUDE_PATHS = "$(SRCROOT)/Generated/Headers";
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		3FA0B2D80D7C6B5CFE1C93DC /* Build configuration list for PBXProject "PiMac" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				1CCF2C690B0BD3E34773C6B8 /* Debug */,
+				2BFAE51FC70C8101A56F0580 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		BD20BB8D0001FF81A321FA91 /* Build configuration list for PBXNativeTarget "PiMac" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				CB1E33954A90A89048807CA2 /* Debug */,
+				FFD51CB15B27D397E8275562 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 7EAF24DB5EBFFD43878E1EE1 /* Project object */;
+}
