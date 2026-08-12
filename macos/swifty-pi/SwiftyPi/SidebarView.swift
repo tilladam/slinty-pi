@@ -38,9 +38,18 @@ struct SidebarView: View {
         .safeAreaInset(edge: .bottom) {
             VStack(spacing: 0) {
                 Divider()
-                modelPicker
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
+                HStack(spacing: 8) {
+                    modelPicker
+                    // Hidden entirely below 2 levels, matching app.slint's
+                    // `thinking-list.length > 1` gate — most models offer
+                    // just one (or no) thinking level, so this stays out of
+                    // the way for those; modelPicker alone then fills the row.
+                    if model.thinkingLevels.count > 1 {
+                        thinkingLevelPicker
+                    }
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
             }
         }
         .toolbar {
@@ -137,6 +146,7 @@ struct SidebarView: View {
         .menuIndicator(.hidden)
         .disabled(model.models.isEmpty)
         .help(currentModelLabel)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var currentModelLabel: String {
@@ -147,6 +157,36 @@ struct SidebarView: View {
         model.models.sorted {
             $0.label.localizedStandardCompare($1.label) == .orderedAscending
         }
+    }
+
+    /// The active thinking-level picker (SW8) — same `Menu`/checkmark-
+    /// prefix/offset-keyed shape as `modelPicker` (see its doc comment for
+    /// the reasoning), just for the model's currently-available thinking
+    /// levels instead of the model list itself.
+    private var thinkingLevelPicker: some View {
+        Menu {
+            ForEach(Array(model.thinkingLevels.enumerated()), id: \.offset) { _, entry in
+                Button {
+                    Task { await model.setThinkingLevel(entry.level) }
+                } label: {
+                    Text(entry.isCurrent ? "✓ \(entry.label)" : entry.label)
+                }
+            }
+        } label: {
+            HStack {
+                Image(systemName: "brain")
+                Text(currentThinkingLabel)
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+            }
+        }
+        .menuIndicator(.hidden)
+        .help(currentThinkingLabel)
+        .fixedSize()
+    }
+
+    private var currentThinkingLabel: String {
+        model.thinkingLevels.first(where: \.isCurrent)?.label ?? "Choose thinking level"
     }
 }
 

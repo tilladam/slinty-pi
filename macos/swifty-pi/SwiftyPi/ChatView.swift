@@ -57,8 +57,6 @@ struct ChatView: View {
 
             Divider()
 
-            statusBar
-
             HStack(alignment: .bottom, spacing: 8) {
                 TextField("Message pi…", text: $draft, axis: .vertical)
                     .textFieldStyle(.plain)
@@ -83,6 +81,8 @@ struct ChatView: View {
                 }
             }
             .padding(12)
+
+            statusBar
         }
         .frame(minWidth: 480, minHeight: 360)
         .navigationTitle(model.projectDisplayName)
@@ -164,7 +164,13 @@ struct ChatView: View {
     }
 
     private var statusBar: some View {
-        HStack {
+        HStack(spacing: 6) {
+            if let stats = model.sessionStats {
+                usageRing(percent: stats.contextPercent)
+                Text("\(stats.tokensLabel) tok · $\(String(format: "%.4f", stats.cost))")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
             Spacer()
             if let statusMessage = model.statusMessage {
                 Text(statusMessage)
@@ -175,6 +181,27 @@ struct ChatView: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 6)
+    }
+
+    /// Session context-usage ring (SW8) — a clockwise-from-12-o'clock
+    /// partial circle mirroring `app.slint`'s donut, turning red past 85%
+    /// full. `percent` is 0-100 (confirmed against a real
+    /// `get_session_stats()` response via `spike_check --thinking`, e.g.
+    /// `context_percent=1.46` early in a session — not a 0-1 fraction).
+    private func usageRing(percent: Float) -> some View {
+        let fraction = CGFloat(min(max(percent / 100, 0), 1))
+        return ZStack {
+            Circle()
+                .stroke(Color.secondary.opacity(0.25), lineWidth: 2)
+            Circle()
+                .trim(from: 0, to: fraction)
+                .stroke(
+                    percent > 85 ? Color.red : Color.accentColor,
+                    style: StrokeStyle(lineWidth: 2, lineCap: .round)
+                )
+                .rotationEffect(.degrees(-90))
+        }
+        .frame(width: 12, height: 12)
     }
 
     /// Status-bar health dot for the active model's local server (SW6) —

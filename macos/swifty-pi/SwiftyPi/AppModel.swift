@@ -101,6 +101,15 @@ final class AppModel: ChatSink {
     /// re-fetch off of.
     private(set) var serverDot: ServerDotState = .hidden
 
+    // MARK: - Thinking-level picker + session stats (SW8)
+
+    /// Pull-based, mirroring `models` exactly: re-fetched after session
+    /// start and after `setModel` (available levels differ per model).
+    private(set) var thinkingLevels: [ThinkingLevelRecord] = []
+    /// Pushed (`onSessionStatsChanged`) — no natural user action to hang a
+    /// re-fetch off of, mirroring `serverDot`.
+    private(set) var sessionStats: SessionStatsRecord?
+
     private var session: PiSession?
     private let sessionIndex = SessionIndex()
     private let localModels = LocalModelIndex()
@@ -176,6 +185,7 @@ final class AppModel: ChatSink {
         }
         Task { await refreshSidebar() }
         Task { await refreshModels() }
+        Task { await refreshThinkingLevels() }
     }
 
     /// Called once at startup and again on every `colorScheme` change.
@@ -393,8 +403,35 @@ final class AppModel: ChatSink {
         do {
             try await session.setModel(provider: provider, modelId: modelId)
             await refreshModels()
+            // Available thinking levels differ per model — mirrors
+            // pi_core::backend's own SetModel -> refresh_thinking sequence.
+            await refreshThinkingLevels()
         } catch {
             setStatus("Could not switch model: \(error)")
+        }
+    }
+
+    // MARK: - Thinking-level picker: browsing + actions
+
+    /// Pull, mirroring `refreshModels`'s shape exactly.
+    func refreshThinkingLevels() async {
+        guard let session else { return }
+        do {
+            thinkingLevels = try await session.refreshThinkingLevels()
+        } catch {
+            setStatus("Could not list thinking levels: \(error)")
+        }
+    }
+
+    /// Switches pi's active thinking level, then refreshes so the new
+    /// selection's checkmark is correct — mirrors `setModel`.
+    func setThinkingLevel(_ level: ThinkingLevelKind) async {
+        guard let session else { return }
+        do {
+            try await session.setThinkingLevel(level: level)
+            await refreshThinkingLevels()
+        } catch {
+            setStatus("Could not switch thinking level: \(error)")
         }
     }
 
@@ -547,6 +584,12 @@ final class AppModel: ChatSink {
     nonisolated func onServerDotChanged(state: ServerDotState) {
         Task { @MainActor in
             self.serverDot = state
+        }
+    }
+
+    nonisolated func onSessionStatsChanged(stats: SessionStatsRecord) {
+        Task { @MainActor in
+            self.sessionStats = stats
         }
     }
 

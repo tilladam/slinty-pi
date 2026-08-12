@@ -24,6 +24,7 @@ mod local_models;
 mod models;
 mod row;
 mod session_index;
+mod thinking;
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -41,6 +42,7 @@ pub use local_models::{
 pub use models::{ModelRecord, ServerDotState};
 pub use row::{CodeLineRecord, ColoredSpanRecord, RowRecord, TableCellRecord};
 pub use session_index::{ProjectRecord, SessionIndex, SessionRecord};
+pub use thinking::{SessionStatsRecord, ThinkingLevelKind, ThinkingLevelRecord};
 
 uniffi::setup_scaffolding!();
 
@@ -129,6 +131,13 @@ pub trait ChatSink: Send + Sync {
     /// `tool_call_id` — multiple calls can be live at once. Same
     /// no-"removed"-signal contract as `on_thinking_row_changed`.
     fn on_tool_row_changed(&self, id: String, row: RowRecord);
+    /// Session-size/cost snapshot (SW8), pushed once inside
+    /// `hydrate_and_push` — which already runs after every session-changing
+    /// hydration (resume, `switch_session`) *and* after every turn settles
+    /// (`Event::AgentSettled` calls it too), so this one call site covers
+    /// every trigger `pi_core::backend::update_stats` has, with no need for
+    /// a second push site.
+    fn on_session_stats_changed(&self, stats: SessionStatsRecord);
 }
 
 #[derive(Debug, thiserror::Error, uniffi::Error)]
@@ -195,6 +204,17 @@ enum ChatCmd {
     SetModel {
         provider: String,
         model_id: String,
+        reply: oneshot::Sender<Result<(), String>>,
+    },
+    /// `GetAvailableThinkingLevels` + `GetState`, re-fetched fresh every
+    /// call — same pull-based shape as `RefreshModels`.
+    RefreshThinkingLevels {
+        reply: oneshot::Sender<Result<Vec<ThinkingLevelRecord>, String>>,
+    },
+    /// The thinking-level picker's "switch level" action:
+    /// `client.set_thinking_level(...)`.
+    SetThinkingLevel {
+        level: ThinkingLevelKind,
         reply: oneshot::Sender<Result<(), String>>,
     },
 }
@@ -417,6 +437,33 @@ impl PiSession {
             reply,
         })
         .await
+    }
+
+    /// Lists pi's currently-available thinking levels with picker-ready
+    /// labels, flagging whichever one pi's `GetState` reports as active.
+    /// Pull-based, same shape as `refresh_models` — call again after
+    /// session start and after `set_model` (available levels differ per
+    /// model).
+    pub async fn refresh_thinking_levels(
+        &self,
+    ) -> Result<Vec<ThinkingLevelRecord>, PiSessionError> {
+        let (reply_tx, reply_rx) = oneshot::channel();
+        let _ = self
+            .cmd_tx
+            .send(ChatCmd::RefreshThinkingLevels { reply: reply_tx });
+        reply_rx
+            .await
+            .map_err(|_| PiSessionError::Action("session task ended".to_string()))?
+            .map_err(PiSessionError::Action)
+    }
+
+    /// Switches pi's active thinking level. Mirrors `set_model`'s
+    /// fire-then-Swift-refetches pattern: the caller is expected to call
+    /// `refresh_thinking_levels` again afterward to pick up the new
+    /// `is_current` flag, rather than this method returning it directly.
+    pub async fn set_thinking_level(&self, level: ThinkingLevelKind) -> Result<(), PiSessionError> {
+        self.call(|reply| ChatCmd::SetThinkingLevel { level, reply })
+            .await
     }
 
     /// Richly-renders `markdown` (typically the in-flight streaming buffer)
@@ -666,6 +713,20 @@ async fn run(
                             }
                         }
                     }
+                    Some(ChatCmd::RefreshThinkingLevels { reply }) => {
+                        let records = thinking::refresh_thinking_levels(&client).await;
+                        let _ = reply.send(Ok(records));
+                    }
+                    Some(ChatCmd::SetThinkingLevel { level, reply }) => {
+                        match client.set_thinking_level(level.into()).await {
+                            Ok(()) => {
+                                let _ = reply.send(Ok(()));
+                            }
+                            Err(e) => {
+                                let _ = reply.send(Err(describe(&e)));
+                            }
+                        }
+                    }
                     None => return,
                 }
             }
@@ -742,6 +803,14 @@ async fn hydrate_and_push(client: &PiClient, sink: &dyn ChatSink, dark: &AtomicB
             sink.on_history_replaced(rows.into_iter().map(RowRecord::from).collect());
         }
         Err(e) => report_error(sink, format!("could not load session messages: {e}")),
+    }
+    // SW8: this single call site already covers every trigger
+    // `pi_core::backend::update_stats` has — launch-time resume,
+    // `switch_session`, and every `AgentSettled` (whose handler in `run()`
+    // calls this function as its first line) — see `ChatSink::
+    // on_session_stats_changed`'s doc comment.
+    if let Some(stats) = thinking::fetch_session_stats(client).await {
+        sink.on_session_stats_changed(stats);
     }
 }
 
@@ -922,6 +991,12 @@ fn reply_demo_action(cmd: ChatCmd, sink: &dyn ChatSink) {
             // consistent with `demo_models`'s synthetic entries never
             // reporting `is_local`.
             sink.on_server_dot_changed(ServerDotState::Hidden);
+            let _ = reply.send(Ok(()));
+        }
+        ChatCmd::RefreshThinkingLevels { reply } => {
+            let _ = reply.send(Ok(Vec::new())); // no thinking levels in demo mode
+        }
+        ChatCmd::SetThinkingLevel { reply, .. } => {
             let _ = reply.send(Ok(()));
         }
         ChatCmd::Send(_) | ChatCmd::Abort => {
@@ -1202,7 +1277,7 @@ mod merge_path_vars_tests {
 
 #[cfg(test)]
 pub(crate) mod test_support {
-    use super::{ChatSink, ExtensionDialogRecord, RowRecord, ServerDotState};
+    use super::{ChatSink, ExtensionDialogRecord, RowRecord, ServerDotState, SessionStatsRecord};
     use std::sync::Mutex;
 
     /// Records every `ChatSink` call as a short tagged string, in order —
@@ -1263,6 +1338,12 @@ pub(crate) mod test_support {
             self.events.lock().unwrap().push(format!(
                 "tool_row:{id}:running={}:{}",
                 row.running, row.text
+            ));
+        }
+        fn on_session_stats_changed(&self, stats: SessionStatsRecord) {
+            self.events.lock().unwrap().push(format!(
+                "session_stats:{}:{}:{}",
+                stats.tokens_label, stats.cost, stats.context_percent
             ));
         }
     }

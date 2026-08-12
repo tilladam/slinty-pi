@@ -1,6 +1,6 @@
 use pi_core_ffi::{
     ChatSink, ExtensionDialogRecord, ExtensionDialogReply, LocalModelIndex, PiSession, RowRecord,
-    ServerDotState,
+    ServerDotState, SessionStatsRecord,
 };
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -59,6 +59,12 @@ impl ChatSink for PrintSink {
             row.running, row.elapsed, row.text
         );
     }
+    fn on_session_stats_changed(&self, stats: SessionStatsRecord) {
+        eprintln!(
+            "session_stats_changed: tokens={} cost={} context_percent={}",
+            stats.tokens_label, stats.cost, stats.context_percent
+        );
+    }
 }
 
 /// Manual verification for the real-`pi` acceptance points no Swift-side
@@ -71,6 +77,7 @@ impl ChatSink for PrintSink {
 ///   cargo run -p pi-core-ffi --example spike_check -- models    # LocalModelIndex refresh/search (SW4)
 ///   cargo run -p pi-core-ffi --example spike_check -- dialogs   # extension-UI dialog round trip (SW5)
 ///   cargo run -p pi-core-ffi --example spike_check -- live      # live thinking/tool-call preview (SW7)
+///   cargo run -p pi-core-ffi --example spike_check -- thinking  # thinking-level list/set + stats fetch (SW8)
 ///
 /// The `dialogs` mode is tolerant of no gating extension being installed
 /// (it just times out with a note, rather than failing) — real coverage
@@ -357,6 +364,42 @@ fn main() {
                  with running=true before the (eventual) running=false, i.e. it was visible \
                  while the turn was still in flight, not just after ---"
             );
+        }
+        Some("thinking") => {
+            let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
+            rt.block_on(async {
+                eprintln!("--- session.refresh_thinking_levels() ---");
+                let levels = session
+                    .refresh_thinking_levels()
+                    .await
+                    .expect("refresh_thinking_levels failed");
+                eprintln!("thinking levels: {} entries", levels.len());
+                for l in &levels {
+                    eprintln!("  {}{}", if l.is_current { "* " } else { "  " }, l.label);
+                }
+                if let Some(current) = levels.iter().find(|l| l.is_current) {
+                    eprintln!(
+                        "--- session.set_thinking_level() re-selecting the current level ---"
+                    );
+                    session
+                        .set_thinking_level(current.level)
+                        .await
+                        .expect("set_thinking_level failed");
+                    eprintln!("set_thinking_level ok — no hang");
+                } else {
+                    eprintln!(
+                        "no thinking levels reported (or none matched GetState) — skipping \
+                         set_thinking_level round trip"
+                    );
+                }
+            });
+            eprintln!(
+                "--- sending a prompt so a real turn settles, watching for \
+                 session_stats_changed (SW8) — see PrintSink's eprintln output above for the \
+                 actual snapshot pushed via hydrate_and_push ---"
+            );
+            session.send("say hi in exactly 3 words".to_string());
+            std::thread::sleep(Duration::from_secs(15));
         }
         _ => {
             eprintln!("PiSession created, sending prompt");
