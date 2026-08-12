@@ -1,12 +1,15 @@
-use pi_core_ffi::{ChatSink, LocalModelIndex, PiSession, RowRecord};
+use pi_core_ffi::{
+    ChatSink, ExtensionDialogRecord, ExtensionDialogReply, LocalModelIndex, PiSession, RowRecord,
+};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 struct PrintSink {
     chars_received: AtomicUsize,
     active_session: Mutex<Option<String>>,
     last_history: Mutex<Vec<RowRecord>>,
+    dialogs: Mutex<Vec<ExtensionDialogRecord>>,
 }
 
 impl ChatSink for PrintSink {
@@ -33,6 +36,13 @@ impl ChatSink for PrintSink {
         eprintln!("history_replaced: {} rows, kinds={kinds:?}", rows.len());
         *self.last_history.lock().unwrap() = rows;
     }
+    fn on_extension_dialog(&self, request: ExtensionDialogRecord) {
+        eprintln!(
+            "extension_dialog: method={} id={} title={:?} message={:?}",
+            request.method, request.id, request.title, request.message
+        );
+        self.dialogs.lock().unwrap().push(request);
+    }
 }
 
 /// Manual verification for the real-`pi` acceptance points no Swift-side
@@ -43,6 +53,12 @@ impl ChatSink for PrintSink {
 ///   cargo run -p pi-core-ffi --example spike_check -- sessions  # new/rename/delete session
 ///   cargo run -p pi-core-ffi --example spike_check -- history   # settle + switch_session hydration (SW3)
 ///   cargo run -p pi-core-ffi --example spike_check -- models    # LocalModelIndex refresh/search (SW4)
+///   cargo run -p pi-core-ffi --example spike_check -- dialogs   # extension-UI dialog round trip (SW5)
+///
+/// The `dialogs` mode is tolerant of no gating extension being installed
+/// (it just times out with a note, rather than failing) — real coverage
+/// depends on whatever's actually installed under `~/.pi/agent/extensions/`
+/// on the machine running it, same posture as the `models` mode below.
 ///
 /// The `models` mode's rapid-mlx/router/Ollama checks are tolerant of the
 /// underlying tool not being installed/running (matching this project's
@@ -72,6 +88,7 @@ fn main() {
         chars_received: AtomicUsize::new(0),
         active_session: Mutex::new(None),
         last_history: Mutex::new(Vec::new()),
+        dialogs: Mutex::new(Vec::new()),
     });
     let cwd = std::env::current_dir()
         .expect("current dir")
@@ -239,6 +256,44 @@ fn main() {
                     first.id, first.gated, first.downloads, first.quants
                 );
             });
+        }
+        Some("dialogs") => {
+            eprintln!(
+                "--- sending a bash command likely to trigger an installed gating extension ---"
+            );
+            session.send("Run the bash command: echo spike-check-dialog-verification".to_string());
+            let deadline = Instant::now() + Duration::from_secs(30);
+            loop {
+                let dialog = sink.dialogs.lock().unwrap().first().cloned();
+                match dialog {
+                    Some(dialog) => {
+                        eprintln!(
+                            "--- extension dialog observed: method={} id={} ---",
+                            dialog.method, dialog.id
+                        );
+                        assert!(
+                            matches!(dialog.method.as_str(), "confirm" | "select"),
+                            "expected a confirm or select dialog, got {}",
+                            dialog.method
+                        );
+                        session.reply_extension_dialog(
+                            dialog.id.clone(),
+                            ExtensionDialogReply::Cancelled,
+                        );
+                        eprintln!("replied Cancelled to {} — no hang", dialog.id);
+                        break;
+                    }
+                    None if Instant::now() > deadline => {
+                        eprintln!(
+                            "no extension_ui_request observed within 30s — no gating extension \
+                             installed (or this command was already allow-listed); nothing to \
+                             verify"
+                        );
+                        break;
+                    }
+                    None => std::thread::sleep(Duration::from_millis(100)),
+                }
+            }
         }
         _ => {
             eprintln!("PiSession created, sending prompt");

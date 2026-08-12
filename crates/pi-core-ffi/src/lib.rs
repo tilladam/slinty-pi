@@ -18,6 +18,7 @@
 //! to `@MainActor` on every callback, the same responsibility
 //! `Weak::upgrade_in_event_loop` discharges on the Slint side.
 
+mod dialog;
 mod local_models;
 mod row;
 mod session_index;
@@ -30,6 +31,7 @@ use std::time::Duration;
 use pi_rpc::{AssistantMessageEvent, Event, PiClient, PiError, PiOptions};
 use tokio::sync::{mpsc, oneshot};
 
+pub use dialog::{ExtensionDialogRecord, ExtensionDialogReply};
 pub use local_models::{
     CachedModelRecord, HfResultRecord, LocalModelError, LocalModelIndex, OllamaPanelRecord,
     RapidMlxPanelRecord, RouterModelRecord, RouterPanelRecord,
@@ -89,6 +91,17 @@ pub trait ChatSink: Send + Sync {
     /// just-finalized turn in place of the plain-text streaming bubble
     /// `on_text_delta` built up during it.
     fn on_history_replaced(&self, rows: Vec<RowRecord>);
+    /// Fired for the four blocking extension-UI dialog kinds (`select`/
+    /// `confirm`/`input`/`editor`) — pi's sanctioned tool-call
+    /// permission-gating pattern (a `tool_call` extension + `confirm`/
+    /// `select` dialog) surfaces through this same callback, not a separate
+    /// protocol. Swift must eventually call `PiSession.
+    /// reply_extension_dialog` with this request's `id`, or the gated
+    /// extension call hangs until pi's own `timeout` (if any) elapses.
+    /// Fire-and-forget signals (`notify`, `setStatus`, `setWidget`,
+    /// `setTitle`, `set_editor_text`) are an explicit SW5 scope cut — not
+    /// delivered via this or any callback yet.
+    fn on_extension_dialog(&self, request: ExtensionDialogRecord);
 }
 
 #[derive(Debug, thiserror::Error, uniffi::Error)]
@@ -131,6 +144,14 @@ enum ChatCmd {
     ServeRapidMlxModel {
         alias: String,
         reply: oneshot::Sender<Result<(), String>>,
+    },
+    /// Fire-and-forget, unlike the reply-carrying variants above —
+    /// `PiClient::reply_extension_ui` is itself a non-blocking stdin write
+    /// with no correlated response line from pi, so there's nothing
+    /// meaningful to await (mirrors `Send`/`Abort`).
+    ReplyExtensionDialog {
+        request_id: String,
+        reply: ExtensionDialogReply,
     },
 }
 
@@ -240,6 +261,16 @@ impl PiSession {
 
     pub fn abort(&self) {
         let _ = self.cmd_tx.send(ChatCmd::Abort);
+    }
+
+    /// Answers a dialog delivered via `ChatSink::on_extension_dialog`.
+    /// Fire-and-forget, same shape as `send`/`abort` — see
+    /// `ChatCmd::ReplyExtensionDialog`'s doc comment for why there's no
+    /// meaningful result to await.
+    pub fn reply_extension_dialog(&self, request_id: String, reply: ExtensionDialogReply) {
+        let _ = self
+            .cmd_tx
+            .send(ChatCmd::ReplyExtensionDialog { request_id, reply });
     }
 
     /// Updates the theme `hydrate_and_push` highlights against on the next
@@ -515,6 +546,14 @@ async fn run(
                             }
                         }
                     }
+                    Some(ChatCmd::ReplyExtensionDialog { request_id, reply }) => {
+                        if let Err(e) = client.reply_extension_ui(&request_id, reply.into()) {
+                            report_error(
+                                sink.as_ref(),
+                                format!("could not reply to extension dialog: {e}"),
+                            );
+                        }
+                    }
                     None => return,
                 }
             }
@@ -742,6 +781,7 @@ fn reply_demo_action(cmd: ChatCmd, sink: &dyn ChatSink) {
         ChatCmd::ServeRapidMlxModel { reply, .. } => {
             let _ = reply.send(Ok(()));
         }
+        ChatCmd::ReplyExtensionDialog { .. } => {} // no-op: demo mode never emits dialogs
         ChatCmd::Send(_) | ChatCmd::Abort => {
             unreachable!("Send/Abort are handled by run_demo's own match arms")
         }
@@ -782,6 +822,22 @@ fn apply(event: &Event, sink: &dyn ChatSink) {
             assistant_message_event: AssistantMessageEvent::Error { reason },
             ..
         } if reason != "aborted" => report_error(sink, format!("model error: {reason}")),
+        Event::ExtensionUiRequest(req)
+            if matches!(
+                req.method.as_str(),
+                "select" | "confirm" | "input" | "editor"
+            ) =>
+        {
+            sink.on_extension_dialog(ExtensionDialogRecord::from(req.clone()));
+        }
+        // `notify`/`setStatus`/`setWidget`/`setTitle`/`set_editor_text` (and any future
+        // method) — explicit SW5 scope cut, not delivered anywhere yet. See the plan's
+        // Design section for why: these are fire-and-forget, non-dialog signals, out of
+        // scope for a milestone named "dialogs & permission gating."
+        Event::ExtensionUiRequest(_) => {}
+        Event::ExtensionError { error, .. } => {
+            report_error(sink, format!("extension error: {error}"))
+        }
         _ => {}
     }
 }
@@ -985,7 +1041,7 @@ mod merge_path_vars_tests {
 
 #[cfg(test)]
 mod test_support {
-    use super::{ChatSink, RowRecord};
+    use super::{ChatSink, ExtensionDialogRecord, RowRecord};
     use std::sync::Mutex;
 
     /// Records every `ChatSink` call as a short tagged string, in order —
@@ -1023,6 +1079,12 @@ mod test_support {
                 .lock()
                 .unwrap()
                 .push(format!("history_replaced:{}", rows.len()));
+        }
+        fn on_extension_dialog(&self, request: ExtensionDialogRecord) {
+            self.events.lock().unwrap().push(format!(
+                "extension_dialog:{}:{}",
+                request.method, request.id
+            ));
         }
     }
 }
@@ -1107,6 +1169,64 @@ mod apply_tests {
         let sink = RecordingSink::default();
         apply(&Event::TurnStart, &sink);
         assert!(sink.events.lock().unwrap().is_empty());
+    }
+
+    fn mk_dialog_request(method: &str) -> pi_rpc::ExtensionUiRequest {
+        pi_rpc::ExtensionUiRequest {
+            id: "req-1".to_string(),
+            method: method.to_string(),
+            title: None,
+            message: None,
+            options: None,
+            placeholder: None,
+            prefill: None,
+            timeout: None,
+            rest: serde_json::Map::new(),
+        }
+    }
+
+    #[test]
+    fn blocking_dialog_methods_reach_on_extension_dialog() {
+        for method in ["select", "confirm", "input", "editor"] {
+            let sink = RecordingSink::default();
+            apply(&Event::ExtensionUiRequest(mk_dialog_request(method)), &sink);
+            assert_eq!(
+                *sink.events.lock().unwrap(),
+                vec![format!("extension_dialog:{method}:req-1")]
+            );
+        }
+    }
+
+    #[test]
+    fn fire_and_forget_dialog_methods_are_dropped() {
+        for method in [
+            "notify",
+            "setStatus",
+            "setWidget",
+            "setTitle",
+            "set_editor_text",
+        ] {
+            let sink = RecordingSink::default();
+            apply(&Event::ExtensionUiRequest(mk_dialog_request(method)), &sink);
+            assert!(sink.events.lock().unwrap().is_empty(), "method={method}");
+        }
+    }
+
+    #[test]
+    fn extension_error_is_reported() {
+        let sink = RecordingSink::default();
+        apply(
+            &Event::ExtensionError {
+                extension_path: "some/ext".to_string(),
+                event: "tool_call".to_string(),
+                error: "boom".to_string(),
+            },
+            &sink,
+        );
+        assert_eq!(
+            *sink.events.lock().unwrap(),
+            vec!["error:extension error: boom".to_string()]
+        );
     }
 }
 
