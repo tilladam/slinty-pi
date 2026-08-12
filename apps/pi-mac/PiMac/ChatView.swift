@@ -124,9 +124,7 @@ struct ChatView: View {
             Circle()
                 .fill(model.isStreaming ? .green : .secondary)
                 .frame(width: 8, height: 8)
-            Text(model.isStreaming ? "streaming…" : "idle")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+                .help(model.isStreaming ? "Streaming" : "Idle")
             serverDotView
             Spacer()
             if let statusMessage = model.statusMessage {
@@ -150,6 +148,7 @@ struct ChatView: View {
             Circle()
                 .fill(color)
                 .frame(width: 8, height: 8)
+                .help(serverDotTooltip)
         }
     }
 
@@ -159,6 +158,15 @@ struct ChatView: View {
         case .ok: return Color(red: 0x43 / 255, green: 0xa0 / 255, blue: 0x47 / 255)
         case .down: return Color(red: 0xd3 / 255, green: 0x54 / 255, blue: 0x54 / 255)
         case .mismatch: return Color(red: 0xe2 / 255, green: 0xa5 / 255, blue: 0x3f / 255)
+        }
+    }
+
+    private var serverDotTooltip: String {
+        switch model.serverDot {
+        case .hidden: return ""
+        case .ok: return "Local model server is healthy"
+        case .down: return "Local model server is unreachable"
+        case .mismatch: return "Local model server is running a different model than pi expects"
         }
     }
 
