@@ -3263,6 +3263,163 @@ built in SW5) currently require clicking; this adds real keyboard shortcuts so t
 
 ---
 
+## Fix — Composer auto-focus + prompt history (Up/Down arrows)
+
+**Status: implemented and committed** (commit `ad7ada3`) — `@FocusState` on the composer
+`TextField`, set in `.onAppear`; Up/Down history recall with the approximated
+empty-field-or-already-navigating trigger (per direct follow-up, chosen over a custom
+AppKit-backed text view for true cursor-position detection). Clean `xcodebuild`; a real-run
+verification pass is pending confirmation from the user.
+
+**Goal:** asked directly — "can the initial focus when starting the app be in the input field?
+Also, I would like the up and down arrows to be able navigate through the history of prompts: if
+the cursor is at the beginning and user presses up, show previous prompt (save current unsubmitted
+prompt); if the cursor is at the end and user presses down, go to the next prompt if any." Two
+composer UX gaps: no keyboard focus on launch (every session starts requiring a click), and no way
+to recall previously-sent prompts.
+
+### Verified facts
+
+- **Auto-focus has a direct Slint precedent to port.** `crates/slinty-pi/ui/app.slint:643-645`
+  exposes `public function focus-input() { input.focus(); }`, called from
+  `crates/slinty-pi/src/main.rs:411` immediately before `app.run()?;` — and reused again at
+  `app.slint:604` to restore focus after the command palette closes. The Swift app has **no
+  `@FocusState` usage anywhere** (`grep -rn "FocusState" macos/swifty-pi/SwiftyPi/` — zero hits)
+  — this is new plumbing for Swift, but a direct, simple port of proven behavior.
+- **Prompt history has no Slint equivalent at all** — confirmed by exhaustive grep across
+  `app.slint`/`main.rs`/`backend.rs` for `history`-in-a-composer-recall sense and for
+  `Key.Up`/`Key.Down`/`UpArrow`/`DownArrow`: zero matches. The composer's only `key-pressed`
+  handler in Slint (`app.slint:895-901`) handles Return/Shift+Return only; `submit()`
+  (`app.slint:661-666`) sends and clears the input without storing the sent text anywhere. This is
+  genuinely new UX for this fix to design, not a port.
+- **SwiftUI's plain `TextField` on macOS 14 has no cursor-position access** — confirmed no way to
+  read selection/cursor location from the composer's current `TextField(text:axis:)` without
+  replacing it with a custom `NSViewRepresentable`-backed text view. Per direct follow-up, the
+  chosen design is the **approximated** trigger condition (empty field, or already mid-recall) —
+  not real cursor-position detection — keeping the composer as a plain `TextField`, no new AppKit
+  bridging component. `.onKeyPress(_:action:)` (SwiftUI 5 / macOS 14+, matching this app's
+  deployment target exactly) is the mechanism: it intercepts a key press on the focused view and
+  returns `.handled` (consume) or `.ignored` (pass through to normal `TextField` behavior, e.g.
+  real cursor movement within multi-line text).
+- **`macos/swifty-pi/SwiftyPi/ChatView.swift`** (354 lines) confirmed current — composer `HStack`
+  at lines 66-102 (paperclip attach button, then `TextField("Message pi…", text: $draft, axis:
+  .vertical)` at line 74, then Send/Abort); `send()` at lines 283-288 (trims `draft`, guards
+  non-empty, calls `model.send(prompt)`, resets `draft = ""` — the only place `draft` is reset
+  today). `draft: String` is `@State private var draft` local to `ChatView` (confirmed still true,
+  matches SW9/SW10's own findings) — the natural place for history state too, since this is purely
+  a composer-input UI concern, not core session state `AppModel` needs to know about.
+
+### Design
+
+- **Auto-focus**: new `@FocusState private var composerFocused: Bool` on `ChatView`, bound via
+  `.focused($composerFocused)` on the composer `TextField`, set `true` in a `.onAppear` on the
+  `TextField` itself (mirrors `focus-input()`'s "call it once, right when the composer exists"
+  timing without needing to thread anything through `AppModel`/`ContentView`).
+- **Prompt history** — new `@State` alongside `draft` in `ChatView`:
+  ```swift
+  @State private var promptHistory: [String] = []
+  @State private var historyOffset = 0   // 0 = not navigating; 1 = most recent; up to promptHistory.count
+  @State private var savedDraft = ""
+  @State private var isProgrammaticDraftChange = false
+  ```
+  Scoped to the view's lifetime (in-memory only, resets on app relaunch, persists across
+  project/session switches within the same launch) — the simplest reasonable default; not
+  persisted to disk, not scoped per-session, since none of that was asked for and it's easy to
+  narrow later if it turns out to matter.
+  - `send()` appends the sent prompt and resets navigation state:
+    ```swift
+    private func send() {
+        let prompt = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !prompt.isEmpty else { return }
+        model.send(prompt)
+        promptHistory.append(prompt)
+        historyOffset = 0
+        draft = ""
+    }
+    ```
+  - Two `.onKeyPress` modifiers on the composer `TextField`:
+    ```swift
+    .onKeyPress(.upArrow) {
+        guard draft.isEmpty || historyOffset > 0 else { return .ignored }
+        guard historyOffset < promptHistory.count else { return .handled }
+        if historyOffset == 0 { savedDraft = draft }
+        historyOffset += 1
+        setDraft(promptHistory[promptHistory.count - historyOffset])
+        return .handled
+    }
+    .onKeyPress(.downArrow) {
+        guard historyOffset > 0 else { return .ignored }
+        historyOffset -= 1
+        setDraft(historyOffset == 0 ? savedDraft : promptHistory[promptHistory.count - historyOffset])
+        return .handled
+    }
+    ```
+    The `draft.isEmpty || historyOffset > 0` guard is the approximated stand-in for "cursor at the
+    beginning" — Up only triggers recall when there's nothing to move a cursor through (empty) or
+    we're already navigating; any other Up press (real text present, not navigating) is `.ignored`
+    and falls through to the `TextField`'s normal cursor-up behavior. Down only ever triggers while
+    already navigating (`historyOffset > 0`), matching "only recall forward once you've recalled
+    backward" — a plain Down in normal typing is always `.ignored`.
+  - `setDraft(_:)` funnels every programmatic write through one place and flags it, so a new
+    `.onChange(of: draft)` can tell "we set this" apart from "the user typed," canceling history
+    navigation only on a real edit:
+    ```swift
+    private func setDraft(_ text: String) {
+        isProgrammaticDraftChange = true
+        draft = text
+    }
+    ```
+    ```swift
+    .onChange(of: draft) {
+        if isProgrammaticDraftChange {
+            isProgrammaticDraftChange = false
+        } else {
+            historyOffset = 0
+        }
+    }
+    ```
+    The existing `.onChange(of: model.pendingComposerAppend)`/`.onChange(of:
+    model.pendingComposerReplace)` handlers (SW9/SW10) already assign `draft` directly, not
+    through `setDraft` — that's correct as-is: an attach-triggered `@path` append or a fork-prefill
+    replace are real content changes, so letting them fall through to the new `.onChange(of:
+    draft)`'s "cancel history navigation" branch is exactly the right behavior, not a conflict to
+    special-case.
+
+### Work breakdown
+
+1. `ChatView.swift`: `@FocusState` + `.focused($composerFocused)` + `.onAppear { composerFocused =
+   true }` on the composer `TextField`.
+2. `ChatView.swift`: `promptHistory`/`historyOffset`/`savedDraft`/`isProgrammaticDraftChange`
+   state; `send()` gains the history-append + offset-reset; `setDraft(_:)` helper; the two
+   `.onKeyPress` modifiers; the new `.onChange(of: draft)` history-cancel handler.
+3. Verification (below).
+
+### Risks
+
+- The empty-field-or-already-navigating trigger is an approximation, not true cursor-position
+  detection — flagged directly to the user during planning as the trade-off for staying with a
+  plain `TextField` instead of a custom AppKit-backed text view; accepted per their explicit
+  choice. A cursor manually placed at position 0 within otherwise-present text won't trigger
+  recall (falls through to normal cursor-up movement instead) — an accepted, known gap, not an
+  oversight.
+- `.onKeyPress` is a comparatively new SwiftUI API (introduced alongside this app's exact
+  deployment target) — not yet exercised anywhere else in this codebase; confirm with a real
+  keypress during verification, not just a clean build, per this project's own established
+  lesson about typecheck/build not fully proving runtime behavior.
+
+### Acceptance criteria
+
+- Clean `xcodebuild -project SwiftyPi.xcodeproj -scheme SwiftyPi build`. Manual: launching the app
+  (or switching to a session) puts keyboard focus directly in the composer with no click needed;
+  sending a few prompts, then pressing Up from an empty composer recalls them most-recent-first,
+  Up again goes further back, Down goes forward and eventually restores whatever was typed (if
+  anything) before Up was first pressed; typing after a recall cancels navigation (a subsequent Up
+  starts a fresh recall from the most recent prompt again, not mid-list); Up/Down do nothing
+  unexpected while actively typing a non-empty, non-recalled draft (normal cursor movement, if any,
+  is unaffected).
+
+---
+
 ## Named-only follow-on scope (not planned in detail)
 
 - **Extension-UI fire-and-forget surface** (`notify`/`setStatus`/`setWidget`/`setTitle`/
