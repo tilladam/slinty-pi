@@ -110,6 +110,16 @@ final class AppModel: ChatSink {
     /// re-fetch off of, mirroring `serverDot`.
     private(set) var sessionStats: SessionStatsRecord?
 
+    // MARK: - Attachments (SW9)
+
+    /// Display names of images queued for the next prompt — pushed
+    /// (`onPendingAttachmentsChanged`), the composer's attachment-chip row.
+    private(set) var pendingAttachments: [String] = []
+    /// A non-image `attachPath` call's `@path` reference, pushed
+    /// (`onComposerAppend`) for `ChatView` to splice into its local
+    /// `draft` — see `consumePendingComposerAppend`.
+    private(set) var pendingComposerAppend: String?
+
     private var session: PiSession?
     private let sessionIndex = SessionIndex()
     private let localModels = LocalModelIndex()
@@ -200,6 +210,28 @@ final class AppModel: ChatSink {
         }
         transcript += transcript.isEmpty ? "> \(prompt)\n\n" : "\n\n> \(prompt)\n\n"
         session.send(prompt: prompt)
+    }
+
+    // MARK: - Attachments (SW9)
+
+    /// An image is queued (see `onPendingAttachmentsChanged`); anything
+    /// else pushes an `@path` reference (see `onComposerAppend`). Plain,
+    /// fire-and-forget — mirrors `PiSession.attachPath`'s own shape.
+    func attachPath(_ path: String) {
+        session?.attachPath(path: path)
+    }
+
+    /// Removes a queued image by its index in the chip row.
+    func removeAttachment(at index: Int) {
+        session?.removeAttachment(index: UInt32(index))
+    }
+
+    /// Reads and clears `pendingComposerAppend` in one call — avoids a
+    /// race between `ChatView` reading the value and clearing it across
+    /// separate steps.
+    func consumePendingComposerAppend() -> String? {
+        defer { pendingComposerAppend = nil }
+        return pendingComposerAppend
     }
 
     /// Also cancels any pending extension dialog(s) — a defensive,
@@ -590,6 +622,18 @@ final class AppModel: ChatSink {
     nonisolated func onSessionStatsChanged(stats: SessionStatsRecord) {
         Task { @MainActor in
             self.sessionStats = stats
+        }
+    }
+
+    nonisolated func onPendingAttachmentsChanged(names: [String]) {
+        Task { @MainActor in
+            self.pendingAttachments = names
+        }
+    }
+
+    nonisolated func onComposerAppend(text: String) {
+        Task { @MainActor in
+            self.pendingComposerAppend = text
         }
     }
 

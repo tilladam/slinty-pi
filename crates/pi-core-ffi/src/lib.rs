@@ -18,6 +18,7 @@
 //! to `@MainActor` on every callback, the same responsibility
 //! `Weak::upgrade_in_event_loop` discharges on the Slint side.
 
+mod attach;
 mod dialog;
 mod live_preview;
 mod local_models;
@@ -26,12 +27,12 @@ mod row;
 mod session_index;
 mod thinking;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
-use pi_rpc::{AssistantMessageEvent, Event, PiClient, PiError, PiOptions};
+use pi_rpc::{AssistantMessageEvent, Event, ImageContent, PiClient, PiError, PiOptions};
 use tokio::sync::{mpsc, oneshot};
 
 pub use dialog::{ExtensionDialogRecord, ExtensionDialogReply};
@@ -138,6 +139,17 @@ pub trait ChatSink: Send + Sync {
     /// every trigger `pi_core::backend::update_stats` has, with no need for
     /// a second push site.
     fn on_session_stats_changed(&self, stats: SessionStatsRecord);
+    /// Pushed after every `attach_path`/`remove_attachment` call with the
+    /// running list of queued image display names (SW9) — the composer's
+    /// attachment-chip row. Also cleared (empty `Vec`) right before a
+    /// `send` that consumes queued images.
+    fn on_pending_attachments_changed(&self, names: Vec<String>);
+    /// A non-image `attach_path` call pushes the path here (as an `@path`
+    /// reference) for Swift to splice into the composer's draft text — the
+    /// first concrete use of this "push text into the composer" pattern
+    /// (previously only a hypothetical during SW5's parked `set_editor_text`
+    /// research).
+    fn on_composer_append(&self, text: String);
 }
 
 #[derive(Debug, thiserror::Error, uniffi::Error)]
@@ -216,6 +228,17 @@ enum ChatCmd {
     SetThinkingLevel {
         level: ThinkingLevelKind,
         reply: oneshot::Sender<Result<(), String>>,
+    },
+    /// Fire-and-forget, matching `Send`/`Abort` — mirrors Slint's own
+    /// fire-and-forget `UiCmd::AttachPath`. Errors surface via `ChatSink::
+    /// on_error`, not a return value.
+    AttachPath {
+        path: String,
+    },
+    /// Fire-and-forget, matching `AttachPath` — mirrors `UiCmd::
+    /// RemoveAttachment`.
+    RemoveAttachment {
+        index: usize,
     },
 }
 
@@ -342,6 +365,23 @@ impl PiSession {
     /// and again on every `colorScheme` change.
     pub fn set_dark_mode(&self, dark: bool) {
         self.dark.store(dark, Ordering::Relaxed);
+    }
+
+    /// Attaches a file (picked or dropped) to the next prompt — an image
+    /// is queued (see `ChatSink::on_pending_attachments_changed`); anything
+    /// else pushes an `@path` reference via `ChatSink::on_composer_append`.
+    /// Fire-and-forget, same shape as `send`/`abort`.
+    pub fn attach_path(&self, path: String) {
+        let _ = self.cmd_tx.send(ChatCmd::AttachPath { path });
+    }
+
+    /// Removes a queued image attachment by its index in the chip row.
+    /// Fire-and-forget, same shape as `attach_path`. `u32`, not `usize` —
+    /// UniFFI doesn't export `usize`/`isize` directly.
+    pub fn remove_attachment(&self, index: u32) {
+        let _ = self.cmd_tx.send(ChatCmd::RemoveAttachment {
+            index: index as usize,
+        });
     }
 }
 
@@ -546,6 +586,9 @@ async fn run(
     let mut live_tools: std::collections::HashMap<String, live_preview::ToolRunState> =
         std::collections::HashMap::new();
     let mut thinking_seq: u64 = 0;
+    // Attachments queued for the next `Send` (SW9) — loop-scoped mutable
+    // local, same pattern as `managed_rapid_mlx`/`live_thinking` above.
+    let mut pending_images: Vec<(String, ImageContent)> = Vec::new();
     if let Some(path) = resume_session_path {
         match do_switch_session(&client, &path).await {
             Ok(()) => hydrate_and_push(&client, sink.as_ref(), &dark).await,
@@ -561,7 +604,19 @@ async fn run(
             cmd = cmd_rx.recv() => {
                 match cmd {
                     Some(ChatCmd::Send(text)) => {
-                        if let Err(e) = client.prompt(text).await {
+                        let images: Vec<ImageContent> = std::mem::take(&mut pending_images)
+                            .into_iter()
+                            .map(|(_, img)| img)
+                            .collect();
+                        if !images.is_empty() {
+                            sink.on_pending_attachments_changed(Vec::new());
+                        }
+                        let result = if images.is_empty() {
+                            client.prompt(text).await
+                        } else {
+                            client.prompt_with_images(text, images).await
+                        };
+                        if let Err(e) = result {
                             report_error(sink.as_ref(), describe(&e));
                         }
                     }
@@ -725,6 +780,18 @@ async fn run(
                             Err(e) => {
                                 let _ = reply.send(Err(describe(&e)));
                             }
+                        }
+                    }
+                    Some(ChatCmd::AttachPath { path }) => {
+                        attach::attach_path(&mut pending_images, Path::new(&path), sink.as_ref())
+                            .await;
+                    }
+                    Some(ChatCmd::RemoveAttachment { index }) => {
+                        if index < pending_images.len() {
+                            pending_images.remove(index);
+                            sink.on_pending_attachments_changed(
+                                pending_images.iter().map(|(n, _)| n.clone()).collect(),
+                            );
                         }
                     }
                     None => return,
@@ -999,6 +1066,8 @@ fn reply_demo_action(cmd: ChatCmd, sink: &dyn ChatSink) {
         ChatCmd::SetThinkingLevel { reply, .. } => {
             let _ = reply.send(Ok(()));
         }
+        ChatCmd::AttachPath { .. } => {} // no-op: demo mode has no real files to attach
+        ChatCmd::RemoveAttachment { .. } => {} // no-op: demo mode never queues attachments
         ChatCmd::Send(_) | ChatCmd::Abort => {
             unreachable!("Send/Abort are handled by run_demo's own match arms")
         }
@@ -1345,6 +1414,18 @@ pub(crate) mod test_support {
                 "session_stats:{}:{}:{}",
                 stats.tokens_label, stats.cost, stats.context_percent
             ));
+        }
+        fn on_pending_attachments_changed(&self, names: Vec<String>) {
+            self.events
+                .lock()
+                .unwrap()
+                .push(format!("pending_attachments:{names:?}"));
+        }
+        fn on_composer_append(&self, text: String) {
+            self.events
+                .lock()
+                .unwrap()
+                .push(format!("composer_append:{text}"));
         }
     }
 }

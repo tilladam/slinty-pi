@@ -11,6 +11,8 @@ struct PrintSink {
     active_session: Mutex<Option<String>>,
     last_history: Mutex<Vec<RowRecord>>,
     dialogs: Mutex<Vec<ExtensionDialogRecord>>,
+    pending_attachments: Mutex<Vec<String>>,
+    composer_appends: Mutex<Vec<String>>,
 }
 
 impl ChatSink for PrintSink {
@@ -65,6 +67,14 @@ impl ChatSink for PrintSink {
             stats.tokens_label, stats.cost, stats.context_percent
         );
     }
+    fn on_pending_attachments_changed(&self, names: Vec<String>) {
+        eprintln!("pending_attachments_changed: {names:?}");
+        *self.pending_attachments.lock().unwrap() = names;
+    }
+    fn on_composer_append(&self, text: String) {
+        eprintln!("composer_append: {text:?}");
+        self.composer_appends.lock().unwrap().push(text);
+    }
 }
 
 /// Manual verification for the real-`pi` acceptance points no Swift-side
@@ -78,6 +88,7 @@ impl ChatSink for PrintSink {
 ///   cargo run -p pi-core-ffi --example spike_check -- dialogs   # extension-UI dialog round trip (SW5)
 ///   cargo run -p pi-core-ffi --example spike_check -- live      # live thinking/tool-call preview (SW7)
 ///   cargo run -p pi-core-ffi --example spike_check -- thinking  # thinking-level list/set + stats fetch (SW8)
+///   cargo run -p pi-core-ffi --example spike_check -- attach    # attach-path round trip, image + non-image (SW9)
 ///
 /// The `dialogs` mode is tolerant of no gating extension being installed
 /// (it just times out with a note, rather than failing) — real coverage
@@ -115,6 +126,8 @@ fn main() {
         active_session: Mutex::new(None),
         last_history: Mutex::new(Vec::new()),
         dialogs: Mutex::new(Vec::new()),
+        pending_attachments: Mutex::new(Vec::new()),
+        composer_appends: Mutex::new(Vec::new()),
     });
     let cwd = std::env::current_dir()
         .expect("current dir")
@@ -400,6 +413,54 @@ fn main() {
             );
             session.send("say hi in exactly 3 words".to_string());
             std::thread::sleep(Duration::from_secs(15));
+        }
+        Some("attach") => {
+            let dir = std::env::temp_dir();
+
+            eprintln!("--- attach_path() on a fixture image ---");
+            let image_path = dir.join("spike-check-attach.png");
+            std::fs::write(&image_path, b"not a real png, just bytes to base64-encode")
+                .expect("write fixture image");
+            session.attach_path(image_path.display().to_string());
+            std::thread::sleep(Duration::from_secs(2));
+            let names = sink.pending_attachments.lock().unwrap().clone();
+            eprintln!("pending attachments after attach_path: {names:?}");
+            assert_eq!(
+                names,
+                vec!["spike-check-attach.png".to_string()],
+                "expected the fixture image's file name to appear as a pending attachment"
+            );
+
+            eprintln!("--- attach_path() on a non-image file (should append @path instead) ---");
+            let text_path = dir.join("spike-check-attach.txt");
+            std::fs::write(&text_path, b"not an image").expect("write fixture text file");
+            session.attach_path(text_path.display().to_string());
+            std::thread::sleep(Duration::from_secs(2));
+            let appends = sink.composer_appends.lock().unwrap().clone();
+            eprintln!("composer appends after non-image attach_path: {appends:?}");
+            assert_eq!(
+                appends,
+                vec![text_path.display().to_string()],
+                "expected the non-image path to be pushed via on_composer_append, unchanged"
+            );
+            // The non-image attach shouldn't have touched the image queue.
+            assert_eq!(sink.pending_attachments.lock().unwrap().clone(), names);
+
+            eprintln!(
+                "--- sending a prompt so the queued image attaches — watching for \
+                 pending_attachments_changed to clear (see PrintSink's eprintln output above) ---"
+            );
+            session.send("what's in the attached file? Reply in one sentence.".to_string());
+            std::thread::sleep(Duration::from_secs(15));
+            let names_after_send = sink.pending_attachments.lock().unwrap().clone();
+            eprintln!("pending attachments after send: {names_after_send:?}");
+            assert!(
+                names_after_send.is_empty(),
+                "expected the attachment queue to clear once consumed by send"
+            );
+
+            let _ = std::fs::remove_file(&image_path);
+            let _ = std::fs::remove_file(&text_path);
         }
         _ => {
             eprintln!("PiSession created, sending prompt");

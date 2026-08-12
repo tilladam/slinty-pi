@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// Chat detail pane: composer, a `RowRecord`-rendered transcript (rich
@@ -57,7 +58,18 @@ struct ChatView: View {
 
             Divider()
 
+            if !model.pendingAttachments.isEmpty {
+                attachmentChips
+            }
+
             HStack(alignment: .bottom, spacing: 8) {
+                Button {
+                    presentAttachPicker()
+                } label: {
+                    Image(systemName: "paperclip")
+                }
+                .help("Attach a file or image")
+
                 TextField("Message pi…", text: $draft, axis: .vertical)
                     .textFieldStyle(.plain)
                     .lineLimit(1...6)
@@ -81,8 +93,18 @@ struct ChatView: View {
                 }
             }
             .padding(12)
+            .dropDestination(for: URL.self) { urls, _ in
+                for url in urls {
+                    model.attachPath(url.path)
+                }
+                return true
+            }
 
             statusBar
+        }
+        .onChange(of: model.pendingComposerAppend) { _, newValue in
+            guard newValue != nil, let text = model.consumePendingComposerAppend() else { return }
+            draft += draft.isEmpty ? "@\(text)" : " @\(text)"
         }
         .frame(minWidth: 480, minHeight: 360)
         .navigationTitle(model.projectDisplayName)
@@ -243,6 +265,48 @@ struct ChatView: View {
         guard !prompt.isEmpty else { return }
         model.send(prompt)
         draft = ""
+    }
+
+    /// Queued-image chip row (SW9) — name + "×" per chip, mirroring
+    /// `app.slint`'s pending-attachments strip.
+    private var attachmentChips: some View {
+        HStack(spacing: 6) {
+            ForEach(Array(model.pendingAttachments.enumerated()), id: \.offset) { index, name in
+                HStack(spacing: 4) {
+                    Text(name)
+                        .font(.caption)
+                        .lineLimit(1)
+                    Button {
+                        model.removeAttachment(at: index)
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(.quaternary, in: RoundedRectangle(cornerRadius: 6))
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 12)
+        .padding(.top, 8)
+    }
+
+    /// Native multi-file picker for the paperclip button — images queue as
+    /// attachments, anything else appends an `@path` reference (see
+    /// `AppModel.attachPath`'s doc comment).
+    private func presentAttachPicker() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = false
+        panel.canChooseFiles = true
+        panel.allowsMultipleSelection = true
+        panel.prompt = "Attach"
+        guard panel.runModal() == .OK else { return }
+        for url in panel.urls {
+            model.attachPath(url.path)
+        }
     }
 }
 

@@ -17,6 +17,7 @@ pi-rpc = { path = "../pi-rpc" }
 pi-sessions = { path = "../pi-sessions" }
 pi-render = { path = "../pi-render" }
 pi-local = { path = "../pi-local" }
+base64 = "0.23.0"
 tokio.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
