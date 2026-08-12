@@ -58,6 +58,18 @@ final class AppModel: ChatSink {
     private(set) var authEntries: [String] = []
     private(set) var hfResults: [HfResultRecord] = []
 
+    // MARK: - Composer model picker + server dot (SW6)
+
+    /// Pull-based, same convention as `sessions`/`rapidMlxPanel`: re-fetched
+    /// after every action that could change model availability or
+    /// selection, not pushed. `models.first(where: \.isCurrent)` is the
+    /// composer picker's checkmarked entry.
+    private(set) var models: [ModelRecord] = []
+    /// The one piece of model state that *is* pushed (`onServerDotChanged`)
+    /// — a 5-second-polled value with no natural user action to hang a
+    /// re-fetch off of.
+    private(set) var serverDot: ServerDotState = .hidden
+
     private var session: PiSession?
     private let sessionIndex = SessionIndex()
     private let localModels = LocalModelIndex()
@@ -114,6 +126,7 @@ final class AppModel: ChatSink {
             }
         }
         Task { await refreshSidebar() }
+        Task { await refreshModels() }
     }
 
     /// Called once at startup and again on every `colorScheme` change.
@@ -256,6 +269,7 @@ final class AppModel: ChatSink {
         do {
             try await session.serveRapidMlxModel(alias: alias)
             await refreshModelsPanel()
+            await refreshModels()
         } catch {
             setStatus("Could not serve \(alias): \(error)")
         }
@@ -269,6 +283,7 @@ final class AppModel: ChatSink {
             return
         }
         await pollRouterUntilIdle()
+        await refreshModels()
     }
 
     func unloadRouterModel(id: String) async {
@@ -278,6 +293,7 @@ final class AppModel: ChatSink {
             setStatus("Could not unload \(id): \(error)")
         }
         await pollRouterUntilIdle()
+        await refreshModels()
     }
 
     /// `model` is `"owner/repo:quant"`, as built by `HfSearchView`'s quant
@@ -290,6 +306,34 @@ final class AppModel: ChatSink {
             return
         }
         await pollRouterUntilIdle()
+        await refreshModels()
+    }
+
+    // MARK: - Composer model picker: browsing + actions
+
+    /// Pull, mirroring `refreshModelsPanel`'s shape: `GetAvailableModels` +
+    /// `GetState` re-fetched fresh every call (see `pi-core-ffi`'s
+    /// `refresh_models_and_state`), not incrementally patched.
+    func refreshModels() async {
+        guard let session else { return }
+        do {
+            models = try await session.refreshModels()
+        } catch {
+            setStatus("Could not list models: \(error)")
+        }
+    }
+
+    /// Switches pi's active model, then refreshes so the new selection's
+    /// checkmark is correct — action-then-refetch, this app's established
+    /// pattern (e.g. `serveRapidMlx`).
+    func setModel(provider: String, modelId: String) async {
+        guard let session else { return }
+        do {
+            try await session.setModel(provider: provider, modelId: modelId)
+            await refreshModels()
+        } catch {
+            setStatus("Could not switch model: \(error)")
+        }
     }
 
     func searchHfModels(query: String) async {
@@ -419,6 +463,12 @@ final class AppModel: ChatSink {
     nonisolated func onExtensionDialog(request: ExtensionDialogRecord) {
         Task { @MainActor in
             self.pendingDialogs.append(request)
+        }
+    }
+
+    nonisolated func onServerDotChanged(state: ServerDotState) {
+        Task { @MainActor in
+            self.serverDot = state
         }
     }
 

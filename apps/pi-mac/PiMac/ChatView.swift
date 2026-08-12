@@ -39,6 +39,8 @@ struct ChatView: View {
             statusBar
 
             HStack(alignment: .bottom, spacing: 8) {
+                modelPicker
+
                 TextField("Message pi…", text: $draft, axis: .vertical)
                     .textFieldStyle(.plain)
                     .lineLimit(1...6)
@@ -64,6 +66,31 @@ struct ChatView: View {
         .extensionDialogs(model: model)
     }
 
+    /// The composer's "current active model" picker (SW6) — checkmarks
+    /// `isCurrent`, each row switching via `AppModel.setModel`. A `Menu`
+    /// (not `Picker`) since per-row action closures need no separate
+    /// `@State` selection binding kept in sync with `isCurrent`.
+    private var modelPicker: some View {
+        Menu {
+            ForEach(model.models, id: \.id) { entry in
+                Button {
+                    Task { await model.setModel(provider: entry.provider, modelId: entry.id) }
+                } label: {
+                    if entry.isCurrent {
+                        Label(entry.label, systemImage: "checkmark")
+                    } else {
+                        Text(entry.label)
+                    }
+                }
+            }
+        } label: {
+            Image(systemName: "cpu")
+        }
+        .menuIndicator(.hidden)
+        .disabled(model.models.isEmpty)
+        .help(model.models.first(where: \.isCurrent)?.label ?? "Choose a model")
+    }
+
     private var statusBar: some View {
         HStack {
             Circle()
@@ -72,6 +99,7 @@ struct ChatView: View {
             Text(model.isStreaming ? "streaming…" : "idle")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+            serverDotView
             Spacer()
             if let statusMessage = model.statusMessage {
                 Text(statusMessage)
@@ -82,6 +110,28 @@ struct ChatView: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 6)
+    }
+
+    /// Status-bar health dot for the active model's local server (SW6) —
+    /// mirrors `app.slint`'s server-dot color semantics exactly (green/red/
+    /// amber), hidden entirely for `.hidden` (cloud models, or no model
+    /// resolved yet).
+    @ViewBuilder
+    private var serverDotView: some View {
+        if let color = serverDotColor {
+            Circle()
+                .fill(color)
+                .frame(width: 8, height: 8)
+        }
+    }
+
+    private var serverDotColor: Color? {
+        switch model.serverDot {
+        case .hidden: return nil
+        case .ok: return Color(red: 0x43 / 255, green: 0xa0 / 255, blue: 0x47 / 255)
+        case .down: return Color(red: 0xd3 / 255, green: 0x54 / 255, blue: 0x54 / 255)
+        case .mismatch: return Color(red: 0xe2 / 255, green: 0xa5 / 255, blue: 0x3f / 255)
+        }
     }
 
     private func send() {
