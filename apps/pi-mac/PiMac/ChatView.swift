@@ -61,6 +61,7 @@ struct ChatView: View {
         }
         .frame(minWidth: 480, minHeight: 360)
         .navigationTitle(model.activeSessionPath == nil ? "New Session" : "pi")
+        .extensionDialogs(model: model)
     }
 
     private var statusBar: some View {

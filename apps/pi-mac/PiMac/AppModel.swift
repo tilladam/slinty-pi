@@ -40,6 +40,16 @@ final class AppModel: ChatSink {
     private(set) var projects: [ProjectRecord] = []
     private(set) var sessions: [SessionRecord] = []
 
+    // MARK: - Extension-UI dialogs (SW5)
+
+    /// FIFO queue of unanswered `select`/`confirm`/`input`/`editor` dialog
+    /// requests — pi's sanctioned tool-call permission-gating pattern (a
+    /// `tool_call` extension + `confirm`/`select` dialog) surfaces through
+    /// this same queue, not a separate one. `currentDialog` is the only one
+    /// ever shown; `replyToCurrentDialog` pops it once answered.
+    private(set) var pendingDialogs: [ExtensionDialogRecord] = []
+    var currentDialog: ExtensionDialogRecord? { pendingDialogs.first }
+
     // MARK: - Models panel (SW4)
 
     private(set) var rapidMlxPanel: RapidMlxPanelRecord?
@@ -120,8 +130,23 @@ final class AppModel: ChatSink {
         session.send(prompt: prompt)
     }
 
+    /// Also cancels any pending extension dialog(s) — a defensive,
+    /// client-side safety net, since whether pi itself cancels a gated
+    /// tool call's dialog on abort is unconfirmed (see the SW5 plan's
+    /// Risks). Without this, aborting mid-dialog could otherwise leave the
+    /// gated extension hanging until its own `timeout` elapses.
     func abort() {
+        replyToCurrentDialog(.cancelled)
+        pendingDialogs.removeAll()
         session?.abort()
+    }
+
+    /// Pops and answers `currentDialog`, if any — a no-op if the queue is
+    /// already empty (safe to call from `abort()` unconditionally).
+    func replyToCurrentDialog(_ reply: ExtensionDialogReply) {
+        guard let dialog = pendingDialogs.first else { return }
+        pendingDialogs.removeFirst()
+        session?.replyExtensionDialog(requestId: dialog.id, reply: reply)
     }
 
     // MARK: - Sidebar: browsing (pull-based — re-fetched after every action)
@@ -372,6 +397,10 @@ final class AppModel: ChatSink {
             if let path {
                 Self.saveLastSession(path, forProject: self.currentProject)
             }
+            // No reply sent — the request's originating client/session
+            // context is presumed moot once it changes (see the SW5 plan's
+            // Risks for the one known edge case: same-client SwitchSession).
+            self.pendingDialogs.removeAll()
             await self.refreshSessions()
         }
     }
@@ -383,6 +412,13 @@ final class AppModel: ChatSink {
             self.pendingPreviewTask?.cancel()
             self.pendingPreviewTask = nil
             self.streamingRows = []
+            self.pendingDialogs.removeAll()
+        }
+    }
+
+    nonisolated func onExtensionDialog(request: ExtensionDialogRecord) {
+        Task { @MainActor in
+            self.pendingDialogs.append(request)
         }
     }
 
