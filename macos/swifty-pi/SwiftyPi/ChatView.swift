@@ -12,6 +12,23 @@ struct ChatView: View {
     var model: AppModel
     @State private var draft: String = ""
     @State private var showTree = false
+    @FocusState private var composerFocused: Bool
+
+    // MARK: - Prompt history (Up/Down arrows)
+
+    /// Sent prompts, oldest first — scoped to this view's lifetime (resets
+    /// on relaunch, persists across project/session switches).
+    @State private var promptHistory: [String] = []
+    /// `0` = not navigating history; `1` = most recent prompt, up to
+    /// `promptHistory.count` (oldest).
+    @State private var historyOffset = 0
+    /// `draft`'s content right before the first Up press, restored once
+    /// Down navigates back past the most recent entry.
+    @State private var savedDraft = ""
+    /// Set right before a programmatic `draft` write (history recall) so
+    /// the `onChange(of: draft)` below can tell that apart from the user
+    /// actually typing, which should cancel history navigation.
+    @State private var isProgrammaticDraftChange = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -77,6 +94,31 @@ struct ChatView: View {
                     .padding(8)
                     .background(.quaternary, in: RoundedRectangle(cornerRadius: 8))
                     .onSubmit(send)
+                    .focused($composerFocused)
+                    .onAppear { composerFocused = true }
+                    .onKeyPress(.upArrow) {
+                        guard draft.isEmpty || historyOffset > 0 else { return .ignored }
+                        guard historyOffset < promptHistory.count else { return .handled }
+                        if historyOffset == 0 { savedDraft = draft }
+                        historyOffset += 1
+                        setDraft(promptHistory[promptHistory.count - historyOffset])
+                        return .handled
+                    }
+                    .onKeyPress(.downArrow) {
+                        guard historyOffset > 0 else { return .ignored }
+                        historyOffset -= 1
+                        setDraft(
+                            historyOffset == 0
+                                ? savedDraft : promptHistory[promptHistory.count - historyOffset])
+                        return .handled
+                    }
+                    .onChange(of: draft) {
+                        if isProgrammaticDraftChange {
+                            isProgrammaticDraftChange = false
+                        } else {
+                            historyOffset = 0
+                        }
+                    }
 
                 if model.isStreaming {
                     Button("Abort", role: .destructive) {
@@ -284,7 +326,17 @@ struct ChatView: View {
         let prompt = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !prompt.isEmpty else { return }
         model.send(prompt)
+        promptHistory.append(prompt)
+        historyOffset = 0
         draft = ""
+    }
+
+    /// Funnels every programmatic `draft` write through one place so
+    /// `onChange(of: draft)` can distinguish a history recall from the
+    /// user actually typing.
+    private func setDraft(_ text: String) {
+        isProgrammaticDraftChange = true
+        draft = text
     }
 
     /// Queued-image chip row (SW9) — name + "×" per chip, mirroring
