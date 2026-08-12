@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// Renders one `RowRecord` — the SW3 rich-content counterpart to
@@ -7,18 +8,27 @@ import SwiftUI
 /// deliberately leaves inline markdown (bold/italic/links/lists) unresolved
 /// for the UI toolkit's own renderer, and that's the one piece this native
 /// init handles for us — see the SW3 plan's rendering-strategy rationale.
+///
+/// Copy-to-clipboard mirrors `app.slint`'s `CopyButton` exactly (see the
+/// "Native NSPasteboard copy" plan section): always shown on `code` rows
+/// (copies `row.text`, the fence-free code), shown once per message group
+/// on `prose`/`quote`/`heading` when `row.first && !row.raw.isEmpty`
+/// (copies `row.raw`, the full raw markdown source) — every other row kind
+/// gets no copy affordance, matching Slint's own scope.
 struct RowView: View {
     let row: RowRecord
 
     var body: some View {
         switch row.kind {
         case "prose", "quote":
-            markdownText
+            withGroupCopy(markdownText)
         case "heading":
-            Text(row.text)
-                .font(headingFont)
-                .fontWeight(.bold)
-                .textSelection(.enabled)
+            withGroupCopy(
+                Text(row.text)
+                    .font(headingFont)
+                    .fontWeight(.bold)
+                    .textSelection(.enabled)
+            )
         case "code":
             CodeBlockView(row: row)
         case "table":
@@ -59,6 +69,51 @@ struct RowView: View {
         case 3: return .title3
         default: return .headline
         }
+    }
+
+    /// Adds a trailing copy chip for `row.raw` when this row is the lead
+    /// row of its message group and there's something to copy — mirrors
+    /// `app.slint`'s `if entry.first && entry.raw != ""` gate on `ProseRow`/
+    /// `HeadingRow`/`QuoteRow` exactly.
+    @ViewBuilder
+    private func withGroupCopy(_ content: some View) -> some View {
+        if row.first, !row.raw.isEmpty {
+            HStack(alignment: .top, spacing: 8) {
+                content
+                Spacer(minLength: 8)
+                CopyButton(payload: row.raw)
+            }
+        } else {
+            content
+        }
+    }
+}
+
+/// Click-to-copy chip mirroring `app.slint`'s `CopyButton`: flips to "✓"
+/// for 1.4s after copying, matching the `.slint` component's own `Timer`.
+private struct CopyButton: View {
+    let payload: String
+    @State private var copied = false
+
+    var body: some View {
+        Button {
+            let pasteboard = NSPasteboard.general
+            pasteboard.clearContents()
+            pasteboard.setString(payload, forType: .string)
+            copied = true
+            Task {
+                try? await Task.sleep(for: .milliseconds(1400))
+                copied = false
+            }
+        } label: {
+            Text(copied ? "✓" : "copy")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
+                .background(.quaternary, in: RoundedRectangle(cornerRadius: 4))
+        }
+        .buttonStyle(.plain)
     }
 }
 
@@ -118,10 +173,14 @@ private struct CodeBlockView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            if !row.lang.isEmpty {
-                Text(row.lang)
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
+            HStack {
+                if !row.lang.isEmpty {
+                    Text(row.lang)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                CopyButton(payload: row.text)
             }
             VStack(alignment: .leading, spacing: 0) {
                 ForEach(Array(row.codeLines.enumerated()), id: \.offset) { _, line in
