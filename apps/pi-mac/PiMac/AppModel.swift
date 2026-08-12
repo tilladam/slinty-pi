@@ -2,6 +2,14 @@ import Foundation
 import Observation
 import os
 
+/// One live thinking/tool-call row (SW7), keyed the same way Rust tracks it
+/// (a synthetic per-region sequence for thinking, the real `tool_call_id`
+/// for tool calls) so repeated pushes for the same id update in place.
+struct LiveRow: Identifiable {
+    let id: String
+    var row: RowRecord
+}
+
 /// Drives one `PiSession` (a spawned `pi --mode rpc` child, owned entirely
 /// on the Rust side) plus the stateless `SessionIndex` browsing object, and
 /// publishes both for `ChatView`/`SidebarView`.
@@ -30,6 +38,16 @@ final class AppModel: ChatSink {
     /// turn settled. Cleared whenever `transcript` itself is (turn end,
     /// history replaced).
     private(set) var streamingRows: [RowRecord] = []
+    /// Live thinking/tool-call rows (SW7) — pushed by Rust, not pulled like
+    /// `streamingRows`: `RowView`'s existing `ThinkingRowView`/`ToolRowView`
+    /// render these unchanged, they were already built against exactly this
+    /// shape via the finalized `onHistoryReplaced` path. Rendered as two
+    /// stable groups (all live thinking rows, then all live tool rows)
+    /// rather than interleaved in exact chronological order with each other
+    /// or with `streamingRows` — an explicit, simpler-on-purpose choice; see
+    /// the SW7 plan's Design section. Cleared alongside `streamingRows`.
+    private(set) var liveThinkingRows: [LiveRow] = []
+    private(set) var liveToolRows: [LiveRow] = []
     private(set) var isStreaming: Bool = false
     private(set) var statusMessage: String?
     /// Path/sidebar-highlighting only — see `onActiveSessionChanged`'s doc
@@ -420,6 +438,8 @@ final class AppModel: ChatSink {
             self.pendingPreviewTask?.cancel()
             self.pendingPreviewTask = nil
             self.streamingRows = []
+            self.liveThinkingRows = []
+            self.liveToolRows = []
         }
     }
 
@@ -456,6 +476,8 @@ final class AppModel: ChatSink {
             self.pendingPreviewTask?.cancel()
             self.pendingPreviewTask = nil
             self.streamingRows = []
+            self.liveThinkingRows = []
+            self.liveToolRows = []
             self.pendingDialogs.removeAll()
         }
     }
@@ -469,6 +491,29 @@ final class AppModel: ChatSink {
     nonisolated func onServerDotChanged(state: ServerDotState) {
         Task { @MainActor in
             self.serverDot = state
+        }
+    }
+
+    nonisolated func onThinkingRowChanged(id: String, row: RowRecord) {
+        Task { @MainActor in
+            Self.upsert(LiveRow(id: id, row: row), into: &self.liveThinkingRows)
+        }
+    }
+
+    nonisolated func onToolRowChanged(id: String, row: RowRecord) {
+        Task { @MainActor in
+            Self.upsert(LiveRow(id: id, row: row), into: &self.liveToolRows)
+        }
+    }
+
+    /// Replaces the entry matching `row.id` in place if one exists
+    /// (preserving its position), else appends — first-seen order becomes
+    /// display order for `liveThinkingRows`/`liveToolRows`.
+    private static func upsert(_ row: LiveRow, into rows: inout [LiveRow]) {
+        if let index = rows.firstIndex(where: { $0.id == row.id }) {
+            rows[index] = row
+        } else {
+            rows.append(row)
         }
     }
 

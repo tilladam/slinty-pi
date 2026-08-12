@@ -1,11 +1,12 @@
 import SwiftUI
 
 /// Chat detail pane: composer, a `RowRecord`-rendered transcript (rich
-/// markdown/code/tables, replacing SW1/SW2's plain-text-only display), plus
-/// a richly-rendered, throttled live preview (`model.streamingRows`) for
-/// whichever turn is still streaming — `AppModel.onHistoryReplaced` clears
-/// it and hands back the finalized rows once the turn settles (see
-/// `pi-core-ffi`'s `hydrate_and_push`).
+/// markdown/code/tables, replacing SW1/SW2's plain-text-only display), a
+/// richly-rendered, throttled live preview (`model.streamingRows`) for
+/// whichever turn is still streaming, and (SW7) live thinking/tool-call
+/// rows (`model.liveThinkingRows`/`liveToolRows`) — `AppModel.
+/// onHistoryReplaced` clears all three and hands back the finalized rows
+/// once the turn settles (see `pi-core-ffi`'s `hydrate_and_push`).
 struct ChatView: View {
     var model: AppModel
     @State private var draft: String = ""
@@ -18,6 +19,12 @@ struct ChatView: View {
                         ForEach(Array(model.rows.enumerated()), id: \.offset) { _, row in
                             RowView(row: row)
                         }
+                        ForEach(model.liveThinkingRows) { block in
+                            RowView(row: block.row)
+                        }
+                        ForEach(model.liveToolRows) { block in
+                            RowView(row: block.row)
+                        }
                         ForEach(Array(model.streamingRows.enumerated()), id: \.offset) { _, row in
                             RowView(row: row)
                         }
@@ -27,6 +34,12 @@ struct ChatView: View {
                     .id("transcript-end")
                 }
                 .onChange(of: model.rows.count) {
+                    proxy.scrollTo("transcript-end", anchor: .bottom)
+                }
+                .onChange(of: model.liveThinkingRows.count) {
+                    proxy.scrollTo("transcript-end", anchor: .bottom)
+                }
+                .onChange(of: model.liveToolRows.count) {
                     proxy.scrollTo("transcript-end", anchor: .bottom)
                 }
                 .onChange(of: model.streamingRows.count) {
