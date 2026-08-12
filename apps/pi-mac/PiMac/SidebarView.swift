@@ -1,7 +1,9 @@
 import SwiftUI
 import AppKit
 
-/// Session browsing + lifecycle actions: list, switch project, new, delete,
+/// Session browsing + lifecycle actions: list, switch project, new, delete
+/// (behind a confirmation alert — the underlying delete is Trash-based/
+/// recoverable, but a context-menu click alone was one accidental tap away),
 /// rename, and — as of SW3 — click a non-active row to resume it (loads its
 /// history via `AppModel.switchSession`/`ChatSink.onHistoryReplaced`).
 struct SidebarView: View {
@@ -10,6 +12,7 @@ struct SidebarView: View {
     @State private var isRenaming = false
     @State private var renameText = ""
     @State private var showModels = false
+    @State private var sessionPendingDelete: SessionRecord?
 
     var body: some View {
         List(model.sessions, id: \.path) { session in
@@ -27,7 +30,7 @@ struct SidebarView: View {
                         }
                     }
                     Button("Delete", role: .destructive) {
-                        Task { await model.deleteSession(session.path) }
+                        sessionPendingDelete = session
                     }
                 }
         }
@@ -69,6 +72,21 @@ struct SidebarView: View {
         }
         .sheet(isPresented: $showModels) {
             ModelsPanelView(model: model)
+        }
+        .alert(
+            "Delete Session?",
+            isPresented: Binding(
+                get: { sessionPendingDelete != nil },
+                set: { presented in if !presented { sessionPendingDelete = nil } }
+            ),
+            presenting: sessionPendingDelete
+        ) { session in
+            Button("Cancel", role: .cancel) {}
+            Button("Delete", role: .destructive) {
+                Task { await model.deleteSession(session.path) }
+            }
+        } message: { session in
+            Text("\"\(session.title)\" will be moved to the Trash. You can recover it from there if needed.")
         }
     }
 
