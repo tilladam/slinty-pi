@@ -1,5 +1,4 @@
 import SwiftUI
-import AppKit
 
 /// Session browsing + lifecycle actions: list, switch project, new, delete
 /// (behind a confirmation alert — the underlying delete is Trash-based/
@@ -35,7 +34,7 @@ struct SidebarView: View {
                 }
         }
         .listStyle(.sidebar)
-        .navigationTitle(projectDisplayName)
+        .navigationTitle(model.projectDisplayName)
         .safeAreaInset(edge: .bottom) {
             VStack(spacing: 0) {
                 Divider()
@@ -51,11 +50,11 @@ struct SidebarView: View {
                 } label: {
                     Label("New Session", systemImage: "square.and.pencil")
                 }
-                .help("Start a new session in \(projectDisplayName)")
+                .help("Start a new session in \(model.projectDisplayName)")
             }
             ToolbarItem {
                 Button {
-                    pickProject()
+                    Task { await model.promptSwitchProject() }
                 } label: {
                     Label("Switch Project", systemImage: "folder")
                 }
@@ -96,20 +95,6 @@ struct SidebarView: View {
         } message: { session in
             Text("\"\(session.title)\" will be moved to the Trash. You can recover it from there if needed.")
         }
-    }
-
-    private var projectDisplayName: String {
-        (model.currentProject as NSString).lastPathComponent
-    }
-
-    private func pickProject() {
-        let panel = NSOpenPanel()
-        panel.canChooseDirectories = true
-        panel.canChooseFiles = false
-        panel.allowsMultipleSelection = false
-        panel.prompt = "Switch"
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-        Task { await model.switchProject(to: url.path) }
     }
 
     /// The "current active model" picker (SW6) — checkmarks `isCurrent`,

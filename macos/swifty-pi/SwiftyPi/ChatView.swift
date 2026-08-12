@@ -77,7 +77,8 @@ struct ChatView: View {
             .padding(12)
         }
         .frame(minWidth: 480, minHeight: 360)
-        .navigationTitle(model.activeSessionPath == nil ? "New Session" : "pi")
+        .navigationTitle(model.projectDisplayName)
+        .navigationSubtitle(model.currentProject)
         .toolbar {
             // Streaming + server-health indicator dots, trailing edge of the
             // top navigation bar — moved here from the composer's own status

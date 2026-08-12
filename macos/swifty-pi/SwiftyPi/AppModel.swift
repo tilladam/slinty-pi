@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import Observation
 import os
@@ -57,6 +58,13 @@ final class AppModel: ChatSink {
     private(set) var currentProject: String
     private(set) var projects: [ProjectRecord] = []
     private(set) var sessions: [SessionRecord] = []
+
+    /// `currentProject`'s last path component — the sole source both
+    /// `SidebarView`'s column header and `ChatView`'s window-title bar read,
+    /// so a project switch updates both at once.
+    var projectDisplayName: String {
+        (currentProject as NSString).lastPathComponent
+    }
 
     // MARK: - Extension-UI dialogs (SW5)
 
@@ -208,6 +216,19 @@ final class AppModel: ChatSink {
         } catch {
             setStatus("Could not switch project: \(error)")
         }
+    }
+
+    /// Native folder picker → `switchProject` — shared by the sidebar's
+    /// "Switch Project" toolbar button and the File menu's "Open Project…"
+    /// command, so both trigger the exact same panel/switch sequence.
+    func promptSwitchProject() async {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false
+        panel.prompt = "Switch"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        await switchProject(to: url.path)
     }
 
     func startNewSession() async {

@@ -4,7 +4,7 @@ import SwiftUI
 /// switch project, new/delete/rename, and, as of SW3, click-to-resume) and
 /// the chat detail pane.
 struct ContentView: View {
-    @State private var model = AppModel()
+    let model: AppModel
     @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
@@ -23,5 +23,5 @@ struct ContentView: View {
 }
 
 #Preview {
-    ContentView()
+    ContentView(model: AppModel())
 }
