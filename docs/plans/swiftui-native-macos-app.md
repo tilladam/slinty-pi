@@ -3509,3 +3509,136 @@ to recall previously-sent prompts.
   project name/path and updates on switch; the File menu's "Open Recent Project" lists known
   projects (excluding the current one) and switches correctly, and "Open Project…" opens the same
   picker as the sidebar's toolbar button.
+
+---
+
+## PR-splitting strategy for upstream review
+
+**Context:** asked directly — the `swiftui` branch has diverged too far from `main` for one
+reviewable PR. Verified via `git log --oneline main..swifty-pi` / `git diff --stat main...swifty-pi`:
+**58 commits, 72 files changed, +16,394/-4,007 lines** against `main` (merge-base `ac50f15`).
+
+**The key fact that makes this easy, not hard**: `git log --oneline main..swifty-pi` shows the
+branch's commit history is **already perfectly ordered by milestone with zero interleaving** —
+every SW-numbered milestone (and every fix) occupies a single contiguous run of commits, in the
+same order this whole session built and tested them. This is a direct product of this session's
+own "one feature = one or two commits, verified before moving on" discipline. It means **the split
+needs zero rebasing, zero cherry-picking, zero history rewriting** — just picking existing commit
+SHAs as branch cut points and opening a *stack* of PRs, each based on the previous one. No
+destructive git operation is required anywhere in this strategy.
+
+### The floor: Rust core vs. macOS app (what was explicitly asked for)
+
+The very first 4 commits on the branch (`dc0f0a7`..`d2c20fd`) are exactly "isolate the shared Rust
+code" — the SW0 milestone: scaffold `crates/pi-core`, move every Slint-free module into it behind
+a `UiSink` trait, add live-streaming-path test coverage. **Zero new Swift/macOS files appear until
+the very next commit** (`bedecc1`, which adds `crates/pi-core-ffi`). So the floor the user asked
+for is already a clean, pre-existing boundary — no work needed to find it, just to cut there:
+
+- **PR 1 — "Extract crates/pi-core behind a UiSink trait"** (`dc0f0a7^..d2c20fd`, 4 commits).
+  Pure Rust, zero behavior change for the existing Slint app (that's the SW0 milestone's own
+  acceptance bar, already met and tested). `git diff --shortstat` shows `+4670/-3966`, but that's
+  almost entirely `git mv`-tracked file moves — GitHub's PR view collapses renamed files
+  automatically, so the *actual* reviewable diff will look far smaller than the raw stat suggests.
+  This PR is valuable independent of the SwiftUI work at all — it's a real refactor the Slint app
+  benefits from on its own.
+- **PR 2 — everything else.** Still ~15,700 lines. This alone doesn't really solve the problem —
+  it's the mandatory floor, not a sufficient split by itself.
+
+### Recommended split — decided (13 PRs, hosted in `fork`, one final rollup to `origin`)
+
+**Confirmed (not just flagged): no push/branch-create access to `origin` (`tilladam/slinty-pi`).**
+GitHub requires a PR's *base* branch to exist in the same repository the PR is opened against, so
+the 12 intermediate stacking branches (everything except a final rollup) cannot live in `origin`
+without that access. Revised strategy: **the entire 13-PR stack is hosted inside the user's own
+fork** (`mkrus/slinty-pi`) — both base and head branches for every row live there, needing no
+access beyond what already exists. Only **one final PR**, from the fork's fully-merged integration
+branch to `origin/main`, ever needs to reach `origin` — a plain fork→upstream contribution PR
+(head only, never base), which needs no special access on `origin` at all. Reviewers who want to
+review the 13-row breakdown individually, rather than just the final rollup, need read/comment
+access to the fork's PRs — a lighter ask than push access to `origin`.
+
+Smaller/adjacent rows are still merged down from the initial 17-row draft to reduce
+stack-management overhead, and every milestone is still its own contiguous commit range (confirmed
+via `git log --oneline` across the full branch) — so this remains pure branch-cutting, no
+rebasing. Only the destination repo changed, from `origin` to `fork`, for rows 1-13:
+
+| # | PR | Commit range | ~Lines | Notes |
+|---|---|---|---|---|
+| 1 | Extract `pi-core` behind `UiSink` | `dc0f0a7^..d2c20fd` | +4670/-3966 (mostly moves) | SW0, zero behavior change |
+| 2 | `pi-core-ffi` + minimal SwiftUI spike | `bedecc1..f50bb19` | ~1660 | SW1 — first Swift/macOS files appear here |
+| 3 | Session sidebar | `4a3ffce..524d662` | ~1150 | SW2 |
+| 4 | Extract `pi-render` + rich history rendering | `3e94552..cfd3a17` | ~1425 | SW3 |
+| 5 | Extract `pi-local` + Models panel | `f823b8a..017875d` | ~1655 | SW4 |
+| 6 | Diagnostics + live-streaming fix + Extension-UI dialogs | `ed5bd3d..477f3d3` | ~725 | small diagnostics/rendering fixes folded into the adjacent SW5 dialogs work |
+| 7 | Composer model picker + server dot | `b850202..df779b0` | ~585 | SW6 |
+| 8 | Live thinking/tool visibility + row polish | `93a7152..09f8fc8` | ~715 | SW7 + copy/delete-confirm/user-bubble |
+| 9 | Rename `apps/pi-mac` → `macos/swifty-pi`, `PiMac` → `SwiftyPi` | `415dbc7` alone | ~50/-49 across 15 files | kept isolated on purpose — the one row not merged, so the mechanical rename never tangles with a real feature diff |
+| 10 | UI polish batch: relocation, app icon, project visibility, density control, streaming indicator | `759a18d..9df5021` | ~830 | merges the four smallest post-rename polish commits into one |
+| 11 | Composer completion: thinking-level picker + attach files/images | `8784840..a70e0bc` | ~830 | SW8 + SW9 merged — both are composer-surface features |
+| 12 | Session branch tree + fork-from | `bbcff65` alone | ~605 | SW10 — kept separate from #11, a distinct UI surface (a new sheet, not the composer) |
+| 13 | Keyboard-driven permission dialogs + composer focus/history | `5175861..dd88825` | ~340 code + ~3300 docs | includes both `docs/plans` snapshot commits (`184366a`, `dd88825`) — reviewers can skip that file, it's a plan-doc mirror, not code |
+
+### Mechanics — a stack inside `fork`, then one rollup PR to `origin`
+
+Each row becomes a real branch cut directly off the existing commit history, no rebasing —
+pushed to `fork` (`mkrus/slinty-pi`), not `origin`:
+
+```sh
+git branch swiftui-01-core-extraction d2c20fd
+git branch swiftui-02-ffi-spike f50bb19
+git branch swiftui-03-sidebar 524d662
+# ...one per row, each named branch pointing at that row's last commit...
+git push fork swiftui-01-core-extraction swiftui-02-ffi-spike swiftui-03-sidebar ...
+```
+
+Then open each PR **within `fork` itself**, base set to the previous row's branch (not `main`):
+```sh
+gh pr create --repo mkrus/slinty-pi --base swiftui-01-core-extraction --head swiftui-02-ffi-spike --title "..."
+```
+except PR 1, whose base is `fork`'s own copy of `main`. This is the standard "stacked PR" pattern:
+each PR's diff only ever shows *that row's* commits, since everything from earlier rows is already
+common history with its base branch. As each PR merges (bottom-up) *within `fork`*, retarget the
+next one's base to `fork`'s `main` — a one-click "change base branch" on GitHub, no local git
+changes needed. **No commit is ever rewritten, no force-push is ever required** — every branch
+here is a plain, non-destructive pointer into history that already exists.
+
+Once the last row merges into `fork`'s `main` (or a dedicated integration branch, if `fork`'s
+`main` should stay a clean mirror of `origin/main` — worth deciding at that point, not now), open
+**one final PR**: `fork`'s integration branch → `origin/main`:
+```sh
+gh pr create --repo tilladam/slinty-pi --base main --head mkrus:swiftui-integration --title "..."
+```
+This is the only step that touches `origin`, and it's the ordinary "propose changes from a fork"
+flow every GitHub contributor without write access already uses — no elevated permissions needed.
+
+**Reviewer access — confirmed workable**: per direct follow-up, the intended reviewers are
+teammates who can be added as collaborators on `mkrus/slinty-pi`. So the 13-way breakdown does
+deliver its full benefit — grant them access to the fork before opening PRs 1-13 there, so they
+can review the milestone-sized diffs directly, same experience as if the stack lived in `origin`.
+Only the final rollup PR (fork's integration branch → `origin/main`) needs to exist in `origin`
+itself.
+
+### Status: the 13-PR stack is created and open in `mkrus/slinty-pi`
+
+All 13 branches were cut from the existing commit SHAs above, pushed to `fork`, and opened as
+stacked PRs (each base = the previous row's branch, PR 1's base = `fork`'s `main`, which was
+confirmed identical to `origin/main` at cut time):
+
+1. https://github.com/mkrus/slinty-pi/pull/1 — Extract `pi-core` behind a `UiSink` trait
+2. https://github.com/mkrus/slinty-pi/pull/2 — `pi-core-ffi` + minimal SwiftUI chat spike
+3. https://github.com/mkrus/slinty-pi/pull/3 — Session sidebar in Swift
+4. https://github.com/mkrus/slinty-pi/pull/4 — Extract `pi-render` + rich history rendering, restore/switch sessions
+5. https://github.com/mkrus/slinty-pi/pull/5 — Extract `pi-local` + local-model panel in Swift
+6. https://github.com/mkrus/slinty-pi/pull/6 — App diagnostics, live-streaming rendering fix, extension-UI dialogs
+7. https://github.com/mkrus/slinty-pi/pull/7 — Composer model picker + server-dot health indicator
+8. https://github.com/mkrus/slinty-pi/pull/8 — Live thinking/tool-call visibility + row polish
+9. https://github.com/mkrus/slinty-pi/pull/9 — Rename `apps/pi-mac` → `macos/swifty-pi`, `PiMac` → `SwiftyPi`
+10. https://github.com/mkrus/slinty-pi/pull/10 — UI polish batch: app icon, project visibility, density control, streaming indicator
+11. https://github.com/mkrus/slinty-pi/pull/11 — Composer completion: thinking-level control + attach files/images
+12. https://github.com/mkrus/slinty-pi/pull/12 — Session branch tree + fork-from
+13. https://github.com/mkrus/slinty-pi/pull/13 — Keyboard-driven permission dialogs + composer focus/history
+
+**Not yet done**: inviting teammate reviewers as collaborators on `mkrus/slinty-pi` (need names/
+GitHub handles from the user), and — once the stack is reviewed and merged down within the fork —
+opening the single final rollup PR from the fork's integration branch to `origin/main`.
