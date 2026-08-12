@@ -26,6 +26,7 @@ mod models;
 mod row;
 mod session_index;
 mod thinking;
+mod tree;
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -44,6 +45,7 @@ pub use models::{ModelRecord, ServerDotState};
 pub use row::{CodeLineRecord, ColoredSpanRecord, RowRecord, TableCellRecord};
 pub use session_index::{ProjectRecord, SessionIndex, SessionRecord};
 pub use thinking::{SessionStatsRecord, ThinkingLevelKind, ThinkingLevelRecord};
+pub use tree::TreeRowRecord;
 
 uniffi::setup_scaffolding!();
 
@@ -150,6 +152,13 @@ pub trait ChatSink: Send + Sync {
     /// (previously only a hypothetical during SW5's parked `set_editor_text`
     /// research).
     fn on_composer_append(&self, text: String);
+    /// A successful `fork_from` pushes the forked-from message's original
+    /// text here (SW10) — a *replace*, not an append, unlike
+    /// `on_composer_append`: `pi_core::backend::fork_from`'s reference
+    /// behavior is `set_composer_text`, so the user doesn't lose the
+    /// prompt they meant to redo, without gluing it onto whatever's
+    /// already typed.
+    fn on_composer_replace(&self, text: String);
 }
 
 #[derive(Debug, thiserror::Error, uniffi::Error)]
@@ -239,6 +248,18 @@ enum ChatCmd {
     /// RemoveAttachment`.
     RemoveAttachment {
         index: usize,
+    },
+    /// Pull, mirroring `RefreshModels`'s shape — fetches and flattens the
+    /// session's live branch tree fresh every call.
+    OpenTree {
+        reply: oneshot::Sender<Result<Vec<TreeRowRecord>, String>>,
+    },
+    /// Rewinds the active branch to before `entry_id` and, on success,
+    /// re-hydrates the transcript and pushes the forked-from prompt text
+    /// via `ChatSink::on_composer_replace`.
+    ForkFrom {
+        entry_id: String,
+        reply: oneshot::Sender<Result<(), String>>,
     },
 }
 
@@ -503,6 +524,25 @@ impl PiSession {
     /// `is_current` flag, rather than this method returning it directly.
     pub async fn set_thinking_level(&self, level: ThinkingLevelKind) -> Result<(), PiSessionError> {
         self.call(|reply| ChatCmd::SetThinkingLevel { level, reply })
+            .await
+    }
+
+    /// Fetches and flattens the session's live branch tree, marking the
+    /// currently-active path. Pull-based — call when the tree sheet opens.
+    pub async fn open_tree(&self) -> Result<Vec<TreeRowRecord>, PiSessionError> {
+        let (reply_tx, reply_rx) = oneshot::channel();
+        let _ = self.cmd_tx.send(ChatCmd::OpenTree { reply: reply_tx });
+        reply_rx
+            .await
+            .map_err(|_| PiSessionError::Action("session task ended".to_string()))?
+            .map_err(PiSessionError::Action)
+    }
+
+    /// Rewinds the active branch to before `entry_id`. On success, the
+    /// transcript re-hydrates and the forked-from prompt text arrives via
+    /// `ChatSink::on_composer_replace` — no separate refetch needed.
+    pub async fn fork_from(&self, entry_id: String) -> Result<(), PiSessionError> {
+        self.call(|reply| ChatCmd::ForkFrom { entry_id, reply })
             .await
     }
 
@@ -794,6 +834,34 @@ async fn run(
                             );
                         }
                     }
+                    Some(ChatCmd::OpenTree { reply }) => {
+                        let rows = tree::fetch_tree_rows(&client).await;
+                        let _ = reply.send(Ok(rows));
+                    }
+                    Some(ChatCmd::ForkFrom { entry_id, reply }) => {
+                        // `fork` rewinds the active branch to *before*
+                        // entry_id and hands back its text — it doesn't
+                        // keep that message in context — so the composer
+                        // needs pre-filling, or the user loses the prompt
+                        // they meant to redo.
+                        match client.fork(&entry_id).await {
+                            Ok(data) if data.get("cancelled").and_then(|v| v.as_bool()) == Some(true) => {
+                                let _ = reply.send(Err("cancelled by an extension".to_string()));
+                            }
+                            Ok(data) => {
+                                let prefill =
+                                    data.get("text").and_then(|v| v.as_str()).map(str::to_string);
+                                hydrate_and_push(&client, sink.as_ref(), &dark).await;
+                                if let Some(text) = prefill {
+                                    sink.on_composer_replace(text);
+                                }
+                                let _ = reply.send(Ok(()));
+                            }
+                            Err(e) => {
+                                let _ = reply.send(Err(describe(&e)));
+                            }
+                        }
+                    }
                     None => return,
                 }
             }
@@ -1068,6 +1136,12 @@ fn reply_demo_action(cmd: ChatCmd, sink: &dyn ChatSink) {
         }
         ChatCmd::AttachPath { .. } => {} // no-op: demo mode has no real files to attach
         ChatCmd::RemoveAttachment { .. } => {} // no-op: demo mode never queues attachments
+        ChatCmd::OpenTree { reply } => {
+            let _ = reply.send(Ok(Vec::new())); // no branch structure in demo mode
+        }
+        ChatCmd::ForkFrom { reply, .. } => {
+            let _ = reply.send(Ok(()));
+        }
         ChatCmd::Send(_) | ChatCmd::Abort => {
             unreachable!("Send/Abort are handled by run_demo's own match arms")
         }
@@ -1426,6 +1500,12 @@ pub(crate) mod test_support {
                 .lock()
                 .unwrap()
                 .push(format!("composer_append:{text}"));
+        }
+        fn on_composer_replace(&self, text: String) {
+            self.events
+                .lock()
+                .unwrap()
+                .push(format!("composer_replace:{text}"));
         }
     }
 }

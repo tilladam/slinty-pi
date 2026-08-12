@@ -11,6 +11,7 @@ import SwiftUI
 struct ChatView: View {
     var model: AppModel
     @State private var draft: String = ""
+    @State private var showTree = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -106,6 +107,10 @@ struct ChatView: View {
             guard newValue != nil, let text = model.consumePendingComposerAppend() else { return }
             draft += draft.isEmpty ? "@\(text)" : " @\(text)"
         }
+        .onChange(of: model.pendingComposerReplace) { _, newValue in
+            guard newValue != nil, let text = model.consumePendingComposerReplace() else { return }
+            draft = text
+        }
         .frame(minWidth: 480, minHeight: 360)
         .navigationTitle(model.projectDisplayName)
         .navigationSubtitle(model.currentProject)
@@ -143,6 +148,21 @@ struct ChatView: View {
                     densityPicker
                 }
             }
+            // A real action button (opens the tree sheet), not a display
+            // control — gets the normal system chrome, unlike the two
+            // glass-opted-out items above.
+            ToolbarItem(placement: .primaryAction) {
+                Button {
+                    showTree = true
+                } label: {
+                    Label("Session Tree", systemImage: "arrow.triangle.branch")
+                }
+                .help("View session branch tree")
+                .keyboardShortcut("t")
+            }
+        }
+        .sheet(isPresented: $showTree) {
+            TreeView(model: model)
         }
         .extensionDialogs(model: model)
     }

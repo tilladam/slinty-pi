@@ -13,6 +13,7 @@ struct PrintSink {
     dialogs: Mutex<Vec<ExtensionDialogRecord>>,
     pending_attachments: Mutex<Vec<String>>,
     composer_appends: Mutex<Vec<String>>,
+    composer_replaces: Mutex<Vec<String>>,
 }
 
 impl ChatSink for PrintSink {
@@ -75,6 +76,10 @@ impl ChatSink for PrintSink {
         eprintln!("composer_append: {text:?}");
         self.composer_appends.lock().unwrap().push(text);
     }
+    fn on_composer_replace(&self, text: String) {
+        eprintln!("composer_replace: {text:?}");
+        self.composer_replaces.lock().unwrap().push(text);
+    }
 }
 
 /// Manual verification for the real-`pi` acceptance points no Swift-side
@@ -89,6 +94,7 @@ impl ChatSink for PrintSink {
 ///   cargo run -p pi-core-ffi --example spike_check -- live      # live thinking/tool-call preview (SW7)
 ///   cargo run -p pi-core-ffi --example spike_check -- thinking  # thinking-level list/set + stats fetch (SW8)
 ///   cargo run -p pi-core-ffi --example spike_check -- attach    # attach-path round trip, image + non-image (SW9)
+///   cargo run -p pi-core-ffi --example spike_check -- tree      # branch tree fetch + fork-from round trip (SW10)
 ///
 /// The `dialogs` mode is tolerant of no gating extension being installed
 /// (it just times out with a note, rather than failing) — real coverage
@@ -128,6 +134,7 @@ fn main() {
         dialogs: Mutex::new(Vec::new()),
         pending_attachments: Mutex::new(Vec::new()),
         composer_appends: Mutex::new(Vec::new()),
+        composer_replaces: Mutex::new(Vec::new()),
     });
     let cwd = std::env::current_dir()
         .expect("current dir")
@@ -461,6 +468,69 @@ fn main() {
 
             let _ = std::fs::remove_file(&image_path);
             let _ = std::fs::remove_file(&text_path);
+        }
+        Some("tree") => {
+            let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
+            rt.block_on(async {
+                eprintln!("--- sending two prompts to build some real tree structure ---");
+                session.send("say hi in exactly 3 words".to_string());
+                tokio::time::sleep(Duration::from_secs(10)).await;
+                session.send("now say bye in exactly 3 words".to_string());
+                tokio::time::sleep(Duration::from_secs(10)).await;
+
+                eprintln!("--- session.open_tree() ---");
+                let rows = session.open_tree().await.expect("open_tree failed");
+                eprintln!("tree: {} rows", rows.len());
+                for r in &rows {
+                    eprintln!(
+                        "  {}{}{}{}",
+                        "  ".repeat(r.depth as usize),
+                        if r.is_active { "* " } else { "  " },
+                        if r.can_fork { "[fork] " } else { "" },
+                        r.summary
+                    );
+                }
+                assert!(
+                    !rows.is_empty(),
+                    "expected at least one tree row after sending prompts"
+                );
+
+                // The *last* forkable row, not the first: forking from the
+                // very first user message legitimately rewinds to an empty
+                // session (nothing existed before it) — picking the last
+                // one instead leaves the earlier turn intact, giving a
+                // stronger assertion below (re-hydrated history is
+                // non-empty, not just "didn't crash").
+                let Some(forkable) = rows.iter().rev().find(|r| r.can_fork) else {
+                    eprintln!(
+                        "no forkable (user-message) row found — skipping fork_from round trip"
+                    );
+                    return;
+                };
+                eprintln!("--- session.fork_from({}) ---", forkable.id);
+                session
+                    .fork_from(forkable.id.clone())
+                    .await
+                    .expect("fork_from failed");
+                tokio::time::sleep(Duration::from_secs(2)).await;
+
+                let replaces = sink.composer_replaces.lock().unwrap().clone();
+                eprintln!("composer replaces after fork_from: {replaces:?}");
+                assert_eq!(
+                    replaces,
+                    vec![forkable.summary.clone()],
+                    "expected on_composer_replace to fire with the forked-from message's \
+                     original text"
+                );
+
+                let history = sink.last_history.lock().unwrap().clone();
+                eprintln!("history after fork_from: {} rows", history.len());
+                assert!(
+                    !history.is_empty(),
+                    "expected history to re-hydrate to the earlier turn (forked from the last \
+                     of two user messages, so the first turn should remain)"
+                );
+            });
         }
         _ => {
             eprintln!("PiSession created, sending prompt");

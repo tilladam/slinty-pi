@@ -120,6 +120,17 @@ final class AppModel: ChatSink {
     /// `draft` — see `consumePendingComposerAppend`.
     private(set) var pendingComposerAppend: String?
 
+    // MARK: - Session tree + fork-from (SW10)
+
+    /// Flattened branch tree for the active session — pull-based, fetched
+    /// when the tree sheet opens.
+    private(set) var treeRows: [TreeRowRecord] = []
+    /// A successful `forkFrom` call's forked-from prompt text, pushed
+    /// (`onComposerReplace`) for `ChatView` to *replace* (not append to,
+    /// unlike `pendingComposerAppend`) its local `draft` — see
+    /// `consumePendingComposerReplace`.
+    private(set) var pendingComposerReplace: String?
+
     private var session: PiSession?
     private let sessionIndex = SessionIndex()
     private let localModels = LocalModelIndex()
@@ -232,6 +243,39 @@ final class AppModel: ChatSink {
     func consumePendingComposerAppend() -> String? {
         defer { pendingComposerAppend = nil }
         return pendingComposerAppend
+    }
+
+    // MARK: - Session tree + fork-from (SW10)
+
+    /// Fetches and flattens the active session's branch tree. Pull-based —
+    /// call when the tree sheet opens.
+    func openTree() async {
+        guard let session else { return }
+        do {
+            treeRows = try await session.openTree()
+        } catch {
+            setStatus("Could not load session tree: \(error)")
+        }
+    }
+
+    /// Rewinds the active branch to before `entryId`. On success, the
+    /// transcript re-hydrates and `onComposerReplace` fires with the
+    /// forked-from prompt text — no manual refetch needed here, mirroring
+    /// how SW9's attach flow already works.
+    func forkFrom(entryId: String) async {
+        guard let session else { return }
+        do {
+            try await session.forkFrom(entryId: entryId)
+        } catch {
+            setStatus("Could not fork: \(error)")
+        }
+    }
+
+    /// Reads and clears `pendingComposerReplace` in one call — same
+    /// atomic shape as `consumePendingComposerAppend`.
+    func consumePendingComposerReplace() -> String? {
+        defer { pendingComposerReplace = nil }
+        return pendingComposerReplace
     }
 
     /// Also cancels any pending extension dialog(s) — a defensive,
@@ -634,6 +678,12 @@ final class AppModel: ChatSink {
     nonisolated func onComposerAppend(text: String) {
         Task { @MainActor in
             self.pendingComposerAppend = text
+        }
+    }
+
+    nonisolated func onComposerReplace(text: String) {
+        Task { @MainActor in
+            self.pendingComposerReplace = text
         }
     }
 
