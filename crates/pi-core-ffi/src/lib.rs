@@ -19,6 +19,7 @@
 //! `Weak::upgrade_in_event_loop` discharges on the Slint side.
 
 mod dialog;
+mod live_preview;
 mod local_models;
 mod models;
 mod row;
@@ -111,6 +112,20 @@ pub trait ChatSink: Send + Sync {
     /// `refresh_models`/`set_model`) — this is the one value with no
     /// natural user action to hang a re-fetch off of.
     fn on_server_dot_changed(&self, state: ServerDotState);
+    /// Once (`running:true`, empty text) on `ThinkingStart`, throttled
+    /// ~33ms on `ThinkingDelta`, once more (`running:false`) on
+    /// `ThinkingEnd`. `id` is a synthetic per-region sequence number —
+    /// thinking has no id of its own on the wire, and pi allows more than
+    /// one thinking block per turn (each becomes its own row, never
+    /// reusing a prior region's). No "removed" signal: a finished region
+    /// simply stops updating until `on_history_replaced` clears it.
+    fn on_thinking_row_changed(&self, id: String, row: RowRecord);
+    /// Once (`running:true`) on `ToolExecutionStart`, throttled ~100ms on
+    /// `ToolExecutionUpdate`, once more (`running:false`, ✓/✗ mark,
+    /// elapsed time) on `ToolExecutionEnd`. `id` is the real
+    /// `tool_call_id` — multiple calls can be live at once. Same
+    /// no-"removed"-signal contract as `on_thinking_row_changed`.
+    fn on_tool_row_changed(&self, id: String, row: RowRecord);
 }
 
 #[derive(Debug, thiserror::Error, uniffi::Error)]
@@ -473,6 +488,14 @@ async fn run(
     let mut last_dot = ServerDotState::Hidden;
     let mut dot_interval = tokio::time::interval(Duration::from_secs(5));
     dot_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    // Live thinking/tool-call preview state (SW7) — read/written by
+    // `live_preview::apply_live_preview`, reset defensively on
+    // `AgentSettled` below (guards a tool call whose `ToolExecutionEnd`
+    // never arrives).
+    let mut live_thinking: Option<live_preview::ThinkingRegionState> = None;
+    let mut live_tools: std::collections::HashMap<String, live_preview::ToolRunState> =
+        std::collections::HashMap::new();
+    let mut thinking_seq: u64 = 0;
     if let Some(path) = resume_session_path {
         match do_switch_session(&client, &path).await {
             Ok(()) => hydrate_and_push(&client, sink.as_ref(), &dark).await,
@@ -649,12 +672,24 @@ async fn run(
                     return;
                 };
                 apply(&event, sink.as_ref());
+                live_preview::apply_live_preview(
+                    &event,
+                    sink.as_ref(),
+                    &mut live_thinking,
+                    &mut live_tools,
+                    &mut thinking_seq,
+                );
                 // Re-render the whole transcript from `get_messages` truth
                 // once the turn is fully done, rather than porting
                 // `pi_core::backend::Transcript`'s incremental live-flush
                 // machinery across FFI — see the SW3 plan's Design section.
                 if matches!(event, Event::AgentSettled) {
                     hydrate_and_push(&client, sink.as_ref(), &dark).await;
+                    // Defensive reset (SW7): guards a tool call whose
+                    // `ToolExecutionEnd` never arrives. The Swift-side
+                    // equivalent is already cleared by `on_history_replaced`.
+                    live_thinking = None;
+                    live_tools.clear();
                 }
             }
             _ = dot_interval.tick() => {
@@ -1163,7 +1198,7 @@ mod merge_path_vars_tests {
 }
 
 #[cfg(test)]
-mod test_support {
+pub(crate) mod test_support {
     use super::{ChatSink, ExtensionDialogRecord, RowRecord, ServerDotState};
     use std::sync::Mutex;
 
@@ -1214,6 +1249,18 @@ mod test_support {
                 .lock()
                 .unwrap()
                 .push(format!("server_dot:{state:?}"));
+        }
+        fn on_thinking_row_changed(&self, id: String, row: RowRecord) {
+            self.events.lock().unwrap().push(format!(
+                "thinking_row:{id}:running={}:text={}",
+                row.running, row.text
+            ));
+        }
+        fn on_tool_row_changed(&self, id: String, row: RowRecord) {
+            self.events.lock().unwrap().push(format!(
+                "tool_row:{id}:running={}:{}",
+                row.running, row.text
+            ));
         }
     }
 }

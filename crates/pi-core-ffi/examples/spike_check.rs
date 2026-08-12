@@ -47,6 +47,18 @@ impl ChatSink for PrintSink {
     fn on_server_dot_changed(&self, state: ServerDotState) {
         eprintln!("server_dot_changed: {state:?}");
     }
+    fn on_thinking_row_changed(&self, id: String, row: RowRecord) {
+        eprintln!(
+            "thinking_row_changed: id={id} running={} text={:?}",
+            row.running, row.text
+        );
+    }
+    fn on_tool_row_changed(&self, id: String, row: RowRecord) {
+        eprintln!(
+            "tool_row_changed: id={id} running={} elapsed={:?} text={:?}",
+            row.running, row.elapsed, row.text
+        );
+    }
 }
 
 /// Manual verification for the real-`pi` acceptance points no Swift-side
@@ -58,6 +70,7 @@ impl ChatSink for PrintSink {
 ///   cargo run -p pi-core-ffi --example spike_check -- history   # settle + switch_session hydration (SW3)
 ///   cargo run -p pi-core-ffi --example spike_check -- models    # LocalModelIndex refresh/search (SW4)
 ///   cargo run -p pi-core-ffi --example spike_check -- dialogs   # extension-UI dialog round trip (SW5)
+///   cargo run -p pi-core-ffi --example spike_check -- live      # live thinking/tool-call preview (SW7)
 ///
 /// The `dialogs` mode is tolerant of no gating extension being installed
 /// (it just times out with a note, rather than failing) — real coverage
@@ -327,6 +340,23 @@ fn main() {
                     None => std::thread::sleep(Duration::from_millis(100)),
                 }
             }
+        }
+        Some("live") => {
+            eprintln!(
+                "--- sending a prompt likely to trigger a real tool call, watching for live \
+                 thinking_row_changed/tool_row_changed events (SW7) — see PrintSink's eprintln \
+                 output above for the actual events observed ---"
+            );
+            session.send(
+                "Read Cargo.toml in the current directory and summarize it in one sentence."
+                    .to_string(),
+            );
+            std::thread::sleep(Duration::from_secs(20));
+            eprintln!(
+                "--- done watching — confirm above that at least one tool_row_changed fired \
+                 with running=true before the (eventual) running=false, i.e. it was visible \
+                 while the turn was still in flight, not just after ---"
+            );
         }
         _ => {
             eprintln!("PiSession created, sending prompt");
