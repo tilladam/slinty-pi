@@ -40,9 +40,7 @@ struct RowView: View {
         case "tool":
             ToolRowView(row: row)
         case "user":
-            Text(row.text)
-                .fontWeight(.medium)
-                .textSelection(.enabled)
+            userBubble
         case "error":
             Text(row.text)
                 .foregroundStyle(.red)
@@ -68,6 +66,23 @@ struct RowView: View {
         case 2: return .title2
         case 3: return .title3
         default: return .headline
+        }
+    }
+
+    /// Right-aligned, tinted bubble for the user's own prompts — mirrors
+    /// `app.slint`'s `UserRow` (a leading stretch-spacer pushing the bubble
+    /// right, `Palette.accent-background.transparentize(0.88)` background).
+    /// `.accentColor.opacity(0.12)` is the native SwiftUI equivalent of that
+    /// same light accent tint.
+    private var userBubble: some View {
+        HStack {
+            Spacer(minLength: 40)
+            Text(row.text)
+                .fontWeight(.medium)
+                .textSelection(.enabled)
+                .padding(.horizontal, 11)
+                .padding(.vertical, 8)
+                .background(Color.accentColor.opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
         }
     }
 
