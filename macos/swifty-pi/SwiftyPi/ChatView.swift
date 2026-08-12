@@ -17,16 +17,24 @@ struct ChatView: View {
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 10) {
                         ForEach(Array(model.rows.enumerated()), id: \.offset) { _, row in
-                            RowView(row: row)
+                            if AppModel.rowVisible(density: model.density, kind: row.kind) {
+                                RowView(row: row, forceToolExpanded: model.density == 0)
+                            }
                         }
                         ForEach(model.liveThinkingRows) { block in
-                            RowView(row: block.row)
+                            if AppModel.rowVisible(density: model.density, kind: block.row.kind) {
+                                RowView(row: block.row, forceToolExpanded: model.density == 0)
+                            }
                         }
                         ForEach(model.liveToolRows) { block in
-                            RowView(row: block.row)
+                            if AppModel.rowVisible(density: model.density, kind: block.row.kind) {
+                                RowView(row: block.row, forceToolExpanded: model.density == 0)
+                            }
                         }
                         ForEach(Array(model.streamingRows.enumerated()), id: \.offset) { _, row in
-                            RowView(row: row)
+                            if AppModel.rowVisible(density: model.density, kind: row.kind) {
+                                RowView(row: row, forceToolExpanded: model.density == 0)
+                            }
                         }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -100,6 +108,19 @@ struct ChatView: View {
                     statusDots
                 }
             }
+            // Same glass-background opt-out as the status dots above — a
+            // flat dropdown reads as a lightweight display control here,
+            // not a prominent action button.
+            if #available(macOS 26.0, *) {
+                ToolbarItem(placement: .primaryAction) {
+                    densityPicker
+                }
+                .sharedBackgroundVisibility(.hidden)
+            } else {
+                ToolbarItem(placement: .primaryAction) {
+                    densityPicker
+                }
+            }
         }
         .extensionDialogs(model: model)
     }
@@ -114,6 +135,27 @@ struct ChatView: View {
                 .help(model.isStreaming ? "Streaming" : "Idle")
             serverDotView
         }
+    }
+
+    /// Direct mode selection, replacing an earlier cycle-through-3-states
+    /// button — a `Menu`-style `Picker` reads its current value from
+    /// `model.density` and writes back through `AppModel.setDensity`.
+    private var densityPicker: some View {
+        Picker("Density", selection: densityBinding) {
+            Text("Verbose").tag(0)
+            Text("Normal").tag(1)
+            Text("Summary").tag(2)
+        }
+        .pickerStyle(.menu)
+        .labelsHidden()
+        .help("Transcript density")
+    }
+
+    private var densityBinding: Binding<Int> {
+        Binding(
+            get: { model.density },
+            set: { model.setDensity($0) }
+        )
     }
 
     private var statusBar: some View {

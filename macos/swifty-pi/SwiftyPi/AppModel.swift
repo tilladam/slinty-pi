@@ -59,6 +59,11 @@ final class AppModel: ChatSink {
     private(set) var projects: [ProjectRecord] = []
     private(set) var sessions: [SessionRecord] = []
 
+    /// Transcript density (0 = Verbose, 1 = Normal, 2 = Summary) — mirrors
+    /// `app.slint`'s `cycle-density()` semantics exactly (see the density
+    /// control plan section). Persisted like `currentProject`, below.
+    private(set) var density: Int
+
     /// `currentProject`'s last path component — the sole source both
     /// `SidebarView`'s column header and `ChatView`'s window-title bar read,
     /// so a project switch updates both at once.
@@ -116,6 +121,24 @@ final class AppModel: ChatSink {
 
     init() {
         currentProject = Self.loadLastProject()
+        density = Self.loadDensity()
+    }
+
+    /// Sets density directly (0 = Verbose, 1 = Normal, 2 = Summary) — the
+    /// composer toolbar's density `Picker` writes through this.
+    func setDensity(_ value: Int) {
+        density = value
+        Self.saveDensity(density)
+    }
+
+    /// Whether a row of `kind` should render at the given `density` — a
+    /// pure mirror of `app.slint`'s `Style.row-visible`: errors always
+    /// show; Summary (2) hides `thinking`/`tool`/`info` rows (live ones
+    /// included, not just finalized); Verbose/Normal (0/1) show everything.
+    static func rowVisible(density: Int, kind: String) -> Bool {
+        if kind == "error" { return true }
+        guard density == 2 else { return true }
+        return !["thinking", "tool", "info"].contains(kind)
     }
 
     /// Sets `statusMessage` and logs it — the only way `statusMessage`
@@ -442,6 +465,18 @@ final class AppModel: ChatSink {
         var byProject = UserDefaults.standard.dictionary(forKey: lastSessionsDefaultsKey) as? [String: String] ?? [:]
         byProject[project] = path
         UserDefaults.standard.set(byProject, forKey: lastSessionsDefaultsKey)
+    }
+
+    // MARK: - Density persistence
+
+    private static let densityDefaultsKey = "dev.slinty-pi.swifty-pi.density"
+
+    private static func loadDensity() -> Int {
+        (UserDefaults.standard.object(forKey: densityDefaultsKey) as? Int) ?? 1 // Normal
+    }
+
+    private static func saveDensity(_ value: Int) {
+        UserDefaults.standard.set(value, forKey: densityDefaultsKey)
     }
 
     // MARK: - ChatSink

@@ -17,6 +17,10 @@ import SwiftUI
 /// gets no copy affordance, matching Slint's own scope.
 struct RowView: View {
     let row: RowRecord
+    /// Density-driven force-expand for `"tool"` rows (Verbose mode) — inert
+    /// for every other kind, so passing it uniformly at every call site is
+    /// harmless. See the density control plan section.
+    var forceToolExpanded: Bool = false
 
     var body: some View {
         switch row.kind {
@@ -38,7 +42,7 @@ struct RowView: View {
         case "thinking":
             ThinkingRowView(row: row)
         case "tool":
-            ToolRowView(row: row)
+            ToolRowView(row: row, forceExpanded: forceToolExpanded)
         case "user":
             userBubble
         case "error":
@@ -152,6 +156,7 @@ private struct ThinkingRowView: View {
 
 private struct ToolRowView: View {
     let row: RowRecord
+    let forceExpanded: Bool
     @State private var expanded = false
 
     var body: some View {
@@ -173,7 +178,7 @@ private struct ToolRowView: View {
                 }
             }
             .buttonStyle(.plain)
-            if expanded, !row.detail.isEmpty {
+            if expanded || forceExpanded, !row.detail.isEmpty {
                 Text(row.detail)
                     .font(.system(.caption2, design: .monospaced))
                     .foregroundStyle(.secondary)
