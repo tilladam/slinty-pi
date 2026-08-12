@@ -36,6 +36,14 @@ struct SidebarView: View {
         }
         .listStyle(.sidebar)
         .navigationTitle(projectDisplayName)
+        .safeAreaInset(edge: .bottom) {
+            VStack(spacing: 0) {
+                Divider()
+                modelPicker
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+            }
+        }
         .toolbar {
             ToolbarItem {
                 Button {
@@ -102,6 +110,58 @@ struct SidebarView: View {
         panel.prompt = "Switch"
         guard panel.runModal() == .OK, let url = panel.url else { return }
         Task { await model.switchProject(to: url.path) }
+    }
+
+    /// The "current active model" picker (SW6) — checkmarks `isCurrent`,
+    /// sorted by display label (name-first, so this reads as
+    /// alphabetical-by-model-name) rather than pi's own `GetAvailableModels`
+    /// order. Each row switches via `AppModel.setModel`. A `Menu` (not
+    /// `Picker`) since per-row action closures need no separate `@State`
+    /// selection binding kept in sync with `isCurrent`. Lives at the bottom
+    /// of the sidebar (via `.safeAreaInset`), so its trigger shows the
+    /// current model's name rather than a bare icon — unlike a composer
+    /// chip, there's no adjacent context to lean on here.
+    ///
+    /// Keyed by array offset, not `entry.id` — pi can legitimately list the
+    /// same model `id` under more than one provider (e.g. the same model
+    /// proxied through both a direct provider and a router like `bifrost`),
+    /// so `id` alone isn't a unique `ForEach` identity and produced
+    /// duplicated/misplaced rows when used as one.
+    ///
+    /// The current row's checkmark is a plain text prefix, not `Label(_:
+    /// systemImage:)` — an SF Symbol icon inside a `Menu` button label
+    /// wasn't rendering reliably (observed on a beta macOS/Xcode SDK), and
+    /// plain `Text` has no such ambiguity.
+    private var modelPicker: some View {
+        Menu {
+            ForEach(Array(sortedModels.enumerated()), id: \.offset) { _, entry in
+                Button {
+                    Task { await model.setModel(provider: entry.provider, modelId: entry.id) }
+                } label: {
+                    Text(entry.isCurrent ? "✓ \(entry.label)" : entry.label)
+                }
+            }
+        } label: {
+            HStack {
+                Image(systemName: "cpu")
+                Text(currentModelLabel)
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+            }
+        }
+        .menuIndicator(.hidden)
+        .disabled(model.models.isEmpty)
+        .help(currentModelLabel)
+    }
+
+    private var currentModelLabel: String {
+        model.models.first(where: \.isCurrent)?.label ?? "Choose a model"
+    }
+
+    private var sortedModels: [ModelRecord] {
+        model.models.sorted {
+            $0.label.localizedStandardCompare($1.label) == .orderedAscending
+        }
     }
 }
 

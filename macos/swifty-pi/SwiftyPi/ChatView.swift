@@ -52,8 +52,6 @@ struct ChatView: View {
             statusBar
 
             HStack(alignment: .bottom, spacing: 8) {
-                modelPicker
-
                 TextField("Message pi…", text: $draft, axis: .vertical)
                     .textFieldStyle(.plain)
                     .lineLimit(1...6)
@@ -66,9 +64,13 @@ struct ChatView: View {
                         model.abort()
                     }
                 } else {
-                    Button("Send") {
+                    Button {
                         send()
+                    } label: {
+                        Label("Send", systemImage: "paperplane.fill")
                     }
+                    .labelStyle(.iconOnly)
+                    .help("Send")
                     .disabled(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
             }
@@ -76,58 +78,45 @@ struct ChatView: View {
         }
         .frame(minWidth: 480, minHeight: 360)
         .navigationTitle(model.activeSessionPath == nil ? "New Session" : "pi")
+        .toolbar {
+            // Streaming + server-health indicator dots, trailing edge of the
+            // top navigation bar — moved here from the composer's own status
+            // bar so they're visible regardless of scroll position.
+            // `.sharedBackgroundVisibility(.hidden)` (macOS 26+ only — the
+            // app's deployment target is 14+) opts this item out of the
+            // system's automatic grouped "glass" background: these are
+            // plain status dots, not a control, so they shouldn't look like
+            // a button. Older macOS versions don't have that background to
+            // begin with, so the plain `ToolbarItem` fallback needs no
+            // equivalent workaround.
+            if #available(macOS 26.0, *) {
+                ToolbarItem(placement: .primaryAction) {
+                    statusDots
+                }
+                .sharedBackgroundVisibility(.hidden)
+            } else {
+                ToolbarItem(placement: .primaryAction) {
+                    statusDots
+                }
+            }
+        }
         .extensionDialogs(model: model)
     }
 
-    /// The composer's "current active model" picker (SW6) — checkmarks
-    /// `isCurrent`, sorted by display label (name-first, so this reads as
-    /// alphabetical-by-model-name) rather than pi's own `GetAvailableModels`
-    /// order. Each row switches via `AppModel.setModel`. A `Menu` (not
-    /// `Picker`) since per-row action closures need no separate `@State`
-    /// selection binding kept in sync with `isCurrent`.
-    ///
-    /// Keyed by array offset, not `entry.id` — pi can legitimately list the
-    /// same model `id` under more than one provider (e.g. the same model
-    /// proxied through both a direct provider and a router like `bifrost`),
-    /// so `id` alone isn't a unique `ForEach` identity and produced
-    /// duplicated/misplaced rows when used as one.
-    ///
-    /// The current row's checkmark is a plain text prefix, not `Label(_:
-    /// systemImage:)` — an SF Symbol icon inside a `Menu` button label
-    /// wasn't rendering reliably (observed on a beta macOS/Xcode SDK), and
-    /// plain `Text` has no such ambiguity.
-    private var modelPicker: some View {
-        Menu {
-            ForEach(Array(sortedModels.enumerated()), id: \.offset) { _, entry in
-                Button {
-                    Task { await model.setModel(provider: entry.provider, modelId: entry.id) }
-                } label: {
-                    Text(entry.isCurrent ? "✓ \(entry.label)" : entry.label)
-                }
-            }
-        } label: {
-            Image(systemName: "cpu")
-        }
-        .menuIndicator(.hidden)
-        .disabled(model.models.isEmpty)
-        .help(model.models.first(where: \.isCurrent)?.label ?? "Choose a model")
-    }
-
-    private var sortedModels: [ModelRecord] {
-        model.models.sorted {
-            $0.label.localizedStandardCompare($1.label) == .orderedAscending
+    private var statusDots: some View {
+        HStack(spacing: 6) {
+            Circle()
+                .fill(model.isStreaming ? .green : .secondary)
+                .frame(width: 12, height: 12)
+                .padding(4)
+                .contentShape(Rectangle())
+                .help(model.isStreaming ? "Streaming" : "Idle")
+            serverDotView
         }
     }
 
     private var statusBar: some View {
         HStack {
-            Circle()
-                .fill(model.isStreaming ? .green : .secondary)
-                .frame(width: 8, height: 8)
-                .padding(4)
-                .contentShape(Rectangle())
-                .help(model.isStreaming ? "Streaming" : "Idle")
-            serverDotView
             Spacer()
             if let statusMessage = model.statusMessage {
                 Text(statusMessage)
@@ -149,7 +138,7 @@ struct ChatView: View {
         if let color = serverDotColor {
             Circle()
                 .fill(color)
-                .frame(width: 8, height: 8)
+                .frame(width: 12, height: 12)
                 .padding(4)
                 .contentShape(Rectangle())
                 .help(serverDotTooltip)
