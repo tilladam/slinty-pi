@@ -15,9 +15,9 @@
             <BuildableReference
                BuildableIdentifier = "primary"
                BlueprintIdentifier = "F7CA60D3B56377D71471E126"
-               BuildableName = "PiMac.app"
-               BlueprintName = "PiMac"
-               ReferencedContainer = "container:PiMac.xcodeproj">
+               BuildableName = "SwiftyPi.app"
+               BlueprintName = "SwiftyPi"
+               ReferencedContainer = "container:SwiftyPi.xcodeproj">
             </BuildableReference>
          </BuildActionEntry>
       </BuildActionEntries>
@@ -45,9 +45,9 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "F7CA60D3B56377D71471E126"
-            BuildableName = "PiMac.app"
-            BlueprintName = "PiMac"
-            ReferencedContainer = "container:PiMac.xcodeproj">
+            BuildableName = "SwiftyPi.app"
+            BlueprintName = "SwiftyPi"
+            ReferencedContainer = "container:SwiftyPi.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
    </LaunchAction>
@@ -62,9 +62,9 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "F7CA60D3B56377D71471E126"
-            BuildableName = "PiMac.app"
-            BlueprintName = "PiMac"
-            ReferencedContainer = "container:PiMac.xcodeproj">
+            BuildableName = "SwiftyPi.app"
+            BlueprintName = "SwiftyPi"
+            ReferencedContainer = "container:SwiftyPi.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
    </ProfileAction>

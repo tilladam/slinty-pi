@@ -1,7 +1,7 @@
 import SwiftUI
 
 @main
-struct PiMacApp: App {
+struct SwiftyPiApp: App {
     var body: some Scene {
         WindowGroup {
             ContentView()

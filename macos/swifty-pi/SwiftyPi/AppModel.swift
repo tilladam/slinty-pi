@@ -104,7 +104,7 @@ final class AppModel: ChatSink {
     /// that's ever shown to the user, from either layer, ends up in the
     /// same place in Console.app / `log stream`, not just a one-line status
     /// caption that gets overwritten by the next event.
-    private let logger = Logger(subsystem: "dev.slinty-pi.pi-mac", category: "app")
+    private let logger = Logger(subsystem: "dev.slinty-pi.swifty-pi", category: "app")
 
     init() {
         currentProject = Self.loadLastProject()
@@ -117,7 +117,7 @@ final class AppModel: ChatSink {
         statusMessage = message
     }
 
-    /// Spawns the `pi` child in `currentProject`, or — with `PI_MAC_DEMO` set
+    /// Spawns the `pi` child in `currentProject`, or — with `SWIFTY_PI_DEMO` set
     /// in the environment — starts a synthetic session that streams a canned
     /// reply without `pi` installed (mirrors `SLINTY_DEMO=1` for the Slint
     /// app). Safe to call more than once; only the first call does anything.
@@ -129,7 +129,7 @@ final class AppModel: ChatSink {
     /// `resume_on_first_spawn`.
     func start(dark: Bool) {
         guard session == nil else { return }
-        if ProcessInfo.processInfo.environment["PI_MAC_DEMO"] != nil {
+        if ProcessInfo.processInfo.environment["SWIFTY_PI_DEMO"] != nil {
             session = PiSession.newDemo(sink: self)
         } else {
             do {
@@ -397,7 +397,7 @@ final class AppModel: ChatSink {
 
     // MARK: - Last-project persistence
 
-    private static let lastProjectDefaultsKey = "dev.slinty-pi.pi-mac.lastProject"
+    private static let lastProjectDefaultsKey = "dev.slinty-pi.swifty-pi.lastProject"
 
     private static func loadLastProject() -> String {
         UserDefaults.standard.string(forKey: lastProjectDefaultsKey)
@@ -410,7 +410,7 @@ final class AppModel: ChatSink {
 
     // MARK: - Last-session-per-project persistence (launch-time restore)
 
-    private static let lastSessionsDefaultsKey = "dev.slinty-pi.pi-mac.lastSessionByProject"
+    private static let lastSessionsDefaultsKey = "dev.slinty-pi.swifty-pi.lastSessionByProject"
 
     private static func loadLastSession(forProject project: String) -> String? {
         let byProject = UserDefaults.standard.dictionary(forKey: lastSessionsDefaultsKey) as? [String: String]

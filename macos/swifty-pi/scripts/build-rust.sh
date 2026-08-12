@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Builds pi-core-ffi, generates its Swift bindings, and packages everything
-# into PiCoreFFI.xcframework + Generated/pi_core_ffi.swift for the PiMac
+# into PiCoreFFI.xcframework + Generated/pi_core_ffi.swift for the SwiftyPi
 # Xcode target. Runs as an Xcode "Run Script" build phase (see
-# PiMac.xcodeproj) or standalone from a terminal for debugging — it does
+# SwiftyPi.xcodeproj) or standalone from a terminal for debugging — it does
 # nothing Xcode-specific, so failures can be reproduced and iterated on here.
 #
 # Host-architecture only for this spike (SW1): a universal arm64+x86_64
@@ -54,7 +54,7 @@ HEADERS_DIR="$GENERATED_DIR/Headers"
 mkdir -p "$HEADERS_DIR"
 mv "$GENERATED_DIR/pi_core_ffiFFI.h" "$HEADERS_DIR/"
 mv "$GENERATED_DIR/pi_core_ffiFFI.modulemap" "$HEADERS_DIR/module.modulemap"
-# pi_core_ffi.swift is left in $GENERATED_DIR — added to the PiMac Xcode
+# pi_core_ffi.swift is left in $GENERATED_DIR — added to the SwiftyPi Xcode
 # target as a normal Swift source file (a project-referenced file picks up
 # changes here automatically since this Run Script phase runs before Xcode's
 # own Swift compilation phase).

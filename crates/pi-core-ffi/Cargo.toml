@@ -3,7 +3,7 @@ name = "pi-core-ffi"
 version = "0.1.0"
 edition.workspace = true
 license.workspace = true
-description = "UniFFI boundary: exposes a minimal pi-rpc chat session to Swift for the SW1 spike (apps/pi-mac). Deliberately smaller than pi-core's full UiSink surface."
+description = "UniFFI boundary: exposes a minimal pi-rpc chat session to Swift for the SW1 spike (macos/swifty-pi). Deliberately smaller than pi-core's full UiSink surface."
 
 [lib]
 # staticlib: linked into the SwiftUI app's xcframework. cdylib: what
@@ -23,7 +23,7 @@ tracing.workspace = true
 serde_json.workspace = true
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # Forwards `tracing` events to macOS unified logging (Console.app/`log
-# stream`), so a compiled PiMac.app has somewhere for its diagnostics to go
+# stream`), so a compiled SwiftyPi.app has somewhere for its diagnostics to go
 # — otherwise every `tracing::*!` call in this crate and pi-rpc (including
 # one that forwards pi's own child-process stderr) is a silent no-op, since
 # no subscriber is ever installed without this.

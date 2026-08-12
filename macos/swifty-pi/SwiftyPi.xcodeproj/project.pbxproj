@@ -7,7 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		3FC1ECF2E681672FAF38C165 /* PiMacApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 86A91C1D0EE958145E2B7FBA /* PiMacApp.swift */; };
+		3FC1ECF2E681672FAF38C165 /* SwiftyPiApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 86A91C1D0EE958145E2B7FBA /* SwiftyPiApp.swift */; };
 		8CE91CE85E1166BA5C71413E /* ChatView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 482A0F1669E6FF6A90545385 /* ChatView.swift */; };
 		2D06D85C5242C590D955182D /* AppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = CB136EEEBB2354FB5BA2BC65 /* AppModel.swift */; };
 		0A8DA7080FAA59C0D5752069 /* pi_core_ffi.swift in Sources */ = {isa = PBXBuildFile; fileRef = 93A97F54DA13BD6180002DDA /* pi_core_ffi.swift */; };
@@ -20,7 +20,7 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
-		86A91C1D0EE958145E2B7FBA /* PiMacApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PiMacApp.swift; sourceTree = "<group>"; };
+		86A91C1D0EE958145E2B7FBA /* SwiftyPiApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SwiftyPiApp.swift; sourceTree = "<group>"; };
 		482A0F1669E6FF6A90545385 /* ChatView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatView.swift; sourceTree = "<group>"; };
 		CB136EEEBB2354FB5BA2BC65 /* AppModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModel.swift; sourceTree = "<group>"; };
 		93A97F54DA13BD6180002DDA /* pi_core_ffi.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = pi_core_ffi.swift; sourceTree = "<group>"; };
@@ -30,7 +30,7 @@
 		515C4F2EB80C3DD64E34111F /* ModelsPanelView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelsPanelView.swift; sourceTree = "<group>"; };
 		3395DB8EC1C35123711D0746 /* HfSearchView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HfSearchView.swift; sourceTree = "<group>"; };
 		B536DC4288ED4167BC96BE32 /* ExtensionDialogView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExtensionDialogView.swift; sourceTree = "<group>"; };
-		7C900BB47408588774DEFB3C /* PiMac.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = PiMac.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		7C900BB47408588774DEFB3C /* SwiftyPi.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = SwiftyPi.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -47,16 +47,16 @@
 		64F8AD7375A6A3115432CD58 = {
 			isa = PBXGroup;
 			children = (
-				09FA3BFEBFF069601860B32C /* PiMac */,
+				09FA3BFEBFF069601860B32C /* SwiftyPi */,
 				CD84DED7F3B7594D511F9F3A /* Generated */,
 				7EACED0FD2F85297E2F26AD9 /* Products */,
 			);
 			sourceTree = "<group>";
 		};
-		09FA3BFEBFF069601860B32C /* PiMac */ = {
+		09FA3BFEBFF069601860B32C /* SwiftyPi */ = {
 			isa = PBXGroup;
 			children = (
-				86A91C1D0EE958145E2B7FBA /* PiMacApp.swift */,
+				86A91C1D0EE958145E2B7FBA /* SwiftyPiApp.swift */,
 				1DA6692E517D9BE29939E861 /* ContentView.swift */,
 				75F2A2B404A96C539D91DE0C /* SidebarView.swift */,
 				482A0F1669E6FF6A90545385 /* ChatView.swift */,
@@ -66,7 +66,7 @@
 				3395DB8EC1C35123711D0746 /* HfSearchView.swift */,
 				B536DC4288ED4167BC96BE32 /* ExtensionDialogView.swift */,
 			);
-			path = PiMac;
+			path = SwiftyPi;
 			sourceTree = "<group>";
 		};
 		CD84DED7F3B7594D511F9F3A /* Generated */ = {
@@ -80,7 +80,7 @@
 		7EACED0FD2F85297E2F26AD9 /* Products */ = {
 			isa = PBXGroup;
 			children = (
-				7C900BB47408588774DEFB3C /* PiMac.app */,
+				7C900BB47408588774DEFB3C /* SwiftyPi.app */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -88,9 +88,9 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
-		F7CA60D3B56377D71471E126 /* PiMac */ = {
+		F7CA60D3B56377D71471E126 /* SwiftyPi */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = BD20BB8D0001FF81A321FA91 /* Build configuration list for PBXNativeTarget "PiMac" */;
+			buildConfigurationList = BD20BB8D0001FF81A321FA91 /* Build configuration list for PBXNativeTarget "SwiftyPi" */;
 			buildPhases = (
 				09A8E3A0AC25A331B2EAAE62 /* Build pi-core-ffi (Rust) */,
 				51C74968BACA86CCDE237810 /* Sources */,
@@ -101,9 +101,9 @@
 			);
 			dependencies = (
 			);
-			name = PiMac;
-			productName = PiMac;
-			productReference = 7C900BB47408588774DEFB3C /* PiMac.app */;
+			name = SwiftyPi;
+			productName = SwiftyPi;
+			productReference = 7C900BB47408588774DEFB3C /* SwiftyPi.app */;
 			productType = "com.apple.product-type.application";
 		};
 /* End PBXNativeTarget section */
@@ -116,7 +116,7 @@
 				LastSwiftUpdateCheck = 1600;
 				LastUpgradeCheck = 1600;
 			};
-			buildConfigurationList = 3FA0B2D80D7C6B5CFE1C93DC /* Build configuration list for PBXProject "PiMac" */;
+			buildConfigurationList = 3FA0B2D80D7C6B5CFE1C93DC /* Build configuration list for PBXProject "SwiftyPi" */;
 			compatibilityVersion = "Xcode 14.0";
 			developmentRegion = en;
 			hasScannedForEncodings = 0;
@@ -129,7 +129,7 @@
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
-				F7CA60D3B56377D71471E126 /* PiMac */,
+				F7CA60D3B56377D71471E126 /* SwiftyPi */,
 			);
 		};
 /* End PBXProject section */
@@ -169,7 +169,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				3FC1ECF2E681672FAF38C165 /* PiMacApp.swift in Sources */,
+				3FC1ECF2E681672FAF38C165 /* SwiftyPiApp.swift in Sources */,
 				69DB5AD51C80EF95A6A1BB31 /* ContentView.swift in Sources */,
 				CBD2A8CD7F35F4934147D41E /* SidebarView.swift in Sources */,
 				8CE91CE85E1166BA5C71413E /* ChatView.swift in Sources */,
@@ -252,7 +252,7 @@
 					"$(inherited)",
 					"-lpi_core_ffi",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = "dev.slinty-pi.pi-mac";
+				PRODUCT_BUNDLE_IDENTIFIER = "dev.slinty-pi.swifty-pi";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_INCLUDE_PATHS = "$(SRCROOT)/Generated/Headers";
@@ -284,7 +284,7 @@
 					"$(inherited)",
 					"-lpi_core_ffi",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = "dev.slinty-pi.pi-mac";
+				PRODUCT_BUNDLE_IDENTIFIER = "dev.slinty-pi.swifty-pi";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_INCLUDE_PATHS = "$(SRCROOT)/Generated/Headers";
@@ -294,7 +294,7 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
-		3FA0B2D80D7C6B5CFE1C93DC /* Build configuration list for PBXProject "PiMac" */ = {
+		3FA0B2D80D7C6B5CFE1C93DC /* Build configuration list for PBXProject "SwiftyPi" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				1CCF2C690B0BD3E34773C6B8 /* Debug */,
@@ -303,7 +303,7 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
-		BD20BB8D0001FF81A321FA91 /* Build configuration list for PBXNativeTarget "PiMac" */ = {
+		BD20BB8D0001FF81A321FA91 /* Build configuration list for PBXNativeTarget "SwiftyPi" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				CB1E33954A90A89048807CA2 /* Debug */,

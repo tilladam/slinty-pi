@@ -45,7 +45,7 @@ pub use session_index::{ProjectRecord, SessionIndex, SessionRecord};
 uniffi::setup_scaffolding!();
 
 /// Installs `tracing-oslog` as the process's `tracing` subscriber, so a
-/// compiled `PiMac.app` has somewhere for its diagnostics to go — without
+/// compiled `SwiftyPi.app` has somewhere for its diagnostics to go — without
 /// this, every `tracing::*!` call in this crate and `pi-rpc` (including one
 /// that forwards `pi`'s own child-process stderr) is a silent no-op, since
 /// nothing else installs a subscriber inside the shipped app. Idempotent
@@ -64,7 +64,10 @@ fn ensure_logging_initialized() {
     static INIT: std::sync::Once = std::sync::Once::new();
     INIT.call_once(|| {
         let _ = tracing_subscriber::registry()
-            .with(tracing_oslog::OsLogger::new("dev.slinty-pi.pi-mac", "rust"))
+            .with(tracing_oslog::OsLogger::new(
+                "dev.slinty-pi.swifty-pi",
+                "rust",
+            ))
             .try_init();
     });
 }
