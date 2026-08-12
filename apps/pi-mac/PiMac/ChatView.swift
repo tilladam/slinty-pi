@@ -66,18 +66,25 @@ struct ChatView: View {
         .extensionDialogs(model: model)
     }
 
-    /// The composer's "current active model" picker (SW6) — checkmarks
-    /// `isCurrent`, each row switching via `AppModel.setModel`. A `Menu`
-    /// (not `Picker`) since per-row action closures need no separate
-    /// `@State` selection binding kept in sync with `isCurrent`.
+    /// The composer's "current active model" picker (SW6) — checkmarks and
+    /// bolds `isCurrent`, sorted by display label (name-first, so this
+    /// reads as alphabetical-by-model-name) rather than pi's own
+    /// `GetAvailableModels` order. Each row switches via `AppModel.
+    /// setModel`. A `Menu` (not `Picker`) since per-row action closures
+    /// need no separate `@State` selection binding kept in sync with
+    /// `isCurrent`.
     private var modelPicker: some View {
         Menu {
-            ForEach(model.models, id: \.id) { entry in
+            ForEach(sortedModels, id: \.id) { entry in
                 Button {
                     Task { await model.setModel(provider: entry.provider, modelId: entry.id) }
                 } label: {
                     if entry.isCurrent {
-                        Label(entry.label, systemImage: "checkmark")
+                        Label {
+                            Text(entry.label).fontWeight(.semibold)
+                        } icon: {
+                            Image(systemName: "checkmark")
+                        }
                     } else {
                         Text(entry.label)
                     }
@@ -89,6 +96,12 @@ struct ChatView: View {
         .menuIndicator(.hidden)
         .disabled(model.models.isEmpty)
         .help(model.models.first(where: \.isCurrent)?.label ?? "Choose a model")
+    }
+
+    private var sortedModels: [ModelRecord] {
+        model.models.sorted {
+            $0.label.localizedStandardCompare($1.label) == .orderedAscending
+        }
     }
 
     private var statusBar: some View {
