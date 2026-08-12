@@ -127,12 +127,17 @@ struct ChatView: View {
 
     private var statusDots: some View {
         HStack(spacing: 6) {
-            Circle()
-                .fill(model.isStreaming ? .green : .secondary)
-                .frame(width: 12, height: 12)
-                .padding(4)
-                .contentShape(Rectangle())
-                .help(model.isStreaming ? "Streaming" : "Idle")
+            Group {
+                if model.isStreaming {
+                    StreamingSpinner()
+                } else {
+                    Circle().stroke(Color.gray, lineWidth: 2)
+                }
+            }
+            .frame(width: 12, height: 12)
+            .padding(4)
+            .contentShape(Rectangle())
+            .help(model.isStreaming ? "Streaming" : "Idle")
             serverDotView
         }
     }
@@ -211,6 +216,25 @@ struct ChatView: View {
         guard !prompt.isEmpty else { return }
         model.send(prompt)
         draft = ""
+    }
+}
+
+/// Continuously-rotating partial-circle arc for the streaming indicator —
+/// a custom `Circle().trim()` stroke rather than a plain `ProgressView()`,
+/// since macOS's default circular spinner doesn't reliably pick up `.tint`.
+private struct StreamingSpinner: View {
+    @State private var rotation = 0.0
+
+    var body: some View {
+        Circle()
+            .trim(from: 0, to: 0.7)
+            .stroke(Color.green, style: StrokeStyle(lineWidth: 2, lineCap: .round))
+            .rotationEffect(.degrees(rotation))
+            .onAppear {
+                withAnimation(.linear(duration: 0.8).repeatForever(autoreverses: false)) {
+                    rotation = 360
+                }
+            }
     }
 }
 
