@@ -66,28 +66,30 @@ struct ChatView: View {
         .extensionDialogs(model: model)
     }
 
-    /// The composer's "current active model" picker (SW6) — checkmarks and
-    /// bolds `isCurrent`, sorted by display label (name-first, so this
-    /// reads as alphabetical-by-model-name) rather than pi's own
-    /// `GetAvailableModels` order. Each row switches via `AppModel.
-    /// setModel`. A `Menu` (not `Picker`) since per-row action closures
-    /// need no separate `@State` selection binding kept in sync with
-    /// `isCurrent`.
+    /// The composer's "current active model" picker (SW6) — checkmarks
+    /// `isCurrent`, sorted by display label (name-first, so this reads as
+    /// alphabetical-by-model-name) rather than pi's own `GetAvailableModels`
+    /// order. Each row switches via `AppModel.setModel`. A `Menu` (not
+    /// `Picker`) since per-row action closures need no separate `@State`
+    /// selection binding kept in sync with `isCurrent`.
+    ///
+    /// Keyed by array offset, not `entry.id` — pi can legitimately list the
+    /// same model `id` under more than one provider (e.g. the same model
+    /// proxied through both a direct provider and a router like `bifrost`),
+    /// so `id` alone isn't a unique `ForEach` identity and produced
+    /// duplicated/misplaced rows when used as one.
+    ///
+    /// The current row's checkmark is a plain text prefix, not `Label(_:
+    /// systemImage:)` — an SF Symbol icon inside a `Menu` button label
+    /// wasn't rendering reliably (observed on a beta macOS/Xcode SDK), and
+    /// plain `Text` has no such ambiguity.
     private var modelPicker: some View {
         Menu {
-            ForEach(sortedModels, id: \.id) { entry in
+            ForEach(Array(sortedModels.enumerated()), id: \.offset) { _, entry in
                 Button {
                     Task { await model.setModel(provider: entry.provider, modelId: entry.id) }
                 } label: {
-                    if entry.isCurrent {
-                        Label {
-                            Text(entry.label).fontWeight(.semibold)
-                        } icon: {
-                            Image(systemName: "checkmark")
-                        }
-                    } else {
-                        Text(entry.label)
-                    }
+                    Text(entry.isCurrent ? "✓ \(entry.label)" : entry.label)
                 }
             }
         } label: {
