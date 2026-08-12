@@ -20,6 +20,7 @@
 
 mod dialog;
 mod local_models;
+mod models;
 mod row;
 mod session_index;
 
@@ -36,6 +37,7 @@ pub use local_models::{
     CachedModelRecord, HfResultRecord, LocalModelError, LocalModelIndex, OllamaPanelRecord,
     RapidMlxPanelRecord, RouterModelRecord, RouterPanelRecord,
 };
+pub use models::{ModelRecord, ServerDotState};
 pub use row::{CodeLineRecord, ColoredSpanRecord, RowRecord, TableCellRecord};
 pub use session_index::{ProjectRecord, SessionIndex, SessionRecord};
 
@@ -102,6 +104,13 @@ pub trait ChatSink: Send + Sync {
     /// `setTitle`, `set_editor_text`) are an explicit SW5 scope cut — not
     /// delivered via this or any callback yet.
     fn on_extension_dialog(&self, request: ExtensionDialogRecord);
+    /// Status-bar server-dot state, pushed only when it changes — polled
+    /// every 5s (and immediately after `set_model`/`serve_rapid_mlx_model`
+    /// succeed) against whichever model `refresh_models`/`set_model` last
+    /// resolved as current. The model *list* itself stays pull-based (see
+    /// `refresh_models`/`set_model`) — this is the one value with no
+    /// natural user action to hang a re-fetch off of.
+    fn on_server_dot_changed(&self, state: ServerDotState);
 }
 
 #[derive(Debug, thiserror::Error, uniffi::Error)]
@@ -152,6 +161,23 @@ enum ChatCmd {
     ReplyExtensionDialog {
         request_id: String,
         reply: ExtensionDialogReply,
+    },
+    /// `GetAvailableModels` + `GetState`, re-fetched fresh every call — the
+    /// composer picker's pull-based refresh, mirroring
+    /// `pi_core::backend::refresh_models`'s full-re-fetch shape (used
+    /// uniformly here, not just after actions that could change
+    /// availability, since there's no push signal to hang a targeted
+    /// refresh off of — see `ChatSink::on_server_dot_changed`'s doc
+    /// comment).
+    RefreshModels {
+        reply: oneshot::Sender<Result<Vec<ModelRecord>, String>>,
+    },
+    /// The composer picker's "switch model" action: `client.set_model(...)`
+    /// then the same refresh `RefreshModels` does.
+    SetModel {
+        provider: String,
+        model_id: String,
+        reply: oneshot::Sender<Result<(), String>>,
     },
 }
 
@@ -343,6 +369,38 @@ impl PiSession {
             .await
     }
 
+    /// Lists pi's currently-configured models with picker-ready labels,
+    /// flagging whichever one pi's `GetState` reports as active. Pull-based
+    /// — call again after any action that could plausibly change model
+    /// availability (mirrors `pi_core::backend::refresh_models`'s call
+    /// sites): session start, `set_model`, `serve_rapid_mlx_model`, and
+    /// (Swift-side) the router/HF/Ollama actions in `LocalModelIndex`.
+    pub async fn refresh_models(&self) -> Result<Vec<ModelRecord>, PiSessionError> {
+        let (reply_tx, reply_rx) = oneshot::channel();
+        let _ = self.cmd_tx.send(ChatCmd::RefreshModels { reply: reply_tx });
+        reply_rx
+            .await
+            .map_err(|_| PiSessionError::Action("session task ended".to_string()))?
+            .map_err(PiSessionError::Action)
+    }
+
+    /// Switches pi's active model, then refreshes the picker list (so the
+    /// new selection's `is_current` flag is correct on the caller's next
+    /// `refresh_models` call) and resets the server-dot poll timer so it
+    /// reflects the switch without waiting up to 5s.
+    pub async fn set_model(
+        &self,
+        provider: String,
+        model_id: String,
+    ) -> Result<(), PiSessionError> {
+        self.call(|reply| ChatCmd::SetModel {
+            provider,
+            model_id,
+            reply,
+        })
+        .await
+    }
+
     /// Richly-renders `markdown` (typically the in-flight streaming buffer)
     /// without touching `client`/`events`/the command channel at all — a
     /// stateless, side-effect-free segment-and-map, reusing whatever theme
@@ -408,6 +466,13 @@ async fn run(
     // knows to stop it before starting a replacement — same loop-scoped-
     // mutable-local pattern as `client`/`events` above.
     let mut managed_rapid_mlx: Option<Managed> = None;
+    // Set by `RefreshModels`/`SetModel`/`ServeRapidMlxModel`; read by the
+    // `dot_interval` tick below — same loop-scoped-mutable-local pattern as
+    // `managed_rapid_mlx` above.
+    let mut current_model: Option<models::ModelEntry> = None;
+    let mut last_dot = ServerDotState::Hidden;
+    let mut dot_interval = tokio::time::interval(Duration::from_secs(5));
+    dot_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     if let Some(path) = resume_session_path {
         match do_switch_session(&client, &path).await {
             Ok(()) => hydrate_and_push(&client, sink.as_ref(), &dark).await,
@@ -533,6 +598,10 @@ async fn run(
                                                  models.json?): {e}"
                                             )
                                         });
+                                    if outcome.is_ok() {
+                                        (_, current_model) = models::refresh_models_and_state(&client).await;
+                                        dot_interval.reset_immediately();
+                                    }
                                     let _ = reply.send(outcome);
                                 }
                                 Err(e) => {
@@ -554,6 +623,23 @@ async fn run(
                             );
                         }
                     }
+                    Some(ChatCmd::RefreshModels { reply }) => {
+                        let (records, entry) = models::refresh_models_and_state(&client).await;
+                        current_model = entry;
+                        let _ = reply.send(Ok(records));
+                    }
+                    Some(ChatCmd::SetModel { provider, model_id, reply }) => {
+                        match client.set_model(&provider, &model_id).await {
+                            Ok(_) => {
+                                (_, current_model) = models::refresh_models_and_state(&client).await;
+                                dot_interval.reset_immediately();
+                                let _ = reply.send(Ok(()));
+                            }
+                            Err(e) => {
+                                let _ = reply.send(Err(describe(&e)));
+                            }
+                        }
+                    }
                     None => return,
                 }
             }
@@ -569,6 +655,14 @@ async fn run(
                 // machinery across FFI — see the SW3 plan's Design section.
                 if matches!(event, Event::AgentSettled) {
                     hydrate_and_push(&client, sink.as_ref(), &dark).await;
+                }
+            }
+            _ = dot_interval.tick() => {
+                let managed_alive = managed_rapid_mlx.as_mut().map(|m| m.server.is_alive());
+                let dot = models::compute_server_dot(current_model.as_ref(), managed_alive).await;
+                if dot != last_dot {
+                    last_dot = dot;
+                    sink.on_server_dot_changed(dot);
                 }
             }
         }
@@ -782,10 +876,39 @@ fn reply_demo_action(cmd: ChatCmd, sink: &dyn ChatSink) {
             let _ = reply.send(Ok(()));
         }
         ChatCmd::ReplyExtensionDialog { .. } => {} // no-op: demo mode never emits dialogs
+        ChatCmd::RefreshModels { reply } => {
+            let _ = reply.send(Ok(demo_models()));
+        }
+        ChatCmd::SetModel { reply, .. } => {
+            // No real server to probe — `Hidden` keeps the demo dot state
+            // consistent with `demo_models`'s synthetic entries never
+            // reporting `is_local`.
+            sink.on_server_dot_changed(ServerDotState::Hidden);
+            let _ = reply.send(Ok(()));
+        }
         ChatCmd::Send(_) | ChatCmd::Abort => {
             unreachable!("Send/Abort are handled by run_demo's own match arms")
         }
     }
+}
+
+/// Enough entries to exercise the composer picker's checkmark/switch UI
+/// without a real `pi` — mirrors `demo_rows`' role for the transcript.
+fn demo_models() -> Vec<ModelRecord> {
+    vec![
+        ModelRecord {
+            provider: "demo".to_string(),
+            id: "demo-model".to_string(),
+            label: "Demo Model · demo · free · local".to_string(),
+            is_current: true,
+        },
+        ModelRecord {
+            provider: "demo".to_string(),
+            id: "demo-model-2".to_string(),
+            label: "Demo Model 2 · demo · $1/$2".to_string(),
+            is_current: false,
+        },
+    ]
 }
 
 /// Split into ~n-char chunks on char boundaries (crude token simulation) —
@@ -1041,7 +1164,7 @@ mod merge_path_vars_tests {
 
 #[cfg(test)]
 mod test_support {
-    use super::{ChatSink, ExtensionDialogRecord, RowRecord};
+    use super::{ChatSink, ExtensionDialogRecord, RowRecord, ServerDotState};
     use std::sync::Mutex;
 
     /// Records every `ChatSink` call as a short tagged string, in order —
@@ -1085,6 +1208,12 @@ mod test_support {
                 "extension_dialog:{}:{}",
                 request.method, request.id
             ));
+        }
+        fn on_server_dot_changed(&self, state: ServerDotState) {
+            self.events
+                .lock()
+                .unwrap()
+                .push(format!("server_dot:{state:?}"));
         }
     }
 }

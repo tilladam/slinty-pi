@@ -20,6 +20,7 @@ pi-local = { path = "../pi-local" }
 tokio.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
+serde_json.workspace = true
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # Forwards `tracing` events to macOS unified logging (Console.app/`log
 # stream`), so a compiled PiMac.app has somewhere for its diagnostics to go
@@ -41,5 +42,4 @@ name = "uniffi-bindgen"
 path = "src/bin/uniffi-bindgen.rs"
 
 [dev-dependencies]
-serde_json.workspace = true
 tempfile = "3.27.0"

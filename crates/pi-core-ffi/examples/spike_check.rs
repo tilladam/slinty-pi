@@ -1,5 +1,6 @@
 use pi_core_ffi::{
     ChatSink, ExtensionDialogRecord, ExtensionDialogReply, LocalModelIndex, PiSession, RowRecord,
+    ServerDotState,
 };
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -43,6 +44,9 @@ impl ChatSink for PrintSink {
         );
         self.dialogs.lock().unwrap().push(request);
     }
+    fn on_server_dot_changed(&self, state: ServerDotState) {
+        eprintln!("server_dot_changed: {state:?}");
+    }
 }
 
 /// Manual verification for the real-`pi` acceptance points no Swift-side
@@ -64,7 +68,9 @@ impl ChatSink for PrintSink {
 /// underlying tool not being installed/running (matching this project's
 /// convention, e.g. `local::hf`/`local::rapid_mlx`'s own live tests) —
 /// only `search_hf_models` (a real network call to a public API with no
-/// local dependency) is asserted on for real results.
+/// local dependency) is asserted on for real results. It also exercises
+/// the composer picker's `PiSession.refresh_models`/`set_model` (SW6)
+/// against whatever models `pi`'s own config already lists.
 ///
 /// The abort mode's outcome depends on how the configured pi model/
 /// extensions handle a "write something long" prompt: a plain conversational
@@ -255,6 +261,33 @@ fn main() {
                     "first result: {} gated={} downloads={} quants={:?}",
                     first.id, first.gated, first.downloads, first.quants
                 );
+
+                eprintln!("--- session.refresh_models() ---");
+                let models = session
+                    .refresh_models()
+                    .await
+                    .expect("refresh_models failed");
+                eprintln!("models: {} entries", models.len());
+                for m in &models {
+                    eprintln!(
+                        "  {}{} — {}",
+                        if m.is_current { "* " } else { "  " },
+                        m.label,
+                        m.id
+                    );
+                }
+                if let Some(current) = models.iter().find(|m| m.is_current) {
+                    eprintln!("--- session.set_model() re-selecting the current model ---");
+                    session
+                        .set_model(current.provider.clone(), current.id.clone())
+                        .await
+                        .expect("set_model failed");
+                    eprintln!("set_model ok — no hang");
+                } else {
+                    eprintln!(
+                        "no current model reported by get_state — skipping set_model round trip"
+                    );
+                }
             });
         }
         Some("dialogs") => {
