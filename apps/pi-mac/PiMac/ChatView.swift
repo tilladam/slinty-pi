@@ -124,6 +124,8 @@ struct ChatView: View {
             Circle()
                 .fill(model.isStreaming ? .green : .secondary)
                 .frame(width: 8, height: 8)
+                .padding(4)
+                .contentShape(Rectangle())
                 .help(model.isStreaming ? "Streaming" : "Idle")
             serverDotView
             Spacer()
@@ -148,6 +150,8 @@ struct ChatView: View {
             Circle()
                 .fill(color)
                 .frame(width: 8, height: 8)
+                .padding(4)
+                .contentShape(Rectangle())
                 .help(serverDotTooltip)
         }
     }
