@@ -73,9 +73,11 @@ struct ExtensionDialogModifier: ViewModifier {
             Button("Deny", role: .cancel) {
                 model.replyToCurrentDialog(.confirmed(confirmed: false))
             }
+            .keyboardShortcut("n", modifiers: [])
             Button("Allow") {
                 model.replyToCurrentDialog(.confirmed(confirmed: true))
             }
+            .keyboardShortcut("y", modifiers: [])
         }
     }
 }
@@ -89,6 +91,8 @@ private struct SelectDialogView: View {
     let dialog: ExtensionDialogRecord
     var model: AppModel
 
+    private var options: [String] { dialog.options ?? [] }
+
     var body: some View {
         NavigationStack {
             List {
@@ -96,10 +100,8 @@ private struct SelectDialogView: View {
                     Text(prompt)
                         .font(.callout)
                 }
-                ForEach(dialog.options ?? [], id: \.self) { option in
-                    Button(option) {
-                        model.replyToCurrentDialog(.value(value: option))
-                    }
+                ForEach(Array(options.enumerated()), id: \.offset) { index, option in
+                    optionRow(index: index, option: option)
                 }
             }
             .navigationTitle("Choose an Option")
@@ -108,11 +110,85 @@ private struct SelectDialogView: View {
                     Button("Cancel") {
                         model.replyToCurrentDialog(.cancelled)
                     }
+                    .keyboardShortcut(.cancelAction)
                 }
             }
         }
         .frame(minWidth: 380, minHeight: 260)
         .interactiveDismissDisabled()
+        .background {
+            // Wires the actual y/s/n key bindings off the same `mnemonic`
+            // function the visible "(y)"/"(s)"/"(n)" hint above uses, so
+            // the hint and the binding can never disagree. Hidden buttons
+            // are the standard SwiftUI idiom for a keyboard-only affordance
+            // with no visual footprint of its own.
+            ForEach(["y", "s", "n"] as [Character], id: \.self) { letter in
+                if let match = options.first(where: { mnemonic(for: $0) == letter }) {
+                    Button("") {
+                        model.replyToCurrentDialog(.value(value: match))
+                    }
+                    .keyboardShortcut(KeyEquivalent(letter), modifiers: [])
+                    .hidden()
+                }
+            }
+        }
+    }
+
+    /// Split out of `body`'s `ForEach` closure — inlined, the combination
+    /// of the numeric badge/mnemonic-hint conditionals and the
+    /// `.keyboardShortcut` call was too much for the type-checker to
+    /// resolve in reasonable time. `.keyboardShortcut(_:modifiers:)` takes
+    /// a non-optional `KeyEquivalent`, so the 10th-and-beyond row (no
+    /// number shortcut) is a real `if`/`else` branch, not an optional
+    /// passed through.
+    @ViewBuilder
+    private func optionRow(index: Int, option: String) -> some View {
+        if index < 9 {
+            Button {
+                model.replyToCurrentDialog(.value(value: option))
+            } label: {
+                optionLabel(index: index, option: option)
+            }
+            .keyboardShortcut(KeyEquivalent(Character("\(index + 1)")), modifiers: [])
+        } else {
+            Button {
+                model.replyToCurrentDialog(.value(value: option))
+            } label: {
+                optionLabel(index: index, option: option)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func optionLabel(index: Int, option: String) -> some View {
+        HStack {
+            if index < 9 {
+                Text("\(index + 1)")
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
+                    .frame(width: 16, alignment: .trailing)
+            }
+            Text(option)
+            if let letter = mnemonic(for: option) {
+                Text("(\(String(letter)))")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 0)
+        }
+    }
+
+    /// Best-effort mnemonic for an option's text — never required (the
+    /// numbered shortcuts above always work regardless of option wording),
+    /// just a discoverable shortcut when an option's intent is obvious.
+    /// Checked in this order so a hypothetical "Allow for session" option
+    /// resolves to `s`, not `y`.
+    private func mnemonic(for option: String) -> Character? {
+        let lower = option.lowercased()
+        if lower.contains("session") { return "s" }
+        if lower.contains("allow") || lower.contains("yes") { return "y" }
+        if lower.contains("deny") || lower.contains("no") { return "n" }
+        return nil
     }
 }
 
