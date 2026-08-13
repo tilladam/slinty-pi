@@ -190,12 +190,31 @@ pub fn hydrate_rowspecs(messages: &[serde_json::Value], dark: bool) -> Vec<RowSp
                 let Some(blocks) = message.get("content").and_then(|v| v.as_array()) else {
                     continue;
                 };
+                // Reserve `pending_first` for the message's first *text* block when
+                // one exists, regardless of whether a `thinking`/`toolCall` block
+                // comes before it — otherwise a reasoning or tool-call step ahead of
+                // the reply text silently steals the flag, and the text segment that
+                // follows never gets `first = true`, which is also what gates the
+                // per-message copy/speak affordance in both frontends. A
+                // thinking/toolCall row only claims the message-start spacing bump
+                // itself when the message has no text block at all to give it to.
+                let has_text = blocks.iter().any(|block| {
+                    block.get("type").and_then(|v| v.as_str()) == Some("text")
+                        && block
+                            .get("text")
+                            .and_then(|v| v.as_str())
+                            .is_some_and(|t| !t.is_empty())
+                });
                 for block in blocks {
                     match block.get("type").and_then(|v| v.as_str()) {
                         Some("thinking") => {
                             let thinking =
                                 block.get("thinking").and_then(|v| v.as_str()).unwrap_or("");
-                            let first = std::mem::take(&mut pending_first);
+                            let first = if has_text {
+                                false
+                            } else {
+                                std::mem::take(&mut pending_first)
+                            };
                             specs.push(RowSpec {
                                 kind: "thinking",
                                 text: thinking.to_string(),
@@ -226,12 +245,17 @@ pub fn hydrate_rowspecs(messages: &[serde_json::Value], dark: bool) -> Vec<RowSp
                             let args_pretty =
                                 serde_json::to_string_pretty(&args).unwrap_or_default();
                             let index = specs.len();
+                            let first = if has_text {
+                                false
+                            } else {
+                                std::mem::take(&mut pending_first)
+                            };
                             specs.push(RowSpec {
                                 kind: "tool",
                                 text: format!("⚙ {summary}"),
                                 detail: args_pretty,
                                 running: true,
-                                first: std::mem::take(&mut pending_first),
+                                first,
                                 ..RowSpec::default()
                             });
                             if !id.is_empty() {
@@ -399,14 +423,57 @@ mod hydrate_tests {
         let kinds: Vec<&str> = specs.iter().map(|s| s.kind).collect();
         assert_eq!(kinds, vec!["user", "thinking", "prose"]);
         assert!(specs[0].first, "user row starts a new group");
-        assert!(specs[1].first, "thinking row starts the assistant group");
-        assert!(!specs[2].first);
+        assert!(
+            !specs[1].first,
+            "thinking isn't the copy-eligible row when the message also has text"
+        );
+        assert!(
+            specs[2].first,
+            "the reply's text is what should carry the group-copy/speak affordance, \
+             not the thinking block ahead of it"
+        );
         assert_eq!(specs[0].text, "hello");
         assert_eq!(specs[1].text, "pondering");
         assert!(
             !specs[1].running,
             "hydrated thinking is never still-running"
         );
+    }
+
+    #[test]
+    fn thinking_or_tool_call_ahead_of_text_does_not_steal_the_first_flag() {
+        // Regression test: a message shaped `thinking -> text` (or
+        // `toolCall -> text`) used to have its `thinking`/`tool` row
+        // consume the message's one `first` flag before the reply text
+        // ever got a chance at it, silently disabling the group-copy/speak
+        // affordance (gated on `first`) for every such reply — exactly the
+        // shape of a turn that reasons or calls a tool before answering.
+        let messages = vec![json!({
+            "role": "assistant",
+            "content": [
+                {"type": "toolCall", "id": "call_1", "name": "bash", "arguments": {"command": "ls"}},
+                {"type": "text", "text": "done"}
+            ]
+        })];
+        let specs = hydrate_rowspecs(&messages, false);
+        let kinds: Vec<&str> = specs.iter().map(|s| s.kind).collect();
+        assert_eq!(kinds, vec!["tool", "prose"]);
+        assert!(!specs[0].first, "the tool row shouldn't claim the flag");
+        assert!(specs[1].first, "the text segment should get it instead");
+    }
+
+    #[test]
+    fn a_lone_thinking_block_with_no_text_still_gets_first_for_spacing() {
+        // When a message has nothing else to give the flag to, a leading
+        // thinking/tool row should still mark the start of a new message
+        // group (used for spacing in both frontends) — only messages that
+        // *also* have a text block redirect `first` to that text.
+        let messages = vec![json!({
+            "role": "assistant",
+            "content": [{"type": "thinking", "thinking": "still going"}]
+        })];
+        let specs = hydrate_rowspecs(&messages, false);
+        assert!(specs[0].first);
     }
 
     #[test]
