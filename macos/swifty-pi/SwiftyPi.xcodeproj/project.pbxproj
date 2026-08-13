@@ -15,13 +15,14 @@
 		3FC1ECF2E681672FAF38C165 /* SwiftyPiApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 86A91C1D0EE958145E2B7FBA /* SwiftyPiApp.swift */; };
 		5EFA7D46CA3644C45AB2D3B0 /* HfSearchView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3395DB8EC1C35123711D0746 /* HfSearchView.swift */; };
 		69DB5AD51C80EF95A6A1BB31 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1DA6692E517D9BE29939E861 /* ContentView.swift */; };
+		738582D0DE7544FABC3792BA /* TreeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1BA2D561238E47CC867D4A4A /* TreeView.swift */; };
 		8CE91CE85E1166BA5C71413E /* ChatView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 482A0F1669E6FF6A90545385 /* ChatView.swift */; };
 		A1156509D6E56DC6930B236A /* RowView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9358DE6D28FA55AA0416E595 /* RowView.swift */; };
 		CBD2A8CD7F35F4934147D41E /* SidebarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 75F2A2B404A96C539D91DE0C /* SidebarView.swift */; };
-		738582D0DE7544FABC3792BA /* TreeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1BA2D561238E47CC867D4A4A /* TreeView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		1BA2D561238E47CC867D4A4A /* TreeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TreeView.swift; sourceTree = "<group>"; };
 		1DA6692E517D9BE29939E861 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		3395DB8EC1C35123711D0746 /* HfSearchView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HfSearchView.swift; sourceTree = "<group>"; };
 		482A0F1669E6FF6A90545385 /* ChatView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatView.swift; sourceTree = "<group>"; };
@@ -34,7 +35,6 @@
 		B536DC4288ED4167BC96BE32 /* ExtensionDialogView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExtensionDialogView.swift; sourceTree = "<group>"; };
 		CB136EEEBB2354FB5BA2BC65 /* AppModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModel.swift; sourceTree = "<group>"; };
 		F0E81D92B02541D78DD023EB /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
-		1BA2D561238E47CC867D4A4A /* TreeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TreeView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -307,6 +307,7 @@
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				INFOPLIST_KEY_NSPrincipalClass = NSApplication;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -343,6 +344,7 @@
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				INFOPLIST_KEY_NSPrincipalClass = NSApplication;
 				LD_RUNPATH_SEARCH_PATHS = (

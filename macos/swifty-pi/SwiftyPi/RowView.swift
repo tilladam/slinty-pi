@@ -156,6 +156,7 @@ private struct CopyButton: View {
 /// string `CopyButton` copies), reused as an identity key so no separate id
 /// plumbing is needed; two messages with byte-identical raw content
 /// behaving as "the same" is a harmless, vanishingly rare edge case.
+@MainActor
 final class SpeechController: NSObject, ObservableObject {
     static let shared = SpeechController()
 
@@ -184,7 +185,7 @@ final class SpeechController: NSObject, ObservableObject {
     }
 }
 
-extension SpeechController: AVSpeechSynthesizerDelegate {
+extension SpeechController: @preconcurrency AVSpeechSynthesizerDelegate {
     func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
         speakingID = nil
     }
