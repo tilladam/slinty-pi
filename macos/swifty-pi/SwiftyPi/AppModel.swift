@@ -142,6 +142,11 @@ final class AppModel: ChatSink {
     private static let previewFlushInterval: Duration = .milliseconds(33)
     private var lastPreviewFlush: ContinuousClock.Instant?
     private var pendingPreviewTask: Task<Void, Never>?
+    /// Reset on every new turn (`onStreamingChanged(streaming: true)`), set
+    /// by `onError` — read once the turn settles so the "turn completed"
+    /// notification's title can distinguish success from error, since
+    /// `onStreamingChanged(streaming: false)` itself carries no outcome.
+    private var turnHadError = false
     /// Same subsystem the Rust side's `tracing-oslog` subscriber uses (see
     /// `pi-core-ffi`'s `ensure_logging_initialized`) — so every message
     /// that's ever shown to the user, from either layer, ends up in the
@@ -204,6 +209,7 @@ final class AppModel: ChatSink {
                 setStatus("Could not start pi: \(error)")
             }
         }
+        NotificationController.shared.requestAuthorizationIfNeeded()
         Task { await refreshSidebar() }
         Task { await refreshModels() }
         Task { await refreshThinkingLevels() }
@@ -615,12 +621,19 @@ final class AppModel: ChatSink {
     nonisolated func onStreamingChanged(streaming: Bool) {
         Task { @MainActor in
             self.isStreaming = streaming
+            if streaming {
+                self.turnHadError = false
+            } else {
+                NotificationController.shared.notifyTurnCompleted(
+                    project: self.projectDisplayName, hadError: self.turnHadError)
+            }
         }
     }
 
     nonisolated func onError(message: String) {
         Task { @MainActor in
             self.setStatus(message)
+            self.turnHadError = true
         }
     }
 
@@ -655,6 +668,7 @@ final class AppModel: ChatSink {
     nonisolated func onExtensionDialog(request: ExtensionDialogRecord) {
         Task { @MainActor in
             self.pendingDialogs.append(request)
+            NotificationController.shared.notifyDialogPending(request)
         }
     }
 

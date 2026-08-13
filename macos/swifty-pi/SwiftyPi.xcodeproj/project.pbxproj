@@ -19,6 +19,7 @@
 		8CE91CE85E1166BA5C71413E /* ChatView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 482A0F1669E6FF6A90545385 /* ChatView.swift */; };
 		A1156509D6E56DC6930B236A /* RowView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9358DE6D28FA55AA0416E595 /* RowView.swift */; };
 		CBD2A8CD7F35F4934147D41E /* SidebarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 75F2A2B404A96C539D91DE0C /* SidebarView.swift */; };
+		BE45ABA8CED144DA8D9B13A2 /* NotificationController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2165591F3BA742D49D151F57 /* NotificationController.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -35,6 +36,7 @@
 		B536DC4288ED4167BC96BE32 /* ExtensionDialogView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExtensionDialogView.swift; sourceTree = "<group>"; };
 		CB136EEEBB2354FB5BA2BC65 /* AppModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModel.swift; sourceTree = "<group>"; };
 		F0E81D92B02541D78DD023EB /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		2165591F3BA742D49D151F57 /* NotificationController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationController.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -61,6 +63,7 @@
 				3395DB8EC1C35123711D0746 /* HfSearchView.swift */,
 				B536DC4288ED4167BC96BE32 /* ExtensionDialogView.swift */,
 				1BA2D561238E47CC867D4A4A /* TreeView.swift */,
+				2165591F3BA742D49D151F57 /* NotificationController.swift */,
 				F0E81D92B02541D78DD023EB /* Assets.xcassets */,
 			);
 			path = SwiftyPi;
@@ -186,6 +189,7 @@
 				5EFA7D46CA3644C45AB2D3B0 /* HfSearchView.swift in Sources */,
 				276972CCA2C54D7AADC11360 /* ExtensionDialogView.swift in Sources */,
 				738582D0DE7544FABC3792BA /* TreeView.swift in Sources */,
+				BE45ABA8CED144DA8D9B13A2 /* NotificationController.swift in Sources */,
 				0A8DA7080FAA59C0D5752069 /* pi_core_ffi.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
