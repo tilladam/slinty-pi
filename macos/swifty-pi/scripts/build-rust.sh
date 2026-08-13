@@ -5,10 +5,11 @@
 # SwiftyPi.xcodeproj) or standalone from a terminal for debugging — it does
 # nothing Xcode-specific, so failures can be reproduced and iterated on here.
 #
-# Host-architecture only for this spike (SW1): a universal arm64+x86_64
-# build (two `cargo build --target`s + `lipo`, or multiple `-library` entries
-# on `-create-xcframework`) is scoped to a later milestone once the FFI
-# surface has stabilized — see docs/plans/SW1-ffi-spike-and-chat-window.md.
+# arm64-only, deliberately — not a placeholder pending a later universal
+# build. Much of the local-model tooling this app drives (rapid-mlx/MLX) is
+# itself Apple-Silicon-only, so an Intel build would never be able to use a
+# core feature anyway; the Xcode project's ARCHS is pinned to arm64 to match
+# (see SwiftyPi.xcodeproj's build settings).
 . ~/.cargo/env
 
 set -euo pipefail

@@ -201,6 +201,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
+				ARCHS = arm64;
 				CLANG_ENABLE_MODULES = YES;
 				CLANG_ENABLE_OBJC_ARC = YES;
 				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
@@ -255,6 +256,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
+				ARCHS = arm64;
 				CLANG_ENABLE_MODULES = YES;
 				CLANG_ENABLE_OBJC_ARC = YES;
 				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
@@ -322,7 +324,7 @@
 					"$(inherited)",
 					"$(SRCROOT)/PiCoreFFI.xcframework/macos-arm64",
 				);
-				MARKETING_VERSION = 0.1;
+				MARKETING_VERSION = 0.2;
 				OTHER_LDFLAGS = (
 					"$(inherited)",
 					"-lpi_core_ffi",
@@ -359,7 +361,7 @@
 					"$(inherited)",
 					"$(SRCROOT)/PiCoreFFI.xcframework/macos-arm64",
 				);
-				MARKETING_VERSION = 0.1;
+				MARKETING_VERSION = 0.2;
 				OTHER_LDFLAGS = (
 					"$(inherited)",
 					"-lpi_core_ffi",
