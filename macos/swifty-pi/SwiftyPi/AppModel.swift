@@ -640,6 +640,7 @@ final class AppModel: ChatSink {
 
     nonisolated func onHistoryReplaced(rows: [RowRecord]) {
         Task { @MainActor in
+            SpeechController.shared.stop()
             self.rows = rows
             self.transcript = ""
             self.pendingPreviewTask?.cancel()

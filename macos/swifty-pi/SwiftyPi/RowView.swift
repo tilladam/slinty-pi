@@ -1,4 +1,5 @@
 import AppKit
+import AVFoundation
 import SwiftUI
 
 /// Renders one `RowRecord` — the SW3 rich-content counterpart to
@@ -90,10 +91,13 @@ struct RowView: View {
         }
     }
 
-    /// Adds a trailing copy chip for `row.raw` when this row is the lead
-    /// row of its message group and there's something to copy — mirrors
-    /// `app.slint`'s `if entry.first && entry.raw != ""` gate on `ProseRow`/
-    /// `HeadingRow`/`QuoteRow` exactly.
+    /// Adds a trailing copy chip and speak button for `row.raw` when this
+    /// row is the lead row of its message group and there's something to
+    /// copy — mirrors `app.slint`'s `if entry.first && entry.raw != ""`
+    /// gate on `ProseRow`/`HeadingRow`/`QuoteRow` exactly. The speak button
+    /// is disabled for messages that embed code/tables — read the raw
+    /// markdown as-is, since a message this size is cheap to scan and it
+    /// avoids threading sibling-row kinds down from `ChatView`.
     @ViewBuilder
     private func withGroupCopy(_ content: some View) -> some View {
         if row.first, !row.raw.isEmpty {
@@ -101,6 +105,7 @@ struct RowView: View {
                 content
                 Spacer(minLength: 8)
                 CopyButton(payload: row.raw)
+                SpeakButton(payload: row.raw, disabled: containsComplexContent(row.raw))
             }
         } else {
             content
@@ -108,8 +113,15 @@ struct RowView: View {
     }
 }
 
-/// Click-to-copy chip mirroring `app.slint`'s `CopyButton`: flips to "✓"
-/// for 1.4s after copying, matching the `.slint` component's own `Timer`.
+/// Shared icon footprint for `CopyButton`/`SpeakButton` — SF Symbols have
+/// different intrinsic glyph widths (e.g. `speaker.wave.2` is wider than
+/// `checkmark`), so matching padding alone doesn't guarantee matching
+/// button size; pinning both icons to the same frame does.
+private let rowButtonIconSide: CGFloat = 14
+
+/// Click-to-copy chip mirroring `app.slint`'s `CopyButton`: flips to a
+/// checkmark for 1.4s after copying, matching the `.slint` component's own
+/// `Timer`.
 private struct CopyButton: View {
     let payload: String
     @State private var copied = false
@@ -125,15 +137,111 @@ private struct CopyButton: View {
                 copied = false
             }
         } label: {
-            Text(copied ? "✓" : "copy")
+            Image(systemName: copied ? "checkmark" : "doc.on.doc")
                 .font(.caption2)
+                .frame(width: rowButtonIconSide, height: rowButtonIconSide)
                 .foregroundStyle(.secondary)
                 .padding(.horizontal, 6)
                 .padding(.vertical, 2)
                 .background(.quaternary, in: RoundedRectangle(cornerRadius: 4))
         }
         .buttonStyle(.plain)
+        .help(copied ? "Copied" : "Copy")
     }
+}
+
+/// Shared, app-wide controller for the read-aloud feature — only one
+/// utterance can ever play at once, matching how the OS's own "Start
+/// Speaking" behaves. `speakingID` is the raw payload text itself (the same
+/// string `CopyButton` copies), reused as an identity key so no separate id
+/// plumbing is needed; two messages with byte-identical raw content
+/// behaving as "the same" is a harmless, vanishingly rare edge case.
+final class SpeechController: NSObject, ObservableObject {
+    static let shared = SpeechController()
+
+    @Published private(set) var speakingID: String?
+
+    private let synthesizer = AVSpeechSynthesizer()
+
+    private override init() {
+        super.init()
+        synthesizer.delegate = self
+    }
+
+    func toggle(id: String, text: String) {
+        if speakingID == id {
+            stop()
+            return
+        }
+        synthesizer.stopSpeaking(at: .immediate)
+        synthesizer.speak(AVSpeechUtterance(string: text))
+        speakingID = id
+    }
+
+    func stop() {
+        synthesizer.stopSpeaking(at: .immediate)
+        speakingID = nil
+    }
+}
+
+extension SpeechController: AVSpeechSynthesizerDelegate {
+    func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
+        speakingID = nil
+    }
+
+    func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didCancel utterance: AVSpeechUtterance) {
+        speakingID = nil
+    }
+}
+
+/// Click-to-speak chip beside `CopyButton` — reads the message aloud via
+/// the built-in `AVSpeechSynthesizer`, stripping markdown syntax first
+/// (the same `AttributedString(markdown:)` parse used for on-screen
+/// rendering) so `**`/`[]()` aren't read literally. Visibly animates while
+/// speaking via `.symbolEffect(.variableColor.iterative)` — a native,
+/// built-in pulse, no custom animation code.
+private struct SpeakButton: View {
+    let payload: String
+    let disabled: Bool
+    @ObservedObject private var controller = SpeechController.shared
+
+    private var isSpeaking: Bool { controller.speakingID == payload }
+
+    var body: some View {
+        Button {
+            controller.toggle(id: payload, text: spokenText)
+        } label: {
+            Image(systemName: isSpeaking ? "speaker.wave.2.fill" : "speaker.wave.2")
+                .symbolEffect(.variableColor.iterative, isActive: isSpeaking)
+                .font(.caption2)
+                .frame(width: rowButtonIconSide, height: rowButtonIconSide)
+                .foregroundStyle(iconColor)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
+                .background(.quaternary, in: RoundedRectangle(cornerRadius: 4))
+        }
+        .buttonStyle(.plain)
+        .disabled(disabled)
+        .help(disabled ? "Can't read code or tables aloud" : (isSpeaking ? "Stop speaking" : "Speak"))
+    }
+
+    private var spokenText: String {
+        (try? AttributedString(markdown: payload)).map { String($0.characters) } ?? payload
+    }
+
+    private var iconColor: Color {
+        if disabled { return .secondary.opacity(0.4) }
+        return isSpeaking ? .accentColor : .secondary
+    }
+}
+
+/// Cheap string-level check on the message's raw markdown — a fenced code
+/// block or a GFM table separator row both mean "don't read this aloud."
+/// Runs on `row.raw` directly rather than scanning sibling row kinds from
+/// `ChatView`, since the raw text already contains everything needed.
+private func containsComplexContent(_ raw: String) -> Bool {
+    if raw.contains("```") { return true }
+    return raw.range(of: #"(?m)^\s*\|?(\s*:?-{2,}:?\s*\|)+\s*:?-{2,}:?\s*\|?\s*$"#, options: [.regularExpression]) != nil
 }
 
 private struct ThinkingRowView: View {
