@@ -141,6 +141,89 @@ pub async fn server_health(base_url: &str) -> Option<ServerHealth> {
         .ok()
 }
 
+/// The `models.json` provider key used when no suitable entry exists yet.
+pub const DEFAULT_PROVIDER_KEY: &str = "rapid-mlx";
+
+/// Which `models.json` provider a served alias should be registered under.
+///
+/// An existing provider already pointing at the rapid-mlx port wins —
+/// whatever the user named it (`rapid-mlx-local`, …) — because adding a
+/// second provider for the same `baseUrl` would silently duplicate their
+/// config. Falls back to [`DEFAULT_PROVIDER_KEY`].
+pub fn provider_key_for_port(
+    providers: Option<&serde_json::Map<String, serde_json::Value>>,
+    port: u16,
+) -> String {
+    let needle = format!(":{port}");
+    providers
+        .and_then(|map| {
+            map.iter()
+                .find(|(_, entry)| {
+                    entry
+                        .get("baseUrl")
+                        .and_then(serde_json::Value::as_str)
+                        .is_some_and(|url| url.contains(&needle) && is_loopback_url(url))
+                })
+                .map(|(key, _)| key.clone())
+        })
+        .unwrap_or_else(|| DEFAULT_PROVIDER_KEY.to_string())
+}
+
+fn is_loopback_url(url: &str) -> bool {
+    ["localhost", "127.0.0.1", "0.0.0.0", "[::1]"]
+        .iter()
+        .any(|host| url.contains(host))
+}
+
+/// Builds (or extends) the rapid-mlx provider entry so pi can actually
+/// select `alias` — spawning `rapid-mlx serve <alias>` tells pi nothing, so
+/// without a matching `models.json` entry `set_model` fails with "Model not
+/// found".
+///
+/// Merges into `existing` when it already looks like a provider entry,
+/// rather than replacing it: only one rapid-mlx model is served at a time,
+/// but pi should keep every alias registered so far, and any hand-edited
+/// fields (a custom `baseUrl`, `contextWindow`, …) must survive. Registers
+/// the **alias** as the model id, matching how this app serves.
+pub fn provider_preset(
+    existing: Option<&serde_json::Value>,
+    port: u16,
+    alias: &str,
+) -> serde_json::Value {
+    let mut preset = existing
+        .filter(|v| v.get("models").is_some_and(serde_json::Value::is_array))
+        .cloned()
+        .unwrap_or_else(|| {
+            serde_json::json!({
+                "name": "Rapid-MLX Local",
+                "baseUrl": format!("http://localhost:{port}/v1"),
+                "api": "openai-completions",
+                "apiKey": DEFAULT_PROVIDER_KEY,
+                "compat": {
+                    "supportsDeveloperRole": false,
+                    "supportsReasoningEffort": false,
+                },
+                "models": [],
+            })
+        });
+    let models = preset
+        .get_mut("models")
+        .and_then(serde_json::Value::as_array_mut)
+        .expect("either filtered on `models` being an array, or just built fresh");
+    let already_registered = models
+        .iter()
+        .any(|m| m.get("id").and_then(serde_json::Value::as_str) == Some(alias));
+    if !already_registered {
+        models.push(serde_json::json!({
+            "id": alias,
+            "name": format!("{alias} (Rapid-MLX)"),
+            "contextWindow": 128000,
+            "maxTokens": 32000,
+        }));
+    }
+    preset
+}
+
 pub struct RapidMlx {
     binary: String,
 }
@@ -432,6 +515,83 @@ impl ManagedServer {
         self.child.start_kill()?;
         self.child.wait().await?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod provider_tests {
+    use super::*;
+
+    #[test]
+    fn reuses_an_existing_provider_on_the_same_port_whatever_its_name() {
+        let providers = serde_json::json!({
+            "rapid-mlx-local": {"baseUrl": "http://localhost:8000/v1"},
+            "bifrost": {"baseUrl": "https://bifrost.example.com/openai"},
+        });
+        assert_eq!(
+            provider_key_for_port(providers.as_object(), 8000),
+            "rapid-mlx-local",
+            "must merge into the user's existing entry, not add a duplicate provider"
+        );
+    }
+
+    #[test]
+    fn ignores_a_remote_provider_that_merely_shares_the_port_number() {
+        let providers = serde_json::json!({
+            "remote": {"baseUrl": "https://models.example.com:8000/v1"},
+        });
+        assert_eq!(
+            provider_key_for_port(providers.as_object(), 8000),
+            DEFAULT_PROVIDER_KEY
+        );
+    }
+
+    #[test]
+    fn falls_back_to_the_default_key_when_nothing_matches() {
+        assert_eq!(provider_key_for_port(None, 8000), DEFAULT_PROVIDER_KEY);
+        let providers = serde_json::json!({"bifrost": {"baseUrl": "https://x.example.com"}});
+        assert_eq!(
+            provider_key_for_port(providers.as_object(), 8000),
+            DEFAULT_PROVIDER_KEY
+        );
+    }
+
+    #[test]
+    fn preset_builds_a_fresh_entry_when_none_exists() {
+        let preset = provider_preset(None, 8000, "lfm2.5-1b-4bit");
+        assert_eq!(preset["baseUrl"], "http://localhost:8000/v1");
+        assert_eq!(preset["api"], "openai-completions");
+        assert_eq!(preset["models"].as_array().unwrap().len(), 1);
+        assert_eq!(preset["models"][0]["id"], "lfm2.5-1b-4bit");
+    }
+
+    #[test]
+    fn preset_appends_without_dropping_previously_registered_aliases() {
+        let existing = serde_json::json!({
+            "name": "Rapid-MLX Local",
+            "baseUrl": "http://localhost:8000/v1",
+            "models": [{"id": "qwen3.5-9b-4bit", "name": "qwen3.5-9b-4bit (Rapid-MLX)"}],
+        });
+        let preset = provider_preset(Some(&existing), 8000, "lfm2.5-1b-4bit");
+        let models = preset["models"].as_array().unwrap();
+        assert_eq!(models.len(), 2, "the prior alias must survive");
+        assert_eq!(models[0]["id"], "qwen3.5-9b-4bit");
+        assert_eq!(models[1]["id"], "lfm2.5-1b-4bit");
+        assert_eq!(
+            preset["name"], "Rapid-MLX Local",
+            "untouched fields survive"
+        );
+    }
+
+    #[test]
+    fn preset_does_not_duplicate_or_clobber_an_already_registered_alias() {
+        let existing = serde_json::json!({
+            "models": [{"id": "lfm2.5-1b-4bit", "name": "hand-edited name"}],
+        });
+        let preset = provider_preset(Some(&existing), 8000, "lfm2.5-1b-4bit");
+        let models = preset["models"].as_array().unwrap();
+        assert_eq!(models.len(), 1);
+        assert_eq!(models[0]["name"], "hand-edited name");
     }
 }
 

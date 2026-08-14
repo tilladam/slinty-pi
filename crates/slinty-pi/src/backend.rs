@@ -212,18 +212,24 @@ impl UiSink for SlintUi {
     /// repeat on every tick.
     fn set_rapid_mlx_panel(&self, data: RapidMlxPanelData) {
         self.with_app(move |app| {
+            // `row.state` (known/served/unknown) is deliberately dropped:
+            // this UI still offers a bare "serve" per row. Rendering the
+            // three states is the Slint half of the models-panel redesign,
+            // tracked separately — the shared formatter already computes it.
             let rows: Vec<CachedModelRow> = data
                 .cached
                 .into_iter()
-                .map(|(alias, hf_repo, size, fit_label)| CachedModelRow {
-                    alias: alias.as_str().into(),
-                    hf_repo: hf_repo.as_str().into(),
-                    size: size.as_str().into(),
-                    fit_label: fit_label.as_str().into(),
+                .map(|row| CachedModelRow {
+                    alias: row.alias.as_str().into(),
+                    hf_repo: row.hf_repo.as_str().into(),
+                    size: row.size.as_str().into(),
+                    fit_label: row.fit_label.as_str().into(),
                 })
                 .collect();
             app.set_rapid_mlx_version(SharedString::from(data.version.unwrap_or_default()));
-            app.set_rapid_mlx_running(SharedString::from(data.running_summary.unwrap_or_default()));
+            app.set_rapid_mlx_running(SharedString::from(
+                data.running.map(|r| r.summary).unwrap_or_default(),
+            ));
             app.set_rapid_mlx_cached(ModelRc::new(VecModel::from(rows)));
             app.set_rapid_mlx_catalog_count(data.catalog_count as i32);
         });

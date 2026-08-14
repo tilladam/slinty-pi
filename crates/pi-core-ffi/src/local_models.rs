@@ -3,21 +3,66 @@
 //! `Record`s with `From` conversions, same pattern as `row.rs`'s
 //! `RowRecord: From<pi_render::RowSpec>`.
 
+/// Mirrors `pi_local::panel::RapidMlxModelState` — drives which single
+/// action a cached-model row offers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum RapidMlxModelStateRecord {
+    /// Known to pi and currently served → offer Stop.
+    KnownServed,
+    /// Known to pi, nothing serving it → offer Serve.
+    KnownIdle,
+    /// Not in pi's model list → offer Register.
+    Unknown,
+}
+
+impl From<pi_local::panel::RapidMlxModelState> for RapidMlxModelStateRecord {
+    fn from(state: pi_local::panel::RapidMlxModelState) -> Self {
+        match state {
+            pi_local::panel::RapidMlxModelState::KnownServed => Self::KnownServed,
+            pi_local::panel::RapidMlxModelState::KnownIdle => Self::KnownIdle,
+            pi_local::panel::RapidMlxModelState::Unknown => Self::Unknown,
+        }
+    }
+}
+
 #[derive(uniffi::Record)]
 pub struct CachedModelRecord {
     pub alias: String,
     pub hf_repo: String,
     pub size: String,
     pub fit_label: String,
+    pub state: RapidMlxModelStateRecord,
 }
 
-impl From<(String, String, String, String)> for CachedModelRecord {
-    fn from((alias, hf_repo, size, fit_label): (String, String, String, String)) -> Self {
+impl From<pi_local::panel::CachedModelRow> for CachedModelRecord {
+    fn from(row: pi_local::panel::CachedModelRow) -> Self {
         Self {
-            alias,
-            hf_repo,
-            size,
-            fit_label,
+            alias: row.alias,
+            hf_repo: row.hf_repo,
+            size: row.size,
+            fit_label: row.fit_label,
+            state: row.state.into(),
+        }
+    }
+}
+
+/// The running rapid-mlx server, if any — see
+/// `pi_local::panel::RunningInfo`.
+#[derive(uniffi::Record)]
+pub struct RunningServerRecord {
+    pub summary: String,
+    /// `false` warrants a warning in the UI: up, but pi can't route to it.
+    pub known_to_pi: bool,
+    /// Only a server this app spawned can be stopped from here.
+    pub managed: bool,
+}
+
+impl From<pi_local::panel::RunningInfo> for RunningServerRecord {
+    fn from(info: pi_local::panel::RunningInfo) -> Self {
+        Self {
+            summary: info.summary,
+            known_to_pi: info.known_to_pi,
+            managed: info.managed,
         }
     }
 }
@@ -25,7 +70,7 @@ impl From<(String, String, String, String)> for CachedModelRecord {
 #[derive(uniffi::Record)]
 pub struct RapidMlxPanelRecord {
     pub version: Option<String>,
-    pub running_summary: Option<String>,
+    pub running: Option<RunningServerRecord>,
     pub cached: Vec<CachedModelRecord>,
     pub catalog_count: u32,
 }
@@ -34,7 +79,7 @@ impl From<pi_local::panel::RapidMlxPanelData> for RapidMlxPanelRecord {
     fn from(data: pi_local::panel::RapidMlxPanelData) -> Self {
         Self {
             version: data.version,
-            running_summary: data.running_summary,
+            running: data.running.map(RunningServerRecord::from),
             cached: data
                 .cached
                 .into_iter()
@@ -137,16 +182,6 @@ impl LocalModelIndex {
     pub fn new() -> Self {
         crate::ensure_logging_initialized();
         Self
-    }
-
-    /// Kept separate from `refresh_router_panel` — collecting rapid-mlx
-    /// state shells out to the CLI a handful of times (expensive), which a
-    /// router-only refresh (e.g. while polling a load/unload/download)
-    /// must not repeat on every call.
-    pub async fn refresh_rapid_mlx_panel(&self) -> RapidMlxPanelRecord {
-        let mem = pi_local::system_fit::SystemMemory::probe();
-        let snapshot = pi_local::panel::collect_rapid_mlx_snapshot().await;
-        RapidMlxPanelRecord::from(pi_local::panel::format_rapid_mlx_panel(snapshot, &mem))
     }
 
     pub async fn refresh_router_panel(&self) -> RouterPanelRecord {
@@ -302,6 +337,31 @@ fn add_ollama_ids_to_pi_at(path: &std::path::Path, ids: &[String]) -> Result<(),
         .map_err(|e| LocalModelError::Action(format!("could not write models.json: {e}")))
 }
 
+/// Registers a rapid-mlx `alias` in `models.json`, returning the provider
+/// key it landed under (which `set_model` must then be called with).
+///
+/// Path-parameterized for the same testability reason as
+/// `add_ollama_ids_to_pi_at`. Merges rather than replaces — see
+/// `pi_local::rapid_mlx::provider_preset`.
+pub(crate) fn register_rapid_mlx_alias_at(
+    path: &std::path::Path,
+    alias: &str,
+) -> Result<String, String> {
+    let mut doc = if path.exists() {
+        pi_local::models_json::ModelsJson::load(path)
+            .map_err(|e| format!("{e} — refusing to overwrite a models.json I can't parse"))?
+    } else {
+        pi_local::models_json::ModelsJson::empty()
+    };
+    let port = pi_local::panel::RAPID_MLX_PORT;
+    let key = pi_local::rapid_mlx::provider_key_for_port(doc.providers(), port);
+    let preset = pi_local::rapid_mlx::provider_preset(doc.get_provider(&key), port, alias);
+    doc.set_provider(&key, preset);
+    doc.write(path)
+        .map_err(|e| format!("could not write models.json: {e}"))?;
+    Ok(key)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -310,21 +370,77 @@ mod tests {
     fn rapid_mlx_panel_conversion_preserves_every_field() {
         let data = pi_local::panel::RapidMlxPanelData {
             version: Some("rapid-mlx 0.11.0".to_string()),
-            running_summary: Some("model running on :8000".to_string()),
-            cached: vec![(
-                "alias".to_string(),
-                "owner/repo".to_string(),
-                "5.7 GiB".to_string(),
-                "Fits".to_string(),
-            )],
+            running: Some(pi_local::panel::RunningInfo {
+                summary: "model running on :8000".to_string(),
+                known_to_pi: false,
+                managed: true,
+            }),
+            cached: vec![pi_local::panel::CachedModelRow {
+                alias: "alias".to_string(),
+                hf_repo: "owner/repo".to_string(),
+                size: "5.7 GiB".to_string(),
+                fit_label: "Fits".to_string(),
+                state: pi_local::panel::RapidMlxModelState::KnownIdle,
+            }],
             catalog_count: 42,
         };
         let record = RapidMlxPanelRecord::from(data);
         assert_eq!(record.version.as_deref(), Some("rapid-mlx 0.11.0"));
         assert_eq!(record.catalog_count, 42);
+        let running = record.running.expect("running server preserved");
+        assert_eq!(running.summary, "model running on :8000");
+        assert!(!running.known_to_pi);
+        assert!(running.managed);
         assert_eq!(record.cached.len(), 1);
         assert_eq!(record.cached[0].alias, "alias");
         assert_eq!(record.cached[0].fit_label, "Fits");
+        assert_eq!(record.cached[0].state, RapidMlxModelStateRecord::KnownIdle);
+    }
+
+    #[test]
+    fn register_rapid_mlx_alias_creates_a_provider_then_merges_into_it() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("models.json");
+
+        let key = register_rapid_mlx_alias_at(&path, "lfm2.5-1b-4bit").unwrap();
+        assert_eq!(key, pi_local::rapid_mlx::DEFAULT_PROVIDER_KEY);
+
+        // A second alias must join the first, not replace it.
+        let key = register_rapid_mlx_alias_at(&path, "qwen3.5-9b-4bit").unwrap();
+        assert_eq!(key, pi_local::rapid_mlx::DEFAULT_PROVIDER_KEY);
+        let doc = pi_local::models_json::ModelsJson::load(&path).unwrap();
+        let models = doc.get_provider(&key).unwrap()["models"]
+            .as_array()
+            .unwrap();
+        assert_eq!(models.len(), 2);
+    }
+
+    #[test]
+    fn register_rapid_mlx_alias_reuses_a_differently_named_provider_on_the_port() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("models.json");
+        std::fs::write(
+            &path,
+            br#"{"providers":{"rapid-mlx-local":{"baseUrl":"http://localhost:8000/v1","models":[]}}}"#,
+        )
+        .unwrap();
+
+        let key = register_rapid_mlx_alias_at(&path, "lfm2.5-1b-4bit").unwrap();
+        assert_eq!(
+            key, "rapid-mlx-local",
+            "must not create a duplicate provider for the same endpoint"
+        );
+        let doc = pi_local::models_json::ModelsJson::load(&path).unwrap();
+        assert!(doc.get_provider("rapid-mlx").is_none());
+    }
+
+    #[test]
+    fn register_rapid_mlx_alias_refuses_to_overwrite_unparseable_json() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("models.json");
+        std::fs::write(&path, b"not json").unwrap();
+        let err = register_rapid_mlx_alias_at(&path, "alias").unwrap_err();
+        assert!(err.contains("refusing to overwrite"), "{err}");
     }
 
     #[test]

@@ -90,6 +90,7 @@ impl ChatSink for PrintSink {
 ///   cargo run -p pi-core-ffi --example spike_check -- sessions  # new/rename/delete session
 ///   cargo run -p pi-core-ffi --example spike_check -- history   # settle + switch_session hydration (SW3)
 ///   cargo run -p pi-core-ffi --example spike_check -- models    # LocalModelIndex refresh/search (SW4)
+///   cargo run -p pi-core-ffi --example spike_check -- rapid-mlx # per-model serve/stop/register state
 ///   cargo run -p pi-core-ffi --example spike_check -- dialogs   # extension-UI dialog round trip (SW5)
 ///   cargo run -p pi-core-ffi --example spike_check -- live      # live thinking/tool-call preview (SW7)
 ///   cargo run -p pi-core-ffi --example spike_check -- thinking  # thinking-level list/set + stats fetch (SW8)
@@ -256,15 +257,10 @@ fn main() {
             rt.block_on(async {
                 let index = LocalModelIndex::new();
 
-                eprintln!("--- refresh_rapid_mlx_panel() ---");
-                let rapid_mlx = index.refresh_rapid_mlx_panel().await;
-                eprintln!(
-                    "rapid-mlx: version={:?} running_summary={:?} cached={} catalog_count={}",
-                    rapid_mlx.version,
-                    rapid_mlx.running_summary,
-                    rapid_mlx.cached.len(),
-                    rapid_mlx.catalog_count
-                );
+                // The rapid-mlx panel moved to `PiSession` — resolving each
+                // row's state needs the live client (what pi knows) and the
+                // managed child (what's ours to stop). See the `rapid-mlx`
+                // mode below for that round trip.
 
                 eprintln!("--- refresh_router_panel() ---");
                 let router = index.refresh_router_panel().await;
@@ -384,6 +380,53 @@ fn main() {
                  with running=true before the (eventual) running=false, i.e. it was visible \
                  while the turn was still in flight, not just after ---"
             );
+        }
+        Some("rapid-mlx") => {
+            let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
+            rt.block_on(async {
+                eprintln!("--- session.refresh_rapid_mlx_panel() ---");
+                let panel = session
+                    .refresh_rapid_mlx_panel()
+                    .await
+                    .expect("refresh_rapid_mlx_panel failed");
+                eprintln!(
+                    "rapid-mlx: version={:?} catalog_count={}",
+                    panel.version, panel.catalog_count
+                );
+                match &panel.running {
+                    Some(r) => eprintln!(
+                        "running: {} (known_to_pi={} managed={})",
+                        r.summary, r.known_to_pi, r.managed
+                    ),
+                    None => eprintln!("running: none"),
+                }
+                for row in &panel.cached {
+                    eprintln!("  {:<28} {:?}  [{}]", row.alias, row.state, row.fit_label);
+                }
+                if panel.version.is_none() {
+                    eprintln!(
+                        "rapid-mlx isn't installed here — the states above are all that can \
+                         be checked on this machine"
+                    );
+                    return;
+                }
+                assert_eq!(
+                    panel
+                        .cached
+                        .iter()
+                        .filter(|r| matches!(
+                            r.state,
+                            pi_core_ffi::RapidMlxModelStateRecord::KnownServed
+                        ))
+                        .count(),
+                    panel
+                        .running
+                        .as_ref()
+                        .map(|r| usize::from(r.known_to_pi))
+                        .unwrap_or(0),
+                    "at most one row can be served, and only when pi knows it"
+                );
+            });
         }
         Some("thinking") => {
             let rt = tokio::runtime::Runtime::new().expect("tokio runtime");

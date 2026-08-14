@@ -39,7 +39,8 @@ use tokio::sync::{mpsc, oneshot};
 pub use dialog::{ExtensionDialogRecord, ExtensionDialogReply};
 pub use local_models::{
     CachedModelRecord, HfResultRecord, LocalModelError, LocalModelIndex, OllamaPanelRecord,
-    RapidMlxPanelRecord, RouterModelRecord, RouterPanelRecord,
+    RapidMlxModelStateRecord, RapidMlxPanelRecord, RouterModelRecord, RouterPanelRecord,
+    RunningServerRecord,
 };
 pub use models::{ModelRecord, ServerDotState};
 pub use row::{CodeLineRecord, ColoredSpanRecord, RowRecord, TableCellRecord};
@@ -194,11 +195,32 @@ enum ChatCmd {
         path: String,
         reply: oneshot::Sender<Result<(), String>>,
     },
-    /// (Re)spawns a managed `rapid-mlx serve <alias>` and, once ready, makes
-    /// it pi's active model — the one local-model action that needs the
-    /// live `PiClient` (`client.set_model(...)`), unlike everything else in
-    /// `LocalModelIndex`. See the SW4 plan's Design section.
+    /// Rapid-mlx panel state. Lives here rather than on the stateless
+    /// `LocalModelIndex` because resolving each row's action state needs
+    /// both the live `PiClient` (which models pi knows) and the managed
+    /// child (which server is ours to stop).
+    RefreshRapidMlxPanel {
+        reply: oneshot::Sender<RapidMlxPanelRecord>,
+    },
+    /// (Re)spawns a managed `rapid-mlx serve <alias>`, replacing any server
+    /// this app already runs. Deliberately does **not** wait for readiness
+    /// (rapid-mlx's "Ready:" line can sit unflushed behind a pipe
+    /// indefinitely) and does **not** select the model in pi — the panel
+    /// reflects the new server on its next refresh.
     ServeRapidMlxModel {
+        alias: String,
+        reply: oneshot::Sender<Result<(), String>>,
+    },
+    /// Stops the managed `rapid-mlx serve` child, if any. Never touches a
+    /// server this app didn't spawn.
+    StopRapidMlx {
+        reply: oneshot::Sender<Result<(), String>>,
+    },
+    /// Registers `alias` in `models.json` so pi can select it at all, then
+    /// refreshes pi's model catalog and restarts the child — pi caches its
+    /// catalog, so neither step alone is enough (verified against a live
+    /// pi: `set_model` kept answering "Model not found").
+    RegisterRapidMlxModel {
         alias: String,
         reply: oneshot::Sender<Result<(), String>>,
     },
@@ -307,7 +329,7 @@ impl PiSession {
         })?;
         runtime.block_on(ensure_usable_path());
         let opts = PiOptions {
-            cwd: Some(PathBuf::from(cwd)),
+            cwd: Some(PathBuf::from(&cwd)),
             ..Default::default()
         };
         let (client, events) = runtime.block_on(PiClient::spawn(opts)).map_err(|e| {
@@ -324,6 +346,7 @@ impl PiSession {
             sink,
             dark.clone(),
             resume_session_path,
+            cwd,
         ));
         Ok(Self {
             cmd_tx,
@@ -455,16 +478,37 @@ impl PiSession {
             .await
     }
 
-    /// (Re)spawns a managed `rapid-mlx serve <alias>`, waits for it to
-    /// become ready, then makes it pi's active model. Stops any
-    /// previously-managed server first — a model switch is a supervised
-    /// restart, not a hot swap, matching `pi_core::backend::
-    /// serve_rapid_mlx_model`. An already-running *external* server (or
-    /// anything else bound to the port) surfaces as a normal
-    /// "failed to become ready" error rather than being killed: this only
-    /// ever stops servers it itself spawned.
+    /// Rapid-mlx panel state, with each cached row's action already
+    /// resolved — see `ChatCmd::RefreshRapidMlxPanel`.
+    pub async fn refresh_rapid_mlx_panel(&self) -> Result<RapidMlxPanelRecord, PiSessionError> {
+        let (tx, rx) = oneshot::channel();
+        self.cmd_tx
+            .send(ChatCmd::RefreshRapidMlxPanel { reply: tx })
+            .map_err(|_| PiSessionError::Action("session is gone".to_string()))?;
+        rx.await
+            .map_err(|_| PiSessionError::Action("session is gone".to_string()))
+    }
+
+    /// Starts `rapid-mlx serve <alias>`, replacing any server this app
+    /// already runs. Returns as soon as the child is spawned; readiness
+    /// shows up in the next `refresh_rapid_mlx_panel`. Does not change
+    /// pi's selected model.
     pub async fn serve_rapid_mlx_model(&self, alias: String) -> Result<(), PiSessionError> {
         self.call(|reply| ChatCmd::ServeRapidMlxModel { alias, reply })
+            .await
+    }
+
+    /// Stops the managed `rapid-mlx serve` child — a no-op when the running
+    /// server isn't one this app spawned.
+    pub async fn stop_rapid_mlx(&self) -> Result<(), PiSessionError> {
+        self.call(|reply| ChatCmd::StopRapidMlx { reply }).await
+    }
+
+    /// Makes `alias` selectable by pi: writes it into `models.json`, runs
+    /// `pi update --models`, and restarts the child (restoring the active
+    /// session). See `ChatCmd::RegisterRapidMlxModel`.
+    pub async fn register_rapid_mlx_model(&self, alias: String) -> Result<(), PiSessionError> {
+        self.call(|reply| ChatCmd::RegisterRapidMlxModel { alias, reply })
             .await
     }
 
@@ -581,7 +625,67 @@ impl PiSession {
 /// an external/unmanaged server) — stopped before starting a replacement,
 /// and (implicitly, via `Drop`/`kill_on_drop`) when `run()`'s task ends.
 struct Managed {
+    /// The alias passed to `rapid-mlx serve` — lets the panel tell "this
+    /// server is ours to stop" from one someone started by hand.
+    alias: String,
     server: pi_local::rapid_mlx::ManagedServer,
+}
+
+/// Makes `alias` selectable by pi. Writing `models.json` alone isn't enough:
+/// pi caches its model catalog, so the entry only takes effect after
+/// `pi update --models` **and** a fresh child process (verified against a
+/// live pi — an in-place `get_available_models` still answered "Model not
+/// found"). Restores the active session across the restart so the user's
+/// transcript survives.
+async fn register_rapid_mlx_model(
+    client: &mut PiClient,
+    events: &mut mpsc::UnboundedReceiver<Event>,
+    alias: &str,
+    cwd: &str,
+    sink: &dyn ChatSink,
+    dark: &AtomicBool,
+) -> Result<(), String> {
+    let Some(path) = pi_local::models_json::default_path() else {
+        return Err("could not resolve $HOME to locate models.json".to_string());
+    };
+    local_models::register_rapid_mlx_alias_at(&path, alias)
+        .map_err(|e| format!("rapid-mlx: could not register {alias}: {e}"))?;
+
+    let output = tokio::process::Command::new("pi")
+        .arg("update")
+        .arg("--models")
+        .output()
+        .await
+        .map_err(|e| format!("could not run `pi update --models`: {e}"))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("`pi update --models` failed: {}", stderr.trim()));
+    }
+
+    let resume = active_session_path(client).await;
+    let opts = PiOptions {
+        cwd: Some(PathBuf::from(cwd)),
+        ..Default::default()
+    };
+    let (new_client, new_events) = PiClient::spawn(opts).await.map_err(|e| {
+        format!(
+            "rapid-mlx: registered {alias} but could not restart pi to pick it up: {}",
+            describe(&e)
+        )
+    })?;
+    *client = new_client; // old client (+ child, kill_on_drop) dropped here
+    *events = new_events;
+    if let Some(path) = resume {
+        match do_switch_session(client, &path).await {
+            Ok(()) => hydrate_and_push(client, sink, dark).await,
+            Err(e) => report_error(
+                sink,
+                format!("rapid-mlx: restarted pi but could not restore the session: {e}"),
+            ),
+        }
+    }
+    sink.on_active_session_changed(active_session_path(client).await);
+    Ok(())
 }
 
 /// Owns the live `PiClient` end-to-end: drains UI commands and pi's event
@@ -606,7 +710,11 @@ async fn run(
     sink: Arc<dyn ChatSink>,
     dark: Arc<AtomicBool>,
     resume_session_path: Option<String>,
+    cwd: String,
 ) {
+    // The cwd every respawn reuses — `SwitchProject` updates it,
+    // `RegisterRapidMlxModel` restarts pi into it.
+    let mut current_cwd = cwd;
     // Set once `ServeRapidMlxModel` spawns a managed child, so a later call
     // knows to stop it before starting a replacement — same loop-scoped-
     // mutable-local pattern as `client`/`events` above.
@@ -671,6 +779,7 @@ async fn run(
                             Ok((new_client, new_events)) => {
                                 client = new_client; // old client (+ child, kill_on_drop) dropped here
                                 events = new_events;
+                                current_cwd = path.clone();
                                 // A brand-new project has no active session yet — an
                                 // unconditional clear, not a `get_messages` round trip
                                 // (that's `hydrate_and_push`, reserved for a session
@@ -741,7 +850,29 @@ async fn run(
                             }
                         }
                     }
+                    Some(ChatCmd::RefreshRapidMlxPanel { reply }) => {
+                        let mem = pi_local::system_fit::SystemMemory::probe();
+                        let snapshot = pi_local::panel::collect_rapid_mlx_snapshot().await;
+                        let (models, _) = models::refresh_models_and_state(&client).await;
+                        let known: Vec<String> = models.into_iter().map(|m| m.id).collect();
+                        let managed_alias =
+                            managed_rapid_mlx.as_ref().map(|m| m.alias.clone());
+                        let data = pi_local::panel::format_rapid_mlx_panel(
+                            snapshot,
+                            &mem,
+                            &known,
+                            managed_alias.as_deref(),
+                        );
+                        let _ = reply.send(RapidMlxPanelRecord::from(data));
+                    }
                     Some(ChatCmd::ServeRapidMlxModel { alias, reply }) => {
+                        // No `wait_ready`: rapid-mlx's stdout is fully
+                        // buffered once it isn't a tty (which `Stdio::piped`
+                        // guarantees), so its "Ready:" line can sit unflushed
+                        // long after the server is serving. Waiting on it
+                        // here would also stall every other command,
+                        // including Stop. The panel's own refresh discovers
+                        // readiness via `rapid-mlx ps` instead.
                         if let Some(prev) = managed_rapid_mlx.take() {
                             let _ = prev.server.shutdown().await;
                         }
@@ -750,38 +881,54 @@ async fn run(
                             &alias,
                             pi_local::panel::RAPID_MLX_PORT,
                         ) {
-                            Ok(mut server) => match server.wait_ready(Duration::from_secs(180)).await {
-                                Ok(()) => {
-                                    managed_rapid_mlx = Some(Managed {
-                                        server,
-                                    });
-                                    let outcome = client
-                                        .set_model("rapid-mlx", &alias)
-                                        .await
-                                        .map(|_| ())
-                                        .map_err(|e| {
-                                            format!(
-                                                "rapid-mlx: {alias} is ready but pi couldn't \
-                                                 select it (is a matching entry configured in \
-                                                 models.json?): {e}"
-                                            )
-                                        });
-                                    if outcome.is_ok() {
-                                        (_, current_model) = models::refresh_models_and_state(&client).await;
-                                        dot_interval.reset_immediately();
-                                    }
-                                    let _ = reply.send(outcome);
-                                }
-                                Err(e) => {
-                                    let _ = reply
-                                        .send(Err(format!("rapid-mlx: {alias} failed to start: {e}")));
-                                }
-                            },
+                            Ok(server) => {
+                                managed_rapid_mlx = Some(Managed {
+                                    alias: alias.clone(),
+                                    server,
+                                });
+                                dot_interval.reset_immediately();
+                                let _ = reply.send(Ok(()));
+                            }
                             Err(e) => {
-                                let _ =
-                                    reply.send(Err(format!("rapid-mlx: could not spawn serve: {e}")));
+                                let _ = reply
+                                    .send(Err(format!("rapid-mlx: could not start {alias}: {e}")));
                             }
                         }
+                    }
+                    Some(ChatCmd::StopRapidMlx { reply }) => {
+                        match managed_rapid_mlx.take() {
+                            Some(prev) => {
+                                let outcome = prev.server.shutdown().await.map_err(|e| {
+                                    format!("rapid-mlx: could not stop the server: {e}")
+                                });
+                                dot_interval.reset_immediately();
+                                let _ = reply.send(outcome);
+                            }
+                            None => {
+                                let _ = reply.send(Err(
+                                    "rapid-mlx: this server wasn't started by SwiftyPi, so it \
+                                     can't be stopped from here"
+                                        .to_string(),
+                                ));
+                            }
+                        }
+                    }
+                    Some(ChatCmd::RegisterRapidMlxModel { alias, reply }) => {
+                        let outcome = register_rapid_mlx_model(
+                            &mut client,
+                            &mut events,
+                            &alias,
+                            &current_cwd,
+                            sink.as_ref(),
+                            &dark,
+                        )
+                        .await;
+                        if outcome.is_ok() {
+                            (_, current_model) =
+                                models::refresh_models_and_state(&client).await;
+                            dot_interval.reset_immediately();
+                        }
+                        let _ = reply.send(outcome);
                     }
                     Some(ChatCmd::ReplyExtensionDialog { request_id, reply }) => {
                         if let Err(e) = client.reply_extension_ui(&request_id, reply.into()) {
@@ -1114,8 +1261,23 @@ fn reply_demo_action(cmd: ChatCmd, sink: &dyn ChatSink) {
         ChatCmd::RenameSession { reply, .. } => {
             let _ = reply.send(Ok(()));
         }
-        ChatCmd::ServeRapidMlxModel { reply, .. } => {
+        ChatCmd::ServeRapidMlxModel { reply, .. }
+        | ChatCmd::StopRapidMlx { reply }
+        | ChatCmd::RegisterRapidMlxModel { reply, .. } => {
             let _ = reply.send(Ok(()));
+        }
+        ChatCmd::RefreshRapidMlxPanel { reply } => {
+            // Demo mode has no rapid-mlx to probe; the fixture keeps the
+            // panel demoable offline, same as the Slint demo backend.
+            let mem = pi_local::system_fit::SystemMemory::probe();
+            let known = vec!["qwen3.5-4b-4bit".to_string()];
+            let data = pi_local::panel::format_rapid_mlx_panel(
+                pi_local::panel::demo_rapid_mlx_snapshot(),
+                &mem,
+                &known,
+                Some("qwen3.5-4b-4bit"),
+            );
+            let _ = reply.send(RapidMlxPanelRecord::from(data));
         }
         ChatCmd::ReplyExtensionDialog { .. } => {} // no-op: demo mode never emits dialogs
         ChatCmd::RefreshModels { reply } => {

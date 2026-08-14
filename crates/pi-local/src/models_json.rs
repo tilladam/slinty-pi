@@ -90,6 +90,21 @@ impl ModelsJson {
         out
     }
 
+    /// Reads `doc.providers.<key>`, if present — lets a caller merge into an
+    /// existing entry (see `rapid_mlx::provider_preset`) rather than always
+    /// replacing it wholesale via [`Self::set_provider`].
+    pub fn get_provider(&self, key: &str) -> Option<&Value> {
+        self.doc.get("providers")?.get(key)
+    }
+
+    /// Every provider entry, in document order (`preserve_order` is on — see
+    /// [`Self::to_bytes`]) — lets a caller find an existing provider by
+    /// something other than its key, e.g. by `baseUrl` (see
+    /// `rapid_mlx::provider_key_for_port`).
+    pub fn providers(&self) -> Option<&serde_json::Map<String, Value>> {
+        self.doc.get("providers")?.as_object()
+    }
+
     /// Adds or replaces `doc.providers.<key>`, creating `providers` as an
     /// object if the document doesn't have one yet.
     pub fn set_provider(&mut self, key: &str, provider: Value) {

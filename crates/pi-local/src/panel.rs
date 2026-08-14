@@ -22,13 +22,55 @@ use crate::{auth_json, hf, ollama, rapid_mlx, router};
 /// and starts a new one on this same port.
 pub const RAPID_MLX_PORT: u16 = 8000;
 
-/// UI-ready rapid-mlx panel data. `cached` rows are `(alias, hf_repo,
-/// human_size, fit_label)`.
+/// What a frontend can *do* with a cached rapid-mlx model — the panel's
+/// per-row button follows directly from this.
+///
+/// "Known to pi" means the alias (or its HF repo) appears in pi's own model
+/// list, i.e. `models.json` has an entry for it. Serving a model pi doesn't
+/// know about is useless — pi can't select it — so such a row offers
+/// registration instead of a serve action.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RapidMlxModelState {
+    /// Known to pi, and a rapid-mlx server is currently serving it.
+    KnownServed,
+    /// Known to pi, nothing serving it right now.
+    KnownIdle,
+    /// Not in pi's model list — must be registered before it's usable
+    /// (whether or not something happens to be serving it).
+    Unknown,
+}
+
+/// One cached-model row, with the action state already resolved.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CachedModelRow {
+    pub alias: String,
+    pub hf_repo: String,
+    /// Human-readable on-disk size, e.g. `"5.7 GiB"`.
+    pub size: String,
+    pub fit_label: String,
+    pub state: RapidMlxModelState,
+}
+
+/// The currently-running rapid-mlx server, if any.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RunningInfo {
+    /// `"{model} running on :{port} (uptime {t})"`.
+    pub summary: String,
+    /// Whether pi knows the served model. `false` warrants a warning in the
+    /// UI: the server is up but pi can't route to it — the usual cause is a
+    /// server started by hand with an unregistered alias.
+    pub known_to_pi: bool,
+    /// Whether *this app* spawned the server. Only then can it be stopped
+    /// from here; an externally-started one is left alone.
+    pub managed: bool,
+}
+
+/// UI-ready rapid-mlx panel data.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RapidMlxPanelData {
     pub version: Option<String>,
-    pub running_summary: Option<String>,
-    pub cached: Vec<(String, String, String, String)>,
+    pub running: Option<RunningInfo>,
+    pub cached: Vec<CachedModelRow>,
     pub catalog_count: usize,
 }
 
@@ -65,30 +107,82 @@ pub async fn collect_rapid_mlx_snapshot() -> RapidMlxSnapshot {
     }
 }
 
+/// Resolves each cached model's [`RapidMlxModelState`] and the running
+/// server's status.
+///
+/// `known_model_ids` are pi's model ids (from `GetAvailableModels`);
+/// `managed_alias` is the alias of the server *this app* spawned, if any.
+///
+/// Two matching rules, both deliberately loose:
+///
+/// - **alias or HF repo.** `rapid-mlx ps` echoes back whatever string was
+///   passed to `serve` — the alias when we started it, the HF repo when
+///   someone started it by hand — and `models.json` ids are written either
+///   way too. The alias↔repo pairing exists only in `models --cached`, so
+///   every comparison tries both sides.
+/// - **provider-agnostic.** A model counts as known no matter which provider
+///   key holds it (`rapid-mlx`, `rapid-mlx-local`, anything else): the key is
+///   the user's to name. A bare rapid-mlx alias can't realistically collide
+///   with a cloud model id.
 pub fn format_rapid_mlx_panel(
     snapshot: RapidMlxSnapshot,
     mem: &crate::system_fit::SystemMemory,
+    known_model_ids: &[String],
+    managed_alias: Option<&str>,
 ) -> RapidMlxPanelData {
-    let running_summary = snapshot
-        .running
-        .first()
-        .map(|s| format!("{} running on :{} (uptime {})", s.model, s.port, s.uptime));
+    let known = |alias: &str, hf_repo: &str| {
+        known_model_ids
+            .iter()
+            .any(|id| id == alias || id == hf_repo)
+    };
+    let served = |alias: &str, hf_repo: &str| {
+        snapshot
+            .running
+            .iter()
+            .any(|s| s.model == alias || s.model == hf_repo)
+    };
+
+    let running = snapshot.running.first().map(|s| {
+        // The running server reports one identifier; recover its pairing
+        // from the cached list so "known to pi" can check both sides.
+        let paired_alias = snapshot
+            .cached
+            .iter()
+            .find(|c| c.alias == s.model || c.hf_repo == s.model);
+        let (alias, hf_repo) = paired_alias
+            .map(|c| (c.alias.as_str(), c.hf_repo.as_str()))
+            .unwrap_or((s.model.as_str(), s.model.as_str()));
+        RunningInfo {
+            summary: format!("{} running on :{} (uptime {})", s.model, s.port, s.uptime),
+            known_to_pi: known(alias, hf_repo),
+            managed: managed_alias.is_some_and(|m| m == alias || m == s.model),
+        }
+    });
+
     let cached = snapshot
         .cached
-        .into_iter()
+        .iter()
         .map(|c| {
-            let fit = mem.fit_label_for(c.size_bytes).label().to_string();
-            (
-                c.alias,
-                c.hf_repo,
-                crate::system_fit::human_size(c.size_bytes),
-                fit,
-            )
+            let state = if !known(&c.alias, &c.hf_repo) {
+                RapidMlxModelState::Unknown
+            } else if served(&c.alias, &c.hf_repo) {
+                RapidMlxModelState::KnownServed
+            } else {
+                RapidMlxModelState::KnownIdle
+            };
+            CachedModelRow {
+                alias: c.alias.clone(),
+                hf_repo: c.hf_repo.clone(),
+                size: crate::system_fit::human_size(c.size_bytes),
+                fit_label: mem.fit_label_for(c.size_bytes).label().to_string(),
+                state,
+            }
         })
         .collect();
+
     RapidMlxPanelData {
         version: snapshot.version,
-        running_summary,
+        running,
         cached,
         catalog_count: snapshot.catalog_count,
     }
@@ -427,6 +521,124 @@ mod auth_panel_tests {
 }
 
 #[cfg(test)]
+mod rapid_mlx_state_tests {
+    use super::*;
+
+    fn snapshot(running_model: Option<&str>) -> RapidMlxSnapshot {
+        RapidMlxSnapshot {
+            version: Some("rapid-mlx 0.12.11".to_string()),
+            running: running_model
+                .map(|m| {
+                    vec![rapid_mlx::RunningServer {
+                        pid: 1,
+                        port: RAPID_MLX_PORT,
+                        model: m.to_string(),
+                        uptime: "1m".to_string(),
+                    }]
+                })
+                .unwrap_or_default(),
+            cached: vec![rapid_mlx::CachedModel {
+                alias: "lfm2.5-1b-4bit".to_string(),
+                hf_repo: "mlx-community/LFM2.5-1.2B-Instruct-4bit".to_string(),
+                size_bytes: 1024,
+                modified: "1d ago".to_string(),
+            }],
+            catalog_count: 170,
+        }
+    }
+
+    fn state_of(
+        running_model: Option<&str>,
+        known: &[&str],
+        managed: Option<&str>,
+    ) -> RapidMlxPanelData {
+        let mem = crate::system_fit::SystemMemory::probe();
+        let ids: Vec<String> = known.iter().map(|s| s.to_string()).collect();
+        format_rapid_mlx_panel(snapshot(running_model), &mem, &ids, managed)
+    }
+
+    #[test]
+    fn unknown_to_pi_regardless_of_whether_something_serves_it() {
+        assert_eq!(
+            state_of(None, &[], None).cached[0].state,
+            RapidMlxModelState::Unknown
+        );
+        assert_eq!(
+            state_of(Some("lfm2.5-1b-4bit"), &[], None).cached[0].state,
+            RapidMlxModelState::Unknown,
+            "serving an unregistered model doesn't make it usable by pi"
+        );
+    }
+
+    #[test]
+    fn known_but_idle_when_nothing_is_running() {
+        assert_eq!(
+            state_of(None, &["lfm2.5-1b-4bit"], None).cached[0].state,
+            RapidMlxModelState::KnownIdle
+        );
+    }
+
+    #[test]
+    fn served_matches_whether_ps_reports_the_alias_or_the_hf_repo() {
+        // `rapid-mlx ps` echoes whatever was passed to `serve`: the alias
+        // when this app started it, the HF repo when a human did.
+        assert_eq!(
+            state_of(Some("lfm2.5-1b-4bit"), &["lfm2.5-1b-4bit"], None).cached[0].state,
+            RapidMlxModelState::KnownServed
+        );
+        assert_eq!(
+            state_of(
+                Some("mlx-community/LFM2.5-1.2B-Instruct-4bit"),
+                &["lfm2.5-1b-4bit"],
+                None
+            )
+            .cached[0]
+                .state,
+            RapidMlxModelState::KnownServed
+        );
+    }
+
+    #[test]
+    fn known_matches_on_the_hf_repo_id_too() {
+        assert_eq!(
+            state_of(None, &["mlx-community/LFM2.5-1.2B-Instruct-4bit"], None).cached[0].state,
+            RapidMlxModelState::KnownIdle,
+            "models.json may register either the alias or the repo id"
+        );
+    }
+
+    #[test]
+    fn running_info_reports_known_and_managed_flags() {
+        let ours = state_of(
+            Some("lfm2.5-1b-4bit"),
+            &["lfm2.5-1b-4bit"],
+            Some("lfm2.5-1b-4bit"),
+        );
+        let running = ours.running.expect("a server is running");
+        assert!(running.known_to_pi);
+        assert!(running.managed, "we spawned this one, so Stop can work");
+        assert!(running.summary.contains("running on :8000"));
+
+        let theirs = state_of(Some("lfm2.5-1b-4bit"), &["lfm2.5-1b-4bit"], None);
+        assert!(!theirs.running.unwrap().managed, "not ours to stop");
+    }
+
+    #[test]
+    fn running_an_unregistered_model_is_flagged_not_known() {
+        let panel = state_of(Some("lfm2.5-1b-4bit"), &[], None);
+        assert!(
+            !panel.running.unwrap().known_to_pi,
+            "drives the warning icon beside the running-server line"
+        );
+    }
+
+    #[test]
+    fn no_running_server_yields_no_running_info() {
+        assert!(state_of(None, &["lfm2.5-1b-4bit"], None).running.is_none());
+    }
+}
+
+#[cfg(test)]
 mod models_panel_tests {
     use super::*;
     use crate::router::{FileProgress, LoadingProgress, ModelStatus, StatusProgress, StatusValue};
@@ -554,15 +766,33 @@ mod models_panel_tests {
             total_bytes: 32 * 1024 * 1024 * 1024,
             available_bytes: 32 * 1024 * 1024 * 1024,
         };
-        let data = format_rapid_mlx_panel(demo_rapid_mlx_snapshot(), &mem);
+        // The demo fixture's running server matches the first cached model
+        // by HF repo, and pi is told it knows that alias — so the demo panel
+        // renders a served row rather than an unregistered one.
+        let known = vec!["qwen3.5-4b-4bit".to_string()];
+        let data = format_rapid_mlx_panel(
+            demo_rapid_mlx_snapshot(),
+            &mem,
+            &known,
+            Some("qwen3.5-4b-4bit"),
+        );
         assert_eq!(data.version.as_deref(), Some("rapid-mlx 0.11.0"));
-        assert!(data.running_summary.unwrap().contains("Qwen3.5-4B"));
+        let running = data.running.expect("the fixture has a running server");
+        assert!(running.summary.contains("Qwen3.5-4B"));
+        assert!(running.known_to_pi);
+        assert!(running.managed);
         assert_eq!(data.cached.len(), 2);
-        let (alias, hf_repo, size, fit) = &data.cached[0];
-        assert_eq!(alias, "qwen3.5-4b-4bit");
-        assert_eq!(hf_repo, "mlx-community/Qwen3.5-4B-MLX-4bit");
-        assert_eq!(size, "5.7 GiB");
-        assert_eq!(fit, "Fits");
+        let row = &data.cached[0];
+        assert_eq!(row.alias, "qwen3.5-4b-4bit");
+        assert_eq!(row.hf_repo, "mlx-community/Qwen3.5-4B-MLX-4bit");
+        assert_eq!(row.size, "5.7 GiB");
+        assert_eq!(row.fit_label, "Fits");
+        assert_eq!(row.state, RapidMlxModelState::KnownServed);
+        assert_eq!(
+            data.cached[1].state,
+            RapidMlxModelState::Unknown,
+            "the second fixture model isn't in pi's list"
+        );
     }
 
     /// Same shared-formatter guarantee as the router fixture test above,

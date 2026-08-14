@@ -829,6 +829,12 @@ impl ModelsState {
         self.entries.get(i)
     }
 
+    /// Every model id pi currently knows about — the "is this rapid-mlx
+    /// alias registered?" input to `open_models_panel`.
+    fn known_ids(&self) -> Vec<String> {
+        self.entries.iter().map(|e| e.id.clone()).collect()
+    }
+
     fn current_entry(&self) -> Option<&ModelEntry> {
         usize::try_from(self.current)
             .ok()
@@ -1351,10 +1357,24 @@ async fn run_session(
                         transcript.ui.set_palette_entries(ranked);
                     }
                     UiCmd::OpenModels => {
-                        open_models_panel(transcript).await;
+                        let managed_alias =
+                            managed_rapid_mlx.as_ref().map(|m| m.alias.clone());
+                        open_models_panel(
+                            transcript,
+                            &models.known_ids(),
+                            managed_alias.as_deref(),
+                        )
+                        .await;
                     }
                     UiCmd::ServeRapidMlxModel(alias) => {
-                        serve_rapid_mlx_model(client, transcript, managed_rapid_mlx, &alias).await;
+                        serve_rapid_mlx_model(
+                            client,
+                            transcript,
+                            managed_rapid_mlx,
+                            &alias,
+                            &models.known_ids(),
+                        )
+                        .await;
                         models = refresh_models(client, transcript).await;
                         dot_interval.reset_immediately();
                     }
@@ -1377,7 +1397,15 @@ async fn run_session(
                         download_router_model(transcript, &model).await;
                     }
                     UiCmd::AddOllamaToPi => {
-                        if add_ollama_to_pi(transcript).await {
+                        let managed_alias =
+                            managed_rapid_mlx.as_ref().map(|m| m.alias.clone());
+                        if add_ollama_to_pi(
+                            transcript,
+                            &models.known_ids(),
+                            managed_alias.as_deref(),
+                        )
+                        .await
+                        {
                             // Not verifiable on this dev machine (no
                             // running Ollama) — double-check the composer
                             // picker refreshes against a live Ollama
@@ -1401,12 +1429,25 @@ async fn run_session(
                                 "info",
                                 format!("rapid-mlx server for {alias} died — restarting…"),
                             );
-                            serve_rapid_mlx_model(client, transcript, managed_rapid_mlx, &alias)
-                                .await;
+                            serve_rapid_mlx_model(
+                                client,
+                                transcript,
+                                managed_rapid_mlx,
+                                &alias,
+                                &models.known_ids(),
+                            )
+                            .await;
                             models = refresh_models(client, transcript).await;
                             dot_interval.reset_immediately();
                         } else {
-                            open_models_panel(transcript).await;
+                            let managed_alias =
+                                managed_rapid_mlx.as_ref().map(|m| m.alias.clone());
+                            open_models_panel(
+                                transcript,
+                                &models.known_ids(),
+                                managed_alias.as_deref(),
+                            )
+                            .await;
                         }
                     }
                 }
@@ -1647,12 +1688,23 @@ async fn fork_from(client: &PiClient, transcript: &mut Transcript, entry_id: &st
 // parallel stand-in.
 // ---------------------------------------------------------------------------
 
-async fn open_models_panel(transcript: &mut Transcript) {
+/// `known_model_ids`/`managed_alias` resolve each cached row's action state
+/// — see `local::panel::format_rapid_mlx_panel`. The Slint UI doesn't render
+/// that state yet (the macOS app does); passing it through keeps both
+/// frontends fed from the same formatter.
+async fn open_models_panel(
+    transcript: &mut Transcript,
+    known_model_ids: &[String],
+    managed_alias: Option<&str>,
+) {
     let mem = local::system_fit::SystemMemory::probe();
     let snapshot = collect_rapid_mlx_snapshot().await;
-    transcript
-        .ui
-        .set_rapid_mlx_panel(format_rapid_mlx_panel(snapshot, &mem));
+    transcript.ui.set_rapid_mlx_panel(format_rapid_mlx_panel(
+        snapshot,
+        &mem,
+        known_model_ids,
+        managed_alias,
+    ));
 
     let router = local::router::LlamaRouter::default();
     transcript
@@ -1714,7 +1766,11 @@ fn save_api_key(transcript: &mut Transcript, provider: &str, key: &Secret) {
 /// (verified by `local::models_json`'s round-trip tests). Returns whether
 /// the write succeeded, so the caller knows whether to nudge pi to re-read
 /// it (see `refresh_models`'s call site in `run_session`).
-async fn add_ollama_to_pi(transcript: &mut Transcript) -> bool {
+async fn add_ollama_to_pi(
+    transcript: &mut Transcript,
+    known_model_ids: &[String],
+    managed_alias: Option<&str>,
+) -> bool {
     let Some(models) = local::ollama::OllamaProbe::default().list_models().await else {
         transcript.note("error", "Ollama: no longer detected — nothing to add");
         return false;
@@ -1756,7 +1812,7 @@ async fn add_ollama_to_pi(transcript: &mut Transcript) -> bool {
             false
         }
     };
-    open_models_panel(transcript).await;
+    open_models_panel(transcript, known_model_ids, managed_alias).await;
     wrote
 }
 
@@ -1862,9 +1918,16 @@ async fn render_demo_models_panel(
     router_entries: &[local::router::ModelEntry],
 ) {
     let mem = local::system_fit::SystemMemory::probe();
-    transcript
-        .ui
-        .set_rapid_mlx_panel(format_rapid_mlx_panel(demo_rapid_mlx_snapshot(), &mem));
+    // Demo mode has no live pi to ask, so pretend the fixture's served model
+    // is registered and ours — the panel then demos the "known + served"
+    // state rather than an unregistered one.
+    let known = vec!["qwen3.5-4b-4bit".to_string()];
+    transcript.ui.set_rapid_mlx_panel(format_rapid_mlx_panel(
+        demo_rapid_mlx_snapshot(),
+        &mem,
+        &known,
+        Some("qwen3.5-4b-4bit"),
+    ));
     transcript.ui.set_router_panel(RouterPanelData {
         status_label: "ready".to_string(),
         base_url: local::router::DEFAULT_BASE_URL.to_string(),
@@ -2145,6 +2208,7 @@ async fn serve_rapid_mlx_model(
     transcript: &mut Transcript,
     managed: &mut Option<ManagedRapidMlx>,
     alias: &str,
+    known_model_ids: &[String],
 ) {
     if let Some(prev) = managed.take() {
         transcript.note("info", "stopping the previous managed rapid-mlx server…");
@@ -2179,7 +2243,8 @@ async fn serve_rapid_mlx_model(
         Err(e) => transcript.note("error", format!("rapid-mlx: could not spawn serve: {e}")),
     }
 
-    open_models_panel(transcript).await;
+    let managed_alias = managed.as_ref().map(|m| m.alias.clone());
+    open_models_panel(transcript, known_model_ids, managed_alias.as_deref()).await;
 }
 
 // ---------------------------------------------------------------------------
