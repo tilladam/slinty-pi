@@ -28,5 +28,12 @@ struct SwiftyPiApp: App {
                 .keyboardShortcut("o")
             }
         }
+
+        // A `Settings` scene gives the panel the platform-standard entry
+        // points for free: "SwiftyPi > Settings…" in the app menu, bound to
+        // ⌘,. `SidebarView`'s `SettingsLink` opens this same window.
+        Settings {
+            ModelsPanelView(model: model)
+        }
     }
 }

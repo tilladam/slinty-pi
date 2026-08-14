@@ -7,8 +7,10 @@ import SwiftUI
 /// composer "current model" picker and no server-dot health indicator —
 /// SW4's explicit scope cut, see the project's swiftui-branch plan.
 struct ModelsPanelView: View {
-    var model: AppModel
-    @Environment(\.dismiss) private var dismiss
+    /// `@Bindable`, not a plain `var` — hosted in a `Settings` scene rather
+    /// than a sheet, where a plain stored property was observed to stop
+    /// picking up `AppModel` changes after the window had been shown once.
+    @Bindable var model: AppModel
 
     @State private var showHfSearch = false
     @State private var providerInput = ""
@@ -23,12 +25,7 @@ struct ModelsPanelView: View {
                 authSection
             }
             .formStyle(.grouped)
-            .navigationTitle("Models")
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Close") { dismiss() }
-                }
-            }
+            .navigationTitle("Settings")
         }
         .frame(minWidth: 480, minHeight: 560)
         .task {
@@ -44,7 +41,12 @@ struct ModelsPanelView: View {
         Section("rapid-mlx") {
             if let panel = model.rapidMlxPanel {
                 LabeledContent("Version", value: panel.version ?? "not detected — install with `brew install rapid-mlx`")
-                LabeledContent("Server", value: panel.runningSummary ?? "No server running")
+                serverRow(panel.running)
+                if let error = model.rapidMlxError {
+                    Text(error)
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                }
                 if panel.cached.isEmpty {
                     Text("No cached models yet — run `rapid-mlx pull <alias>` to download one.")
                         .foregroundStyle(.secondary)
@@ -62,9 +64,7 @@ struct ModelsPanelView: View {
                                 .font(.caption)
                                 .padding(.horizontal, 6)
                                 .background(.quaternary, in: Capsule())
-                            Button("Serve") {
-                                Task { await model.serveRapidMlx(alias: cached.alias) }
-                            }
+                            actionButton(for: cached, running: panel.running)
                         }
                     }
                 }
@@ -76,6 +76,59 @@ struct ModelsPanelView: View {
             } else {
                 ProgressView()
             }
+        }
+    }
+
+    /// The running-server line. A server pi doesn't know about gets a
+    /// warning: it's up, but pi can't route to it — usually a server started
+    /// by hand with an alias that was never registered.
+    @ViewBuilder
+    private func serverRow(_ running: RunningServerRecord?) -> some View {
+        HStack {
+            Text("Server")
+            Spacer()
+            if let running {
+                if !running.knownToPi {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.orange)
+                        .help("pi has no entry for this model — register it to use it")
+                }
+                Text(running.summary).foregroundStyle(.secondary)
+            } else {
+                Text("No server running").foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    /// One action per state — the whole point of the panel's redesign:
+    /// served → Stop, idle → Serve, unregistered → Register.
+    @ViewBuilder
+    private func actionButton(
+        for cached: CachedModelRecord,
+        running: RunningServerRecord?
+    ) -> some View {
+        switch cached.state {
+        case .knownServed:
+            let managed = running?.managed ?? false
+            Button("Stop") {
+                Task { await model.stopRapidMlx() }
+            }
+            .disabled(!managed)
+            .help(
+                managed
+                    ? "Stop this rapid-mlx server"
+                    : "This server wasn't started by SwiftyPi, so it can't be stopped from here"
+            )
+        case .knownIdle:
+            Button("Serve") {
+                Task { await model.serveRapidMlx(alias: cached.alias) }
+            }
+            .help("Start rapid-mlx serving this model")
+        case .unknown:
+            Button("Register") {
+                Task { await model.registerRapidMlx(alias: cached.alias) }
+            }
+            .help("Add this model to pi's config so it can be selected — restarts pi")
         }
     }
 

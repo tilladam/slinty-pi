@@ -294,19 +294,31 @@ struct ChatView: View {
     /// resolved yet).
     @ViewBuilder
     private var serverDotView: some View {
-        if let color = serverDotColor {
+        switch model.serverDot {
+        case .hidden:
+            EmptyView()
+        case .ok:
             Circle()
-                .fill(color)
+                .fill(serverDotColor)
                 .frame(width: 12, height: 12)
+                .padding(4)
+                .contentShape(Rectangle())
+                .help(serverDotTooltip)
+        case .down, .mismatch:
+            // A plain red dot was too easy to miss; the problem states get a
+            // shape that reads as "needs attention" at a glance.
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(serverDotColor)
                 .padding(4)
                 .contentShape(Rectangle())
                 .help(serverDotTooltip)
         }
     }
 
-    private var serverDotColor: Color? {
+    /// Never consulted for `.hidden` — that case renders nothing.
+    private var serverDotColor: Color {
         switch model.serverDot {
-        case .hidden: return nil
+        case .hidden: return .clear
         case .ok: return Color(red: 0x43 / 255, green: 0xa0 / 255, blue: 0x47 / 255)
         case .down: return Color(red: 0xd3 / 255, green: 0x54 / 255, blue: 0x54 / 255)
         case .mismatch: return Color(red: 0xe2 / 255, green: 0xa5 / 255, blue: 0x3f / 255)

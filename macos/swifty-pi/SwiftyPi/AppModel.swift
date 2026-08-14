@@ -88,6 +88,11 @@ final class AppModel: ChatSink {
     private(set) var ollamaPanel: OllamaPanelRecord?
     private(set) var authEntries: [String] = []
     private(set) var hfResults: [HfResultRecord] = []
+    /// The last rapid-mlx action failure, rendered inline in the models
+    /// panel. `statusMessage` isn't enough on its own: it only ever shows in
+    /// the *chat* window, so a failure triggered from the Settings window
+    /// would otherwise look like nothing happened at all.
+    private(set) var rapidMlxError: String?
 
     // MARK: - Composer model picker + server dot (SW6)
 
@@ -403,29 +408,80 @@ final class AppModel: ChatSink {
     /// CLI a handful of times, which a router-only poll tick must not
     /// repeat (see `LocalModelIndex`'s doc comment).
     func refreshModelsPanel() async {
-        async let rapidMlx = localModels.refreshRapidMlxPanel()
+        // rapid-mlx comes from `PiSession`, not `LocalModelIndex`: resolving
+        // each row's serve/stop/register state needs the live client (which
+        // models pi knows) and the managed child (which server is ours).
         async let router = localModels.refreshRouterPanel()
         async let ollama = localModels.refreshOllamaPanel()
         async let auth = localModels.refreshAuthEntries()
-        rapidMlxPanel = await rapidMlx
+        await refreshRapidMlxPanel()
         routerPanel = await router
         ollamaPanel = await ollama
         authEntries = await auth
     }
 
-    // MARK: - Models panel: actions
-
-    /// (Re)spawns a managed rapid-mlx server and makes it pi's active model
-    /// — the one local-model action that goes through `PiSession`, not
-    /// `LocalModelIndex` (see `PiSession.serveRapidMlxModel`'s doc comment).
-    func serveRapidMlx(alias: String) async {
+    func refreshRapidMlxPanel() async {
         guard let session else { return }
         do {
-            try await session.serveRapidMlxModel(alias: alias)
-            await refreshModelsPanel()
-            await refreshModels()
+            rapidMlxPanel = try await session.refreshRapidMlxPanel()
         } catch {
-            setStatus("Could not serve \(alias): \(error)")
+            setStatus("Could not read rapid-mlx state: \(error)")
+        }
+    }
+
+    // MARK: - Models panel: actions
+
+    /// Starts a rapid-mlx server for `alias`, replacing any this app already
+    /// runs. Doesn't change pi's selected model — serving and selecting are
+    /// separate steps.
+    func serveRapidMlx(alias: String) async {
+        await runRapidMlxAction("serve \(alias)") { session in
+            try await session.serveRapidMlxModel(alias: alias)
+        }
+    }
+
+    /// Stops the rapid-mlx server this app started. Fails with an
+    /// explanation when the running server isn't ours.
+    func stopRapidMlx() async {
+        await runRapidMlxAction("stop rapid-mlx") { session in
+            try await session.stopRapidMlx()
+        }
+    }
+
+    /// Makes `alias` selectable by pi (writes models.json, refreshes pi's
+    /// catalog, restarts the child). The row becomes servable afterward.
+    func registerRapidMlx(alias: String) async {
+        await runRapidMlxAction("register \(alias)") { session in
+            try await session.registerRapidMlxModel(alias: alias)
+        }
+    }
+
+    /// Shared shape for the three rapid-mlx actions: clear the last error,
+    /// run, then refresh.
+    ///
+    /// The refresh happens twice — immediately, and again shortly after —
+    /// because a just-spawned server takes a moment to show up in
+    /// `rapid-mlx ps`. Two bounded refreshes rather than a polling loop:
+    /// enough for the panel to settle on its own without the window being
+    /// closed and reopened.
+    private func runRapidMlxAction(
+        _ what: String,
+        _ body: @escaping (PiSession) async throws -> Void
+    ) async {
+        guard let session else { return }
+        rapidMlxError = nil
+        do {
+            try await body(session)
+        } catch {
+            let message = "Could not \(what): \(error)"
+            rapidMlxError = message
+            setStatus(message)
+        }
+        await refreshModelsPanel()
+        await refreshModels()
+        Task { [weak self] in
+            try? await Task.sleep(for: .seconds(2))
+            await self?.refreshRapidMlxPanel()
         }
     }
 

@@ -10,7 +10,6 @@ struct SidebarView: View {
 
     @State private var isRenaming = false
     @State private var renameText = ""
-    @State private var showModels = false
     @State private var sessionPendingDelete: SessionRecord?
 
     var body: some View {
@@ -70,9 +69,9 @@ struct SidebarView: View {
                 .help("Switch to a different project directory")
             }
             ToolbarItem {
-                Button {
-                    showModels = true
-                } label: {
+                // Opens the same window as ⌘, / the app menu's Settings…
+                // rather than a second, sheet-shaped copy of the panel.
+                SettingsLink {
                     Label("Models", systemImage: "cpu")
                 }
                 .help("Browse and manage local models")
@@ -85,9 +84,6 @@ struct SidebarView: View {
             Button("Rename") {
                 Task { await model.renameActiveSession(to: renameText) }
             }
-        }
-        .sheet(isPresented: $showModels) {
-            ModelsPanelView(model: model)
         }
         .alert(
             "Delete Session?",
