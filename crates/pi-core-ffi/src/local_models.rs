@@ -343,25 +343,6 @@ fn add_ollama_ids_to_pi_at(path: &std::path::Path, ids: &[String]) -> Result<(),
 /// Path-parameterized for the same testability reason as
 /// `add_ollama_ids_to_pi_at`. Merges rather than replaces — see
 /// `pi_local::rapid_mlx::provider_preset`.
-pub(crate) fn register_rapid_mlx_alias_at(
-    path: &std::path::Path,
-    alias: &str,
-) -> Result<String, String> {
-    let mut doc = if path.exists() {
-        pi_local::models_json::ModelsJson::load(path)
-            .map_err(|e| format!("{e} — refusing to overwrite a models.json I can't parse"))?
-    } else {
-        pi_local::models_json::ModelsJson::empty()
-    };
-    let port = pi_local::panel::RAPID_MLX_PORT;
-    let key = pi_local::rapid_mlx::provider_key_for_port(doc.providers(), port);
-    let preset = pi_local::rapid_mlx::provider_preset(doc.get_provider(&key), port, alias);
-    doc.set_provider(&key, preset);
-    doc.write(path)
-        .map_err(|e| format!("could not write models.json: {e}"))?;
-    Ok(key)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -395,52 +376,6 @@ mod tests {
         assert_eq!(record.cached[0].alias, "alias");
         assert_eq!(record.cached[0].fit_label, "Fits");
         assert_eq!(record.cached[0].state, RapidMlxModelStateRecord::KnownIdle);
-    }
-
-    #[test]
-    fn register_rapid_mlx_alias_creates_a_provider_then_merges_into_it() {
-        let tmp = tempfile::tempdir().unwrap();
-        let path = tmp.path().join("models.json");
-
-        let key = register_rapid_mlx_alias_at(&path, "lfm2.5-1b-4bit").unwrap();
-        assert_eq!(key, pi_local::rapid_mlx::DEFAULT_PROVIDER_KEY);
-
-        // A second alias must join the first, not replace it.
-        let key = register_rapid_mlx_alias_at(&path, "qwen3.5-9b-4bit").unwrap();
-        assert_eq!(key, pi_local::rapid_mlx::DEFAULT_PROVIDER_KEY);
-        let doc = pi_local::models_json::ModelsJson::load(&path).unwrap();
-        let models = doc.get_provider(&key).unwrap()["models"]
-            .as_array()
-            .unwrap();
-        assert_eq!(models.len(), 2);
-    }
-
-    #[test]
-    fn register_rapid_mlx_alias_reuses_a_differently_named_provider_on_the_port() {
-        let tmp = tempfile::tempdir().unwrap();
-        let path = tmp.path().join("models.json");
-        std::fs::write(
-            &path,
-            br#"{"providers":{"rapid-mlx-local":{"baseUrl":"http://localhost:8000/v1","models":[]}}}"#,
-        )
-        .unwrap();
-
-        let key = register_rapid_mlx_alias_at(&path, "lfm2.5-1b-4bit").unwrap();
-        assert_eq!(
-            key, "rapid-mlx-local",
-            "must not create a duplicate provider for the same endpoint"
-        );
-        let doc = pi_local::models_json::ModelsJson::load(&path).unwrap();
-        assert!(doc.get_provider("rapid-mlx").is_none());
-    }
-
-    #[test]
-    fn register_rapid_mlx_alias_refuses_to_overwrite_unparseable_json() {
-        let tmp = tempfile::tempdir().unwrap();
-        let path = tmp.path().join("models.json");
-        std::fs::write(&path, b"not json").unwrap();
-        let err = register_rapid_mlx_alias_at(&path, "alias").unwrap_err();
-        assert!(err.contains("refusing to overwrite"), "{err}");
     }
 
     #[test]

@@ -571,6 +571,7 @@ export component AppWindow inherits Window {
     in-out property <bool> models-visible: false;
     in property <string> rapid-mlx-version: "";
     in property <string> rapid-mlx-running: "";
+    in property <bool> rapid-mlx-running-known: true;
     in property <[CachedModelRow]> rapid-mlx-cached: [];
     in property <int> rapid-mlx-catalog-count: 0;
     in property <string> router-status: "";
@@ -622,6 +623,8 @@ export component AppWindow inherits Window {
     callback fork-from(string);
     callback open-models();
     callback serve-rapid-mlx(string);
+    callback stop-rapid-mlx();
+    callback register-rapid-mlx(string);
     callback load-router-model(string);
     callback unload-router-model(string);
     callback hf-search(string);
@@ -1032,6 +1035,7 @@ export component AppWindow inherits Window {
     if root.models-visible: ModelsOverlay {
         rapid-mlx-version: root.rapid-mlx-version;
         rapid-mlx-running: root.rapid-mlx-running;
+        rapid-mlx-running-known: root.rapid-mlx-running-known;
         rapid-mlx-cached: root.rapid-mlx-cached;
         rapid-mlx-catalog-count: root.rapid-mlx-catalog-count;
         router-status: root.router-status;
@@ -1043,6 +1047,8 @@ export component AppWindow inherits Window {
         auth-entries: root.auth-entries;
         close => { root.models-visible = false; }
         serve-rapid-mlx(alias) => { root.serve-rapid-mlx(alias); }
+        stop-rapid-mlx => { root.stop-rapid-mlx(); }
+        register-rapid-mlx(alias) => { root.register-rapid-mlx(alias); }
         load-router-model(id) => { root.load-router-model(id); }
         unload-router-model(id) => { root.unload-router-model(id); }
         open-hf-search => { root.hf-search-visible = true; }

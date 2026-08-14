@@ -155,6 +155,14 @@ fn main() -> anyhow::Result<()> {
             let _ = tx.send(UiCmd::ServeRapidMlxModel(alias.to_string()));
         });
         let tx = cmd_tx.clone();
+        app.on_stop_rapid_mlx(move || {
+            let _ = tx.send(UiCmd::StopRapidMlxModel);
+        });
+        let tx = cmd_tx.clone();
+        app.on_register_rapid_mlx(move |alias| {
+            let _ = tx.send(UiCmd::RegisterRapidMlxModel(alias.to_string()));
+        });
+        let tx = cmd_tx.clone();
         app.on_load_router_model(move |id| {
             let _ = tx.send(UiCmd::LoadRouterModel(id.to_string()));
         });
@@ -303,6 +311,15 @@ fn main() -> anyhow::Result<()> {
         &cmd_tx,
         "SLINTY_SERVE_RAPID_MLX_AFTER",
         UiCmd::ServeRapidMlxModel,
+    );
+    spawn_delayed_cmd(&rt, &cmd_tx, "SLINTY_STOP_RAPID_MLX_AFTER", |_| {
+        UiCmd::StopRapidMlxModel
+    });
+    spawn_delayed_cmd(
+        &rt,
+        &cmd_tx,
+        "SLINTY_REGISTER_RAPID_MLX_AFTER",
+        UiCmd::RegisterRapidMlxModel,
     );
     spawn_delayed_cmd(
         &rt,

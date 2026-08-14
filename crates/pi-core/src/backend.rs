@@ -37,7 +37,7 @@ use local::panel::{
     seed_demo_auth_entries, seed_demo_hf_results, seed_demo_ollama_models,
     seed_demo_router_entries, RAPID_MLX_PORT,
 };
-pub use local::panel::{RapidMlxPanelData, RouterPanelData};
+pub use local::panel::{RapidMlxModelState, RapidMlxPanelData, RouterPanelData};
 
 const TEXT_FLUSH: Duration = Duration::from_millis(33);
 const TOOL_FLUSH: Duration = Duration::from_millis(100);
@@ -91,9 +91,14 @@ pub enum UiCmd {
     /// servers, cached-model catalog with fit labels).
     OpenModels,
     /// "serve" clicked on a cached rapid-mlx alias: (re)spawn a managed
-    /// `rapid-mlx serve` child on the default port, then `set_model` once
-    /// it's ready.
+    /// `rapid-mlx serve` child on the default port, then `set_model`.
     ServeRapidMlxModel(String),
+    /// "stop" clicked on the served rapid-mlx row: shut down the child this
+    /// app spawned (only ever ours — see `stop_rapid_mlx_model`).
+    StopRapidMlxModel,
+    /// "register" clicked on a rapid-mlx alias pi doesn't know: add it to
+    /// models.json, refresh pi's catalog, and restart pi so it takes effect.
+    RegisterRapidMlxModel(String),
     /// "load" clicked on a router model id: `POST /models/load`, then poll
     /// `/models` until it settles (loaded/failed/timeout).
     LoadRouterModel(String),
@@ -864,6 +869,12 @@ const SERVER_DOT_MISMATCH: i32 = 3;
 /// spawned in the new cwd (`switch_session` only works within a cwd).
 enum SessionOutcome {
     SwitchProject(PathBuf),
+    /// Respawn in the *same* cwd, resuming `resume` if set — pi only picks
+    /// up a newly-registered model on a fresh start, and the user shouldn't
+    /// lose their transcript over it.
+    Restart {
+        resume: Option<String>,
+    },
     Exit,
 }
 
@@ -1139,6 +1150,11 @@ pub async fn pi_backend(
             SessionOutcome::SwitchProject(path) => {
                 cwd = Some(path);
             }
+            SessionOutcome::Restart { resume } => {
+                // Same cwd; reuse the existing one-shot resume hook rather
+                // than inventing a second way to land back in a session.
+                resume_on_first_spawn = resume;
+            }
             SessionOutcome::Exit => return,
         }
         // `client` drops here; `kill_on_drop` reaps the old child before the
@@ -1367,16 +1383,34 @@ async fn run_session(
                         .await;
                     }
                     UiCmd::ServeRapidMlxModel(alias) => {
-                        serve_rapid_mlx_model(
-                            client,
-                            transcript,
-                            managed_rapid_mlx,
-                            &alias,
-                            &models.known_ids(),
-                        )
-                        .await;
+                        serve_rapid_mlx_model(client, transcript, managed_rapid_mlx, &alias, &models)
+                            .await;
                         models = refresh_models(client, transcript).await;
                         dot_interval.reset_immediately();
+                    }
+                    UiCmd::StopRapidMlxModel => {
+                        stop_rapid_mlx_model(transcript, managed_rapid_mlx, &models.known_ids())
+                            .await;
+                        models = refresh_models(client, transcript).await;
+                        dot_interval.reset_immediately();
+                    }
+                    UiCmd::RegisterRapidMlxModel(alias) => {
+                        let managed_alias =
+                            managed_rapid_mlx.as_ref().map(|m| m.alias.clone());
+                        if register_rapid_mlx_model(
+                            transcript,
+                            &alias,
+                            &models.known_ids(),
+                            managed_alias.as_deref(),
+                        )
+                        .await
+                        {
+                            // The panel re-renders after the respawn, once
+                            // pi can actually see the new model.
+                            return SessionOutcome::Restart {
+                                resume: active_session_path(client).await,
+                            };
+                        }
                     }
                     UiCmd::LoadRouterModel(model) => {
                         load_router_model(transcript, &model).await;
@@ -1434,7 +1468,7 @@ async fn run_session(
                                 transcript,
                                 managed_rapid_mlx,
                                 &alias,
-                                &models.known_ids(),
+                                &models,
                             )
                             .await;
                             models = refresh_models(client, transcript).await;
@@ -2199,16 +2233,23 @@ mod auth_panel_tests {
 
 /// (Re)spawns a managed `rapid-mlx serve <alias>` on `RAPID_MLX_PORT`,
 /// stopping any server this app was already managing first (a model switch
-/// is a supervised restart, not a hot swap — see the M3 plan). An
-/// already-running *external* server (or anything else bound to the port)
-/// surfaces as a normal "failed to become ready" error instead of being
-/// killed: we only ever stop servers we ourselves spawned.
+/// is a supervised restart, not a hot swap — see the M3 plan), then selects
+/// the model in pi. An already-running *external* server (or anything else
+/// bound to the port) makes the spawn fail: we only ever stop servers we
+/// ourselves spawned.
+///
+/// Deliberately does **not** wait for the server to report itself ready.
+/// rapid-mlx's stdout is fully buffered once it isn't a tty — which piping
+/// it guarantees — so its "Ready:" line can sit unflushed indefinitely, and
+/// waiting on it also stalled every other command in this loop. `poll_for`
+/// below waits for the process to appear in `rapid-mlx ps` instead, which is
+/// process-level and unaffected by that buffering.
 async fn serve_rapid_mlx_model(
     client: &PiClient,
     transcript: &mut Transcript,
     managed: &mut Option<ManagedRapidMlx>,
     alias: &str,
-    known_model_ids: &[String],
+    models: &ModelsState,
 ) {
     if let Some(prev) = managed.take() {
         transcript.note("info", "stopping the previous managed rapid-mlx server…");
@@ -2221,30 +2262,122 @@ async fn serve_rapid_mlx_model(
         alias,
         RAPID_MLX_PORT,
     ) {
-        Ok(mut server) => match server.wait_ready(Duration::from_secs(180)).await {
-            Ok(()) => {
-                *managed = Some(ManagedRapidMlx {
-                    alias: alias.to_string(),
-                    server,
-                });
-                match client.set_model("rapid-mlx", alias).await {
-                    Ok(_) => transcript.note("info", format!("rapid-mlx: {alias} ready")),
-                    Err(e) => transcript.note(
-                        "error",
-                        format!(
-                            "rapid-mlx: {alias} is ready but pi couldn't select it \
-                                 (is a matching entry configured in models.json?): {e}"
-                        ),
-                    ),
-                }
+        Ok(server) => {
+            *managed = Some(ManagedRapidMlx {
+                alias: alias.to_string(),
+                server,
+            });
+            // The provider key is whatever models.json actually calls it
+            // (`rapid-mlx-local`, …), not a hardcoded "rapid-mlx". Serve is
+            // only offered for models pi already knows, so the entry exists.
+            let provider = models
+                .entries
+                .iter()
+                .find(|e| e.id == alias)
+                .map(|e| e.provider.clone())
+                .unwrap_or_else(|| local::rapid_mlx::DEFAULT_PROVIDER_KEY.to_string());
+            match client.set_model(&provider, alias).await {
+                Ok(_) => transcript.note("info", format!("rapid-mlx: serving {alias}")),
+                Err(e) => transcript.note(
+                    "error",
+                    format!("rapid-mlx: started {alias} but pi couldn't select it: {e}"),
+                ),
             }
-            Err(e) => transcript.note("error", format!("rapid-mlx: {alias} failed to start: {e}")),
-        },
+            wait_for_rapid_mlx_process(alias).await;
+        }
         Err(e) => transcript.note("error", format!("rapid-mlx: could not spawn serve: {e}")),
     }
 
     let managed_alias = managed.as_ref().map(|m| m.alias.clone());
-    open_models_panel(transcript, known_model_ids, managed_alias.as_deref()).await;
+    open_models_panel(transcript, &models.known_ids(), managed_alias.as_deref()).await;
+}
+
+/// Waits (briefly, bounded) for a just-spawned server to show up in
+/// `rapid-mlx ps`, so the panel that renders right after doesn't claim
+/// nothing is running. Process-level, so unlike `wait_ready` it can't be
+/// defeated by stdout buffering — and bounded at seconds rather than
+/// minutes, since it does occupy the command loop while it polls.
+async fn wait_for_rapid_mlx_process(alias: &str) {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let rmlx = local::rapid_mlx::RapidMlx::default();
+    while Instant::now() < deadline {
+        let running = rmlx.running_servers().await.unwrap_or_default();
+        if running.iter().any(|s| s.model == alias) {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(500)).await;
+    }
+}
+
+/// Stops the `rapid-mlx serve` child this app spawned. Never touches a
+/// server someone else started — there's nothing of ours to stop then, and
+/// killing an unmanaged process isn't this button's job.
+async fn stop_rapid_mlx_model(
+    transcript: &mut Transcript,
+    managed: &mut Option<ManagedRapidMlx>,
+    known_model_ids: &[String],
+) {
+    match managed.take() {
+        Some(prev) => {
+            let alias = prev.alias.clone();
+            match prev.server.shutdown().await {
+                Ok(()) => transcript.note("info", format!("rapid-mlx: stopped {alias}")),
+                Err(e) => {
+                    transcript.note("error", format!("rapid-mlx: could not stop {alias}: {e}"))
+                }
+            }
+        }
+        None => transcript.note(
+            "info",
+            "rapid-mlx: this server wasn't started here, so it can't be stopped from here",
+        ),
+    }
+    open_models_panel(transcript, known_model_ids, None).await;
+}
+
+/// Registers `alias` in models.json and refreshes pi's catalog, returning
+/// whether the caller should restart pi to pick it up.
+///
+/// Both halves are required: pi caches its model catalog, so a new entry is
+/// invisible until `pi update --models` runs *and* a fresh child starts.
+async fn register_rapid_mlx_model(
+    transcript: &mut Transcript,
+    alias: &str,
+    known_model_ids: &[String],
+    managed_alias: Option<&str>,
+) -> bool {
+    let Some(path) = local::models_json::default_path() else {
+        transcript.note("error", "could not resolve $HOME to locate models.json");
+        return false;
+    };
+    let registered =
+        match local::rapid_mlx::register_alias_in_models_json(&path, RAPID_MLX_PORT, alias) {
+            Ok(key) => {
+                transcript.note(
+                    "info",
+                    format!(
+                        "registered {alias} under provider `{key}` in {}",
+                        path.display()
+                    ),
+                );
+                true
+            }
+            Err(e) => {
+                transcript.note("error", format!("rapid-mlx: {e}"));
+                false
+            }
+        };
+    if !registered {
+        open_models_panel(transcript, known_model_ids, managed_alias).await;
+        return false;
+    }
+    if let Err(e) = pi_rpc::refresh_model_catalog(&PiOptions::default().binary).await {
+        transcript.note("error", format!("rapid-mlx: {e}"));
+        open_models_panel(transcript, known_model_ids, managed_alias).await;
+        return false;
+    }
+    transcript.note("info", "restarting pi so it picks up the new model…");
+    true
 }
 
 // ---------------------------------------------------------------------------
@@ -2938,7 +3071,12 @@ pub async fn demo_backend(
                 render_demo_models_panel(&mut transcript, &demo_router_entries).await;
                 continue;
             }
-            UiCmd::ServeRapidMlxModel(_) => {
+            // Explicit arms, not covered by the `_ => continue` fallback
+            // below: a missing one would silently no-op rather than fail to
+            // compile, so every rapid-mlx action is named here on purpose.
+            UiCmd::ServeRapidMlxModel(_)
+            | UiCmd::StopRapidMlxModel
+            | UiCmd::RegisterRapidMlxModel(_) => {
                 transcript.note("info", "not available in demo mode");
                 continue;
             }

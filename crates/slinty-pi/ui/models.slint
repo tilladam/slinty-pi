@@ -5,6 +5,12 @@ export struct CachedModelRow {
     hf-repo: string,
     size: string,
     fit-label: string,
+    // "served" | "idle" | "unknown" — which single action the row offers.
+    // A string rather than an enum because Slint structs take scalars, the
+    // same shape RouterModelRow.status already uses.
+    state: string,
+    // Only a server this app spawned can be stopped from here.
+    can-stop: bool,
 }
 
 export struct RouterModelRow {
@@ -25,6 +31,17 @@ export struct HfResultRow {
 component CachedModelItem inherits Rectangle {
     in property <CachedModelRow> entry;
     callback serve();
+    callback stop();
+    callback register();
+
+    // One action per state (see CachedModelRow.state). A served row that
+    // isn't ours still shows "stop", but inert — matching the macOS panel,
+    // where the button is visible-but-disabled rather than absent, so the
+    // state stays legible.
+    property <string> action-text: entry.state == "served"
+        ? "stop"
+        : entry.state == "unknown" ? "register" : "serve";
+    property <bool> action-enabled: entry.state == "served" ? entry.can-stop : true;
 
     height: 46px;
     border-radius: 6px;
@@ -73,22 +90,36 @@ component CachedModelItem inherits Rectangle {
         }
 
         Rectangle {
-            width: serve-label.width + 14px;
+            width: action-label.width + 14px;
             height: 22px;
             border-radius: 5px;
             border-width: 1px;
-            border-color: Palette.border.transparentize(0.5);
-            background: serve-touch.has-hover ? Palette.alternate-background.darker(10%) : transparent;
+            border-color: Palette.border.transparentize(root.action-enabled ? 0.5 : 0.8);
+            background: action-touch.has-hover && root.action-enabled
+                ? Palette.alternate-background.darker(10%)
+                : transparent;
 
-            serve-label := Text {
-                text: "serve";
+            action-label := Text {
+                text: root.action-text;
                 font-size: 11px;
-                color: Palette.foreground;
+                color: root.action-enabled
+                    ? Palette.foreground
+                    : Palette.foreground.transparentize(0.6);
                 vertical-alignment: center;
                 horizontal-alignment: center;
             }
-            serve-touch := TouchArea {
-                clicked => { root.serve(); }
+            action-touch := TouchArea {
+                clicked => {
+                    if (root.action-enabled) {
+                        if (root.entry.state == "served") {
+                            root.stop();
+                        } else if (root.entry.state == "unknown") {
+                            root.register();
+                        } else {
+                            root.serve();
+                        }
+                    }
+                }
             }
         }
     }
@@ -161,6 +192,9 @@ component RouterModelItem inherits Rectangle {
 export component ModelsOverlay inherits Rectangle {
     in property <string> rapid-mlx-version: "";
     in property <string> rapid-mlx-running: "";
+    // False when a server is running a model pi has no entry for — it's up,
+    // but pi can't route to it. Usually a server started by hand.
+    in property <bool> rapid-mlx-running-known: true;
     in property <[CachedModelRow]> rapid-mlx-cached: [];
     in property <int> rapid-mlx-catalog-count: 0;
     in property <string> router-status: "";
@@ -173,6 +207,8 @@ export component ModelsOverlay inherits Rectangle {
     in property <[string]> auth-entries: [];
     callback close();
     callback serve-rapid-mlx(string);
+    callback stop-rapid-mlx();
+    callback register-rapid-mlx(string);
     callback load-router-model(string);
     callback unload-router-model(string);
     callback open-hf-search();
@@ -238,10 +274,23 @@ export component ModelsOverlay inherits Rectangle {
                         font-size: 11px;
                         color: Palette.foreground.transparentize(0.3);
                     }
-                    Text {
-                        text: root.rapid-mlx-running == "" ? "No server running" : root.rapid-mlx-running;
-                        font-size: 11px;
-                        color: Palette.foreground.transparentize(0.3);
+                    HorizontalLayout {
+                        spacing: 4px;
+                        // A running server pi doesn't know about is worth
+                        // flagging: it works, but pi can't route to it.
+                        if root.rapid-mlx-running != "" && !root.rapid-mlx-running-known: Text {
+                            text: "⚠";
+                            font-size: 11px;
+                            color: #e2a53f;
+                            vertical-alignment: center;
+                        }
+                        Text {
+                            text: root.rapid-mlx-running == "" ? "No server running" : root.rapid-mlx-running;
+                            font-size: 11px;
+                            color: Palette.foreground.transparentize(0.3);
+                            overflow: elide;
+                        }
+                        Rectangle { horizontal-stretch: 1; }
                     }
                 }
             }
@@ -258,6 +307,8 @@ export component ModelsOverlay inherits Rectangle {
                 for entry in root.rapid-mlx-cached: CachedModelItem {
                     entry: entry;
                     serve => { root.serve-rapid-mlx(entry.alias); }
+                    stop => { root.stop-rapid-mlx(); }
+                    register => { root.register-rapid-mlx(entry.alias); }
                 }
             }
 

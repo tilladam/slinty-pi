@@ -22,7 +22,7 @@
 mod client;
 mod types;
 
-pub use client::{PiClient, PiError, PiOptions};
+pub use client::{refresh_model_catalog, PiClient, PiError, PiOptions};
 pub use types::{
     content_text, AssistantMessageEvent, Command, Event, ExtensionUiReply, ExtensionUiRequest,
     ImageContent, Response, StreamingBehavior, ThinkingLevel,

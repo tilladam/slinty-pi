@@ -28,6 +28,29 @@ pub enum PiError {
     Serde(#[from] serde_json::Error),
 }
 
+/// Runs `pi update --models` ("Refresh model catalogs only").
+///
+/// Not an RPC call — a separate one-shot invocation of the same binary this
+/// module otherwise spawns for `--mode rpc`, which is why it lives here. pi
+/// caches its model catalog, so a freshly-written `models.json` entry stays
+/// invisible until this runs *and* a new child starts; both frontends need
+/// exactly that sequence after registering a local model.
+pub async fn refresh_model_catalog(binary: &str) -> Result<(), PiError> {
+    let output = ProcessCommand::new(binary)
+        .arg("update")
+        .arg("--models")
+        .output()
+        .await
+        .map_err(PiError::Spawn)?;
+    if output.status.success() {
+        return Ok(());
+    }
+    Err(PiError::Command {
+        command: "update --models".to_string(),
+        message: String::from_utf8_lossy(&output.stderr).trim().to_string(),
+    })
+}
+
 /// Options for spawning `pi --mode rpc`.
 #[derive(Debug, Clone)]
 pub struct PiOptions {

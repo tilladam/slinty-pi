@@ -224,6 +224,31 @@ pub fn provider_preset(
     preset
 }
 
+/// Registers `alias` in `models.json`, returning the provider key it landed
+/// under (which `set_model` must then be called with).
+///
+/// Load-or-empty, refuse-on-unparseable, merge, atomic write — the same
+/// sequence `add_ollama_to_pi` uses, and shared by both frontends so the
+/// file-touching policy exists once. Path-parameterized for testability.
+pub fn register_alias_in_models_json(
+    path: &std::path::Path,
+    port: u16,
+    alias: &str,
+) -> Result<String, String> {
+    let mut doc = if path.exists() {
+        crate::models_json::ModelsJson::load(path)
+            .map_err(|e| format!("{e} — refusing to overwrite a models.json I can't parse"))?
+    } else {
+        crate::models_json::ModelsJson::empty()
+    };
+    let key = provider_key_for_port(doc.providers(), port);
+    let preset = provider_preset(doc.get_provider(&key), port, alias);
+    doc.set_provider(&key, preset);
+    doc.write(path)
+        .map_err(|e| format!("could not write models.json: {e}"))?;
+    Ok(key)
+}
+
 pub struct RapidMlx {
     binary: String,
 }
@@ -581,6 +606,52 @@ mod provider_tests {
             preset["name"], "Rapid-MLX Local",
             "untouched fields survive"
         );
+    }
+
+    #[test]
+    fn register_creates_a_provider_then_merges_into_it() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("models.json");
+
+        let key = register_alias_in_models_json(&path, 8000, "lfm2.5-1b-4bit").unwrap();
+        assert_eq!(key, DEFAULT_PROVIDER_KEY);
+
+        // A second alias must join the first, not replace it.
+        let key = register_alias_in_models_json(&path, 8000, "qwen3.5-9b-4bit").unwrap();
+        assert_eq!(key, DEFAULT_PROVIDER_KEY);
+        let doc = crate::models_json::ModelsJson::load(&path).unwrap();
+        let models = doc.get_provider(&key).unwrap()["models"]
+            .as_array()
+            .unwrap();
+        assert_eq!(models.len(), 2);
+    }
+
+    #[test]
+    fn register_reuses_a_differently_named_provider_on_the_port() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("models.json");
+        std::fs::write(
+            &path,
+            br#"{"providers":{"rapid-mlx-local":{"baseUrl":"http://localhost:8000/v1","models":[]}}}"#,
+        )
+        .unwrap();
+
+        let key = register_alias_in_models_json(&path, 8000, "lfm2.5-1b-4bit").unwrap();
+        assert_eq!(
+            key, "rapid-mlx-local",
+            "must not create a duplicate provider for the same endpoint"
+        );
+        let doc = crate::models_json::ModelsJson::load(&path).unwrap();
+        assert!(doc.get_provider("rapid-mlx").is_none());
+    }
+
+    #[test]
+    fn register_refuses_to_overwrite_unparseable_json() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("models.json");
+        std::fs::write(&path, b"not json").unwrap();
+        let err = register_alias_in_models_json(&path, 8000, "alias").unwrap_err();
+        assert!(err.contains("refusing to overwrite"), "{err}");
     }
 
     #[test]

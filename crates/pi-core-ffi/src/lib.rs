@@ -648,19 +648,16 @@ async fn register_rapid_mlx_model(
     let Some(path) = pi_local::models_json::default_path() else {
         return Err("could not resolve $HOME to locate models.json".to_string());
     };
-    local_models::register_rapid_mlx_alias_at(&path, alias)
-        .map_err(|e| format!("rapid-mlx: could not register {alias}: {e}"))?;
+    pi_local::rapid_mlx::register_alias_in_models_json(
+        &path,
+        pi_local::panel::RAPID_MLX_PORT,
+        alias,
+    )
+    .map_err(|e| format!("rapid-mlx: could not register {alias}: {e}"))?;
 
-    let output = tokio::process::Command::new("pi")
-        .arg("update")
-        .arg("--models")
-        .output()
+    pi_rpc::refresh_model_catalog(&PiOptions::default().binary)
         .await
-        .map_err(|e| format!("could not run `pi update --models`: {e}"))?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("`pi update --models` failed: {}", stderr.trim()));
-    }
+        .map_err(|e| format!("rapid-mlx: {e}"))?;
 
     let resume = active_session_path(client).await;
     let opts = PiOptions {

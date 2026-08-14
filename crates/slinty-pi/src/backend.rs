@@ -12,7 +12,7 @@
 
 use slint::{Color, Model, ModelRc, SharedString, StyledText, VecModel, Weak};
 
-use pi_core::backend::{RapidMlxPanelData, RouterPanelData, RowSpec, UiSink};
+use pi_core::backend::{RapidMlxModelState, RapidMlxPanelData, RouterPanelData, RowSpec, UiSink};
 use pi_core::palette;
 
 use crate::{
@@ -212,21 +212,32 @@ impl UiSink for SlintUi {
     /// repeat on every tick.
     fn set_rapid_mlx_panel(&self, data: RapidMlxPanelData) {
         self.with_app(move |app| {
-            // `row.state` (known/served/unknown) is deliberately dropped:
-            // this UI still offers a bare "serve" per row. Rendering the
-            // three states is the Slint half of the models-panel redesign,
-            // tracked separately — the shared formatter already computes it.
+            // Only a server we spawned can be stopped from the UI, and the
+            // `managed` flag is panel-level — fold it into the served row so
+            // `CachedModelItem` stays self-contained.
+            let managed = data.running.as_ref().is_some_and(|r| r.managed);
             let rows: Vec<CachedModelRow> = data
                 .cached
                 .into_iter()
-                .map(|row| CachedModelRow {
-                    alias: row.alias.as_str().into(),
-                    hf_repo: row.hf_repo.as_str().into(),
-                    size: row.size.as_str().into(),
-                    fit_label: row.fit_label.as_str().into(),
+                .map(|row| {
+                    let served = row.state == RapidMlxModelState::KnownServed;
+                    CachedModelRow {
+                        alias: row.alias.as_str().into(),
+                        hf_repo: row.hf_repo.as_str().into(),
+                        size: row.size.as_str().into(),
+                        fit_label: row.fit_label.as_str().into(),
+                        state: match row.state {
+                            RapidMlxModelState::KnownServed => "served",
+                            RapidMlxModelState::KnownIdle => "idle",
+                            RapidMlxModelState::Unknown => "unknown",
+                        }
+                        .into(),
+                        can_stop: served && managed,
+                    }
                 })
                 .collect();
             app.set_rapid_mlx_version(SharedString::from(data.version.unwrap_or_default()));
+            app.set_rapid_mlx_running_known(data.running.as_ref().is_none_or(|r| r.known_to_pi));
             app.set_rapid_mlx_running(SharedString::from(
                 data.running.map(|r| r.summary).unwrap_or_default(),
             ));
