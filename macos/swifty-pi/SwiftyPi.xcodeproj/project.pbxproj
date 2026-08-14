@@ -18,13 +18,14 @@
 		738582D0DE7544FABC3792BA /* TreeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1BA2D561238E47CC867D4A4A /* TreeView.swift */; };
 		8CE91CE85E1166BA5C71413E /* ChatView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 482A0F1669E6FF6A90545385 /* ChatView.swift */; };
 		A1156509D6E56DC6930B236A /* RowView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9358DE6D28FA55AA0416E595 /* RowView.swift */; };
-		CBD2A8CD7F35F4934147D41E /* SidebarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 75F2A2B404A96C539D91DE0C /* SidebarView.swift */; };
 		BE45ABA8CED144DA8D9B13A2 /* NotificationController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2165591F3BA742D49D151F57 /* NotificationController.swift */; };
+		CBD2A8CD7F35F4934147D41E /* SidebarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 75F2A2B404A96C539D91DE0C /* SidebarView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
 		1BA2D561238E47CC867D4A4A /* TreeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TreeView.swift; sourceTree = "<group>"; };
 		1DA6692E517D9BE29939E861 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
+		2165591F3BA742D49D151F57 /* NotificationController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationController.swift; sourceTree = "<group>"; };
 		3395DB8EC1C35123711D0746 /* HfSearchView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HfSearchView.swift; sourceTree = "<group>"; };
 		482A0F1669E6FF6A90545385 /* ChatView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatView.swift; sourceTree = "<group>"; };
 		515C4F2EB80C3DD64E34111F /* ModelsPanelView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelsPanelView.swift; sourceTree = "<group>"; };
@@ -36,7 +37,6 @@
 		B536DC4288ED4167BC96BE32 /* ExtensionDialogView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExtensionDialogView.swift; sourceTree = "<group>"; };
 		CB136EEEBB2354FB5BA2BC65 /* AppModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModel.swift; sourceTree = "<group>"; };
 		F0E81D92B02541D78DD023EB /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
-		2165591F3BA742D49D151F57 /* NotificationController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationController.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -105,6 +105,7 @@
 				51C74968BACA86CCDE237810 /* Sources */,
 				2741511154683F1FA4E32C95 /* Frameworks */,
 				200400FC6D67E0625EF17E54 /* Resources */,
+				27348E24302FAD28006C501D /* ShellScript */,
 			);
 			buildRules = (
 			);
@@ -171,6 +172,24 @@
 			shellPath = /bin/sh;
 			shellScript = "\"$SRCROOT/scripts/build-rust.sh\"\n";
 			showEnvVarsInLog = 0;
+		};
+		27348E24302FAD28006C501D /* ShellScript */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "BUILD_NUM=$(git -C \"$SRCROOT\" rev-list --count HEAD)\n/usr/libexec/PlistBuddy -c \"Set :CFBundleVersion $BUILD_NUM\" \"$TARGET_BUILD_DIR/$INFOPLIST_PATH\"\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 
@@ -324,7 +343,7 @@
 					"$(inherited)",
 					"$(SRCROOT)/PiCoreFFI.xcframework/macos-arm64",
 				);
-				MARKETING_VERSION = 0.2;
+				MARKETING_VERSION = 0.3;
 				OTHER_LDFLAGS = (
 					"$(inherited)",
 					"-lpi_core_ffi",
@@ -361,7 +380,7 @@
 					"$(inherited)",
 					"$(SRCROOT)/PiCoreFFI.xcframework/macos-arm64",
 				);
-				MARKETING_VERSION = 0.2;
+				MARKETING_VERSION = 0.3;
 				OTHER_LDFLAGS = (
 					"$(inherited)",
 					"-lpi_core_ffi",
