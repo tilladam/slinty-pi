@@ -351,6 +351,10 @@ impl UiSink for SlintUi {
             app.set_pending_attachments(ModelRc::new(VecModel::from(rows)));
         });
     }
+
+    fn set_drag_hover(&self, hovering: bool) {
+        self.with_app(move |app| app.set_drag_hover(hovering));
+    }
 }
 
 /// Convert a toolkit-agnostic `RowSpec` into this app's generated `Row`.

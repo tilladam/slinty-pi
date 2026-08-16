@@ -47,7 +47,7 @@ Useful env vars for driving the UI without a display/accessibility automation (e
 `SLINTY_OPEN_MODELS_AFTER`, `SLINTY_SERVE_RAPID_MLX_AFTER`, `SLINTY_STOP_RAPID_MLX_AFTER`,
 `SLINTY_REGISTER_RAPID_MLX_AFTER`, `SLINTY_LOAD_ROUTER_MODEL_AFTER`,
 `SLINTY_UNLOAD_ROUTER_MODEL_AFTER`, `SLINTY_HF_SEARCH_AFTER`, `SLINTY_DOWNLOAD_HF_MODEL_AFTER`,
-`SLINTY_ADD_OLLAMA_AFTER`.
+`SLINTY_ADD_OLLAMA_AFTER`, `SLINTY_DRAG_HOVER_AFTER`, `SLINTY_PASTE_IMAGE_AFTER`.
 
 In demo mode, a message starting with `md!` streams the rest of the message itself as the
 assistant markdown — combined with `SLINTY_SEND_AFTER="800:md!…"` this drives arbitrary

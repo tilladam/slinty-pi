@@ -4143,6 +4143,7 @@ dependencies = [
  "pi-render",
  "pi-rpc",
  "pi-sessions",
+ "png",
  "serde",
  "serde_json",
  "tempfile",
