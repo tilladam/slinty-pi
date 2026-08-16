@@ -33,6 +33,28 @@ pub fn encode_base64(bytes: &[u8]) -> String {
     base64::engine::general_purpose::STANDARD.encode(bytes)
 }
 
+/// Pushes an already-encoded image into `pending_images` and notifies the
+/// chip row — the shared tail end of both `attach_path`'s image branch
+/// (bytes read from disk) and pasted image data (bytes with no path at
+/// all, converted client-side to PNG).
+pub fn queue_image(
+    pending_images: &mut Vec<(String, ImageContent)>,
+    name: String,
+    mime_type: String,
+    data: String,
+    sink: &dyn ChatSink,
+) {
+    pending_images.push((
+        name,
+        ImageContent {
+            kind: "image".to_string(),
+            data,
+            mime_type,
+        },
+    ));
+    sink.on_pending_attachments_changed(pending_images.iter().map(|(n, _)| n.clone()).collect());
+}
+
 /// Classifies `path`: a non-image pushes an `@path` reference via
 /// `ChatSink::on_composer_append` for Swift to splice into the composer
 /// text; an image is read + base64-encoded and queued into `pending_images`,
@@ -55,17 +77,7 @@ pub async fn attach_path(
     match tokio::fs::read(path).await {
         Ok(bytes) => {
             let data = encode_base64(&bytes);
-            pending_images.push((
-                name,
-                ImageContent {
-                    kind: "image".to_string(),
-                    data,
-                    mime_type: mime_type.to_string(),
-                },
-            ));
-            sink.on_pending_attachments_changed(
-                pending_images.iter().map(|(n, _)| n.clone()).collect(),
-            );
+            queue_image(pending_images, name, mime_type.to_string(), data, sink);
         }
         Err(e) => report_error(sink, format!("could not read {}: {e}", path.display())),
     }

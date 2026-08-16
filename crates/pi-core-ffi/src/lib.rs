@@ -266,6 +266,14 @@ enum ChatCmd {
     AttachPath {
         path: String,
     },
+    /// Fire-and-forget, matching `AttachPath` — the paste counterpart for
+    /// image bytes with no backing file (Swift already converts pasted
+    /// clipboard data to PNG before sending it over).
+    AttachImageData {
+        name: String,
+        mime_type: String,
+        data: Vec<u8>,
+    },
     /// Fire-and-forget, matching `AttachPath` — mirrors `UiCmd::
     /// RemoveAttachment`.
     RemoveAttachment {
@@ -417,6 +425,19 @@ impl PiSession {
     /// Fire-and-forget, same shape as `send`/`abort`.
     pub fn attach_path(&self, path: String) {
         let _ = self.cmd_tx.send(ChatCmd::AttachPath { path });
+    }
+
+    /// Attaches raw image bytes pasted from the clipboard (no backing
+    /// file, so there's no path for `attach_path` to read) — always
+    /// queued as an inline image, unlike `attach_path`'s `@path` fallback,
+    /// since Swift only calls this for data it already confirmed is an
+    /// image. Fire-and-forget, same shape as `attach_path`.
+    pub fn attach_image_data(&self, name: String, mime_type: String, data: Vec<u8>) {
+        let _ = self.cmd_tx.send(ChatCmd::AttachImageData {
+            name,
+            mime_type,
+            data,
+        });
     }
 
     /// Removes a queued image attachment by its index in the chip row.
@@ -970,6 +991,20 @@ async fn run(
                         attach::attach_path(&mut pending_images, Path::new(&path), sink.as_ref())
                             .await;
                     }
+                    Some(ChatCmd::AttachImageData {
+                        name,
+                        mime_type,
+                        data,
+                    }) => {
+                        let encoded = attach::encode_base64(&data);
+                        attach::queue_image(
+                            &mut pending_images,
+                            name,
+                            mime_type,
+                            encoded,
+                            sink.as_ref(),
+                        );
+                    }
                     Some(ChatCmd::RemoveAttachment { index }) => {
                         if index < pending_images.len() {
                             pending_images.remove(index);
@@ -1294,6 +1329,7 @@ fn reply_demo_action(cmd: ChatCmd, sink: &dyn ChatSink) {
             let _ = reply.send(Ok(()));
         }
         ChatCmd::AttachPath { .. } => {} // no-op: demo mode has no real files to attach
+        ChatCmd::AttachImageData { .. } => {} // no-op: demo mode has no real files to attach
         ChatCmd::RemoveAttachment { .. } => {} // no-op: demo mode never queues attachments
         ChatCmd::OpenTree { reply } => {
             let _ = reply.send(Ok(Vec::new())); // no branch structure in demo mode

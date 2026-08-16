@@ -243,6 +243,13 @@ final class AppModel: ChatSink {
         session?.attachPath(path: path)
     }
 
+    /// Queues raw image bytes (pasted from the clipboard, no backing file)
+    /// as an attachment — the paste counterpart to `attachPath`'s image
+    /// branch, for data that never had a path to read from disk.
+    func attachImageData(name: String, mimeType: String, data: Data) {
+        session?.attachImageData(name: name, mimeType: mimeType, data: data)
+    }
+
     /// Removes a queued image by its index in the chip row.
     func removeAttachment(at index: Int) {
         session?.removeAttachment(index: UInt32(index))
