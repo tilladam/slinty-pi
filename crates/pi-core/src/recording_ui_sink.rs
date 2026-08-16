@@ -42,6 +42,7 @@ pub enum UiEvent {
     SetComposerText(String),
     AppendComposerText(PathBuf),
     SetPendingAttachments(Vec<String>),
+    SetDragHover(bool),
 }
 
 /// Records every `UiSink` call into an in-order log instead of rendering
@@ -187,5 +188,9 @@ impl UiSink for RecordingUiSink {
 
     fn set_pending_attachments(&self, names: Vec<String>) {
         self.record(UiEvent::SetPendingAttachments(names));
+    }
+
+    fn set_drag_hover(&self, hovering: bool) {
+        self.record(UiEvent::SetDragHover(hovering));
     }
 }

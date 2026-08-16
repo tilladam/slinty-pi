@@ -21,9 +21,11 @@ slint::include_modules!();
 
 /// Forwards winit's `WindowEvent::DroppedFile` (real Finder/Explorer/file-manager
 /// drops) into the same `UiCmd::AttachPath` the attach button sends per picked
-/// file. Slint's own winit event loop never surfaces this event (see
-/// `attach.rs`), so this hook is the only way to see it — it runs before
-/// Slint's handling and only ever forwards, never suppresses.
+/// file, and `HoveredFile`/`HoveredFileCancelled` (drag-enter/drag-cancel) into
+/// `UiCmd::SetDragHover` for the composer's drag-hover highlight. Slint's own
+/// winit event loop never surfaces any of these (see `attach.rs`), so this hook
+/// is the only way to see them — it runs before Slint's handling and only ever
+/// forwards, never suppresses.
 struct DropFileHandler {
     tx: mpsc::UnboundedSender<UiCmd>,
 }
@@ -37,8 +39,18 @@ impl i_slint_backend_winit::CustomApplicationHandler for DropFileHandler {
         _slint_window: Option<&slint::Window>,
         event: &winit::event::WindowEvent,
     ) -> i_slint_backend_winit::EventResult {
-        if let winit::event::WindowEvent::DroppedFile(path) = event {
-            let _ = self.tx.send(UiCmd::AttachPath(path.clone()));
+        match event {
+            winit::event::WindowEvent::HoveredFile(_) => {
+                let _ = self.tx.send(UiCmd::SetDragHover(true));
+            }
+            winit::event::WindowEvent::HoveredFileCancelled => {
+                let _ = self.tx.send(UiCmd::SetDragHover(false));
+            }
+            winit::event::WindowEvent::DroppedFile(path) => {
+                let _ = self.tx.send(UiCmd::SetDragHover(false));
+                let _ = self.tx.send(UiCmd::AttachPath(path.clone()));
+            }
+            _ => {}
         }
         i_slint_backend_winit::EventResult::Propagate
     }
@@ -201,6 +213,26 @@ fn main() -> anyhow::Result<()> {
             if index >= 0 {
                 let _ = tx.send(UiCmd::RemoveAttachment(index as usize));
             }
+        });
+        let tx = cmd_tx.clone();
+        app.on_paste_image_requested(move || -> bool {
+            let Ok(mut clipboard) = arboard::Clipboard::new() else {
+                return false;
+            };
+            let Ok(image) = clipboard.get_image() else {
+                return false;
+            };
+            let Ok(png) =
+                pi_core::attach::encode_png(image.width as u32, image.height as u32, &image.bytes)
+            else {
+                return false;
+            };
+            let _ = tx.send(UiCmd::AttachImageData {
+                name: "Pasted image.png".to_string(),
+                mime_type: "image/png".to_string(),
+                data: png,
+            });
+            true
         });
         let tx = cmd_tx.clone();
         app.on_open_palette(move || {
@@ -368,6 +400,23 @@ fn main() -> anyhow::Result<()> {
     // keystrokes) has no display to run against in a headless/test launch.
     spawn_delayed_cmd(&rt, &cmd_tx, "SLINTY_ATTACH_AFTER", |p| {
         UiCmd::AttachPath(std::path::PathBuf::from(p))
+    });
+    // Mirrors a real Finder/Explorer drag entering the window — same
+    // headless-launch reasoning as SLINTY_ATTACH_AFTER (no real drag to
+    // synthesize without a display). Arg is ignored, but still required.
+    spawn_delayed_cmd(&rt, &cmd_tx, "SLINTY_DRAG_HOVER_AFTER", |_| {
+        UiCmd::SetDragHover(true)
+    });
+    // Bypasses real clipboard image data (no synthetic source in a
+    // headless/test launch) by reading a fixture PNG from disk instead; arg
+    // is that fixture's path.
+    spawn_delayed_cmd(&rt, &cmd_tx, "SLINTY_PASTE_IMAGE_AFTER", |p| {
+        let data = std::fs::read(&p).unwrap_or_default();
+        UiCmd::AttachImageData {
+            name: "Pasted image.png".to_string(),
+            mime_type: "image/png".to_string(),
+            data,
+        }
     });
     // Density is UI-only (no backend command), so it's driven directly via
     // `invoke_cycle_density` rather than through `cmd_tx`.

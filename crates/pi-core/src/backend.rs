@@ -87,6 +87,17 @@ pub enum UiCmd {
     AttachPath(PathBuf),
     /// Remove a queued image attachment by its chip index.
     RemoveAttachment(usize),
+    /// Pasted image bytes with no backing file (no path for `AttachPath` to
+    /// read) — already encoded (PNG) by the caller before this is sent.
+    AttachImageData {
+        name: String,
+        mime_type: String,
+        data: Vec<u8>,
+    },
+    /// A Finder/Explorer file drag is hovering the window (`true`) or has
+    /// stopped (`false`, including after a drop) — drives the composer's
+    /// drag-hover highlight. Purely visual, no backend work involved.
+    SetDragHover(bool),
     /// Refresh and open the models panel (rapid-mlx detection state, running
     /// servers, cached-model catalog with fit labels).
     OpenModels,
@@ -205,6 +216,8 @@ pub trait UiSink: Send + Sync {
     fn append_composer_text(&self, path: &Path);
     /// Chip labels (file names) for queued image attachments.
     fn set_pending_attachments(&self, names: Vec<String>);
+    /// Toggles the composer's drag-hover highlight.
+    fn set_drag_hover(&self, hovering: bool);
 }
 
 // ---------------------------------------------------------------------------
@@ -1260,6 +1273,16 @@ async fn run_session(
                     UiCmd::AttachPath(path) => {
                         attach_path(client, transcript, &mut pending_images, path).await;
                     }
+                    UiCmd::AttachImageData { name, mime_type, data } => {
+                        let encoded = attach::encode_base64(&data);
+                        attach::queue_image(
+                            &mut pending_images,
+                            name,
+                            mime_type,
+                            encoded,
+                            transcript.ui.as_ref(),
+                        );
+                    }
                     UiCmd::RemoveAttachment(index) => {
                         if index < pending_images.len() {
                             pending_images.remove(index);
@@ -1267,6 +1290,9 @@ async fn run_session(
                         transcript.ui.set_pending_attachments(
                             pending_images.iter().map(|(name, _)| name.clone()).collect(),
                         );
+                    }
+                    UiCmd::SetDragHover(hovering) => {
+                        transcript.ui.set_drag_hover(hovering);
                     }
                     UiCmd::Abort => {
                         if streaming {
@@ -1658,19 +1684,12 @@ async fn attach_path(
                 b64_len = data.len(),
                 "attach: image queued"
             );
-            pending_images.push((
+            attach::queue_image(
+                pending_images,
                 name,
-                ImageContent {
-                    kind: "image".to_string(),
-                    data,
-                    mime_type: mime_type.to_string(),
-                },
-            ));
-            transcript.ui.set_pending_attachments(
-                pending_images
-                    .iter()
-                    .map(|(name, _)| name.clone())
-                    .collect(),
+                mime_type.to_string(),
+                data,
+                transcript.ui.as_ref(),
             );
         }
         Err(e) => transcript.note("error", format!("could not read {}: {e}", path.display())),
