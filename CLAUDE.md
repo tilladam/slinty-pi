@@ -4,12 +4,17 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-slinty-pi is a native desktop frontend for the [pi coding agent](https://pi.dev), built with Rust
-and Slint. It drives `pi --mode rpc` as a subprocess (never forks pi's own logic) and is local-first:
-designed around rapid-mlx (Apple Silicon) and llama.cpp's router, with Ollama detection/one-click
-setup and cloud providers through the same picker.
+This repo hosts two native desktop frontends for the [pi coding agent](https://pi.dev), sharing
+one Rust core: `slint/slinty-pi` (cross-platform, built with Slint) and `macos/swifty-pi`
+(macOS-only, built with SwiftUI). Both drive `pi --mode rpc` as a subprocess (never fork pi's own
+logic) and are local-first: designed around rapid-mlx (Apple Silicon) and llama.cpp's router, with
+Ollama detection/one-click setup and cloud providers through the same picker.
 `PRODUCT_PLAN.md` is the requirements baseline (vision, prior-art research on pi's RPC protocol,
-milestones M0–M5); read it for product/architecture rationale before making non-trivial changes.
+milestones M0–M5) for the Slint app specifically; read it for that app's product/architecture
+rationale before making non-trivial changes to it.
+
+The rest of this file — except the "Architecture" crate list right below — documents
+`slint/slinty-pi` specifically: its commands, threading model, transcript pipeline, and UI files.
 
 ## Commands
 
@@ -36,7 +41,8 @@ Useful env vars for driving the UI without a display/accessibility automation (e
 `SLINTY_PALETTE_QUERY_AFTER`, `SLINTY_PALETTE_EXEC_AFTER`, `SLINTY_ATTACH_AFTER`,
 `SLINTY_CYCLE_DENSITY_AFTER`, `SLINTY_RESUME_SESSION`, `SLINTY_DEMO_RATE`, `SLINTY_DEMO_AUTOSEND`,
 `SLINTY_DEMO_REPEATS`,
-`SLINTY_OPEN_MODELS_AFTER`, `SLINTY_SERVE_RAPID_MLX_AFTER`, `SLINTY_LOAD_ROUTER_MODEL_AFTER`,
+`SLINTY_OPEN_MODELS_AFTER`, `SLINTY_SERVE_RAPID_MLX_AFTER`, `SLINTY_STOP_RAPID_MLX_AFTER`,
+`SLINTY_REGISTER_RAPID_MLX_AFTER`, `SLINTY_LOAD_ROUTER_MODEL_AFTER`,
 `SLINTY_UNLOAD_ROUTER_MODEL_AFTER`, `SLINTY_HF_SEARCH_AFTER`, `SLINTY_DOWNLOAD_HF_MODEL_AFTER`,
 `SLINTY_ADD_OLLAMA_AFTER`.
 
@@ -57,7 +63,7 @@ checkout, don't just bump a version number.
 
 ## Architecture
 
-Three crates:
+Seven crates. Shared core, used by both frontends:
 
 - **`pi-rpc`** — typed async client for pi's RPC mode (`client.rs` spawns `pi --mode rpc` and
   frames strict-LF JSONL over stdin/stdout with request-id correlation; `types.rs` has the
@@ -67,7 +73,24 @@ Three crates:
 - **`pi-sessions`** — read-only index over pi's on-disk session JSONL tree
   (`~/.pi/agent/sessions/--<cwd>--/<ts>_<uuid>.jsonl`). pi remains the sole writer; this crate only
   ever reads, for the sidebar/session-tree UI.
-- **`slinty-pi`** — the Slint app itself.
+- **`pi-local`** — local-model backend foundation: rapid-mlx CLI integration, the llama.cpp
+  router HTTP client, Hugging Face GGUF search, Ollama detection, `~/.pi/agent/{auth,models}.json`
+  handling, system RAM-fit estimation. Toolkit- and frontend-agnostic.
+- **`pi-render`** — stateless message/segment → row rendering: markdown segmentation, syntax
+  highlighting, session-history hydration into `RowSpec`s. Kept lean (no reqwest/sysinfo/
+  directories) so it's cheap for either frontend to pull in.
+- **`pi-core`** — UI-toolkit-agnostic core: drives `pi-rpc`, projects events onto rows,
+  session/model orchestration. `slint/slinty-pi` runs against this directly; `pi-core-ffi` wraps
+  it for Swift.
+- **`pi-core-ffi`** — the UniFFI boundary exposing `pi-core`'s session/model orchestration to
+  Swift; generates `macos/swifty-pi`'s `PiCoreFFI.xcframework` + Swift bindings.
+
+Frontends:
+
+- **`slinty-pi`** (`slint/slinty-pi`) — the Slint app. The rest of this file, below, documents it
+  specifically.
+- **`swifty-pi`** (`macos/swifty-pi`) — the native SwiftUI app, macOS-only. Not covered by the
+  rest of this file; see its own source under `macos/swifty-pi/SwiftyPi/`.
 
 ### Threading model (slinty-pi)
 
