@@ -11,6 +11,10 @@ architecture, `app.slint` component set) and in verified facts about pi 0.81.x a
 | [M4 — Agent trust](M4-agent-trust.md) | Extension dialogs, permissions, diffs, compaction | planned |
 | [M5 — Ship it](M5-ship.md) | Settings, polish, packaging, 1.0 | planned |
 
+These four are the Slint app's (`slint/slinty-pi`) plans. The native SwiftUI macOS app
+(`macos/swifty-pi`) has its own build log instead of a milestone plan:
+[swiftui-native-macos-app.md](swiftui-native-macos-app.md).
+
 ## M1 stragglers
 
 Deferred from M1, to be folded into later milestones where they fit naturally:

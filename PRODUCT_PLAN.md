@@ -197,8 +197,11 @@ mouse selection. Async Rust interop is best-in-class (`Weak::upgrade_in_event_lo
 - **Process model:** one `pi --mode rpc` child per open session; spawn/kill on session switch
   (v1: one live session at a time; the client layer supports N for the future dashboard).
 - **Crate layout:** `pi-rpc` (typed protocol client: framing, commands, events, serde types —
-  standalone, publishable), `pi-sessions` (JSONL tree reader/watcher), `slinty-pi` (app: viewmodel,
-  segmenter, UI). The segmenter (`markdown → Vec<Segment>`) is its own module with golden tests.
+  standalone, publishable), `pi-sessions` (JSONL tree reader/watcher), `pi-local` (local-model
+  backend integrations), `pi-render` (segmenter/highlighter → `RowSpec`), `pi-core`
+  (toolkit-agnostic orchestration), `pi-core-ffi` (Swift UniFFI boundary), `slinty-pi`
+  (`slint/slinty-pi`, this app: viewmodel, UI). The segmenter (`markdown → Vec<Segment>`), now in
+  `pi-render`, is its own module with golden tests.
 - **Threading rule:** all UI mutation on the Slint thread via `Weak::upgrade_in_event_loop`;
   streaming deltas coalesced on a ~30–60 ms timer before touching models; update the last row via
   `set_row_data`, never reset the model.

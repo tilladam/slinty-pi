@@ -20,7 +20,7 @@ icon = ["assets/icon/icon.icns", "assets/icon/icon.ico"]
 category = "Developer Tool"
 
 [dependencies]
-pi-core = { path = "../pi-core" }
+pi-core = { path = "../../crates/pi-core" }
 # Path dependency on the local Slint checkout (master), not crates.io. Needed
 # for two things not yet in a published release (1.17.1 predates both):
 #   - the `mcp` feature (embedded MCP server, see mcp-server.md in that repo)
@@ -50,7 +50,7 @@ rfd = "0.17.2"
 # Internal Slint crate (not semver-stable, must match `slint`'s source exactly
 # — see the path dependency above); used to install a CustomApplicationHandler
 # so we can see winit's WindowEvent::DroppedFile before Slint silently
-# discards it. See crates/slinty-pi/src/main.rs's platform setup and
+# discards it. See slinty-pi's src/main.rs platform setup and
 # attach.rs's doc comment.
 i-slint-backend-winit = { git = "https://github.com/slint-ui/slint.git" }
 winit = "0.30"

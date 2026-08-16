@@ -1,9 +1,13 @@
 # slinty-pi
 
-A native desktop app for the [pi coding agent](https://pi.dev), built with Rust and
-[Slint](https://slint.dev). Local-first: designed around [rapid-mlx](https://rapidmlx.com)
-(Apple Silicon) and llama.cpp's router, with Ollama detection/one-click setup and cloud
-providers through the same picker.
+A native desktop frontend for the [pi coding agent](https://pi.dev), local-first: designed around
+[rapid-mlx](https://rapidmlx.com) (Apple Silicon) and llama.cpp's router, with Ollama
+detection/one-click setup and cloud providers through the same picker.
+
+Two frontends share one Rust core: [`slint/slinty-pi`](slint/slinty-pi), a cross-platform app
+built with [Slint](https://slint.dev) (this README), and [`macos/swifty-pi`](#swiftypi-native-macos),
+a native SwiftUI app for macOS. Both drive the same `pi-core` orchestration logic rather than
+duplicating it.
 
 See [CLAUDE.md](CLAUDE.md) for architecture notes and the full list of env-var test hooks.
 
@@ -18,12 +22,29 @@ Captured in [demo mode](#demo-mode-no-pi-needed) with synthetic data — no real
 
 ## Crates
 
+Shared core, used by both frontends:
+
 - `crates/pi-rpc` — typed client for pi's RPC mode: spawns `pi --mode rpc`, strict-LF JSONL
   framing, request/response correlation, tolerant event deserialization, extension-UI replies.
 - `crates/pi-sessions` — read-only index over pi's on-disk session JSONL tree, used for the
   sidebar and session-tree UI. pi remains the sole writer; this crate only ever reads.
-- `crates/slinty-pi` — the Slint app. Tokio backend owns the pi child process; all UI mutation
-  goes through the Slint event loop with streaming deltas coalesced at ~33 ms.
+- `crates/pi-local` — local-model backend foundation: rapid-mlx CLI integration, a llama.cpp
+  router HTTP client, Hugging Face GGUF search, Ollama detection, `~/.pi/agent/{auth,models}.json`
+  handling, and system RAM-fit estimation. Toolkit- and frontend-agnostic.
+- `crates/pi-render` — stateless message/segment → row rendering: markdown segmentation, syntax
+  highlighting, and session-history hydration into `RowSpec`s. Kept lean (no reqwest/sysinfo/
+  directories) so it's cheap to pull into either frontend.
+- `crates/pi-core` — UI-toolkit-agnostic core: drives `pi-rpc`, projects events onto rows,
+  session/model orchestration. This is what `slint/slinty-pi` runs against directly.
+- `crates/pi-core-ffi` — UniFFI boundary exposing `pi-core`'s session/model orchestration to
+  Swift; generates the `PiCoreFFI.xcframework` + bindings that `macos/swifty-pi` links against.
+
+Frontends:
+
+- `slint/slinty-pi` — the Slint app (this README). Tokio backend owns the pi child process; all
+  UI mutation goes through the Slint event loop with streaming deltas coalesced at ~33 ms.
+- `macos/swifty-pi` — the native SwiftUI app; see [SwiftyPi (native macOS)](#swiftypi-native-macos)
+  below.
 
 ## Running
 
@@ -46,16 +67,16 @@ SLINTY_DEMO=1 cargo run -p slinty-pi
 ## Packaging
 
 [`cargo-bundle`](https://github.com/burtonageo/cargo-bundle) (`cargo install cargo-bundle`) reads
-`[package.metadata.bundle]` in `crates/slinty-pi/Cargo.toml` to produce a macOS `.app` + `.dmg`:
+`[package.metadata.bundle]` in `slint/slinty-pi/Cargo.toml` to produce a macOS `.app` + `.dmg`:
 
 ```sh
-cd crates/slinty-pi   # cargo-bundle resolves `icon` paths relative to the CWD it's run from,
+cd slint/slinty-pi    # cargo-bundle resolves `icon` paths relative to the CWD it's run from,
                       # not the crate's own Cargo.toml — cd in first in this workspace
 cargo bundle
 open target/debug/bundle/osx/slinty-pi.app
 ```
 
-The app icon lives in `crates/slinty-pi/assets/icon/` (`icon.icns` / `icon.ico` / `icon.png`, all
+The app icon lives in `slint/slinty-pi/assets/icon/` (`icon.icns` / `icon.ico` / `icon.png`, all
 derived from one 1024px vector master); `icon.ico` is also embedded directly into the Windows
 `.exe` via `embed-resource` in `build.rs`, independent of `cargo-bundle`. Not done yet: signing,
 notarization, and stapling.
@@ -68,3 +89,24 @@ cargo test
 
 `pi-rpc` integration tests run against the real `pi` binary when present (offline, session-less,
 extensions disabled) and skip otherwise.
+
+## SwiftyPi (native macOS)
+
+`macos/swifty-pi` is a native SwiftUI frontend for macOS, built on the same `pi-core` orchestration
+logic as the Slint app — it doesn't reimplement session/model management, it drives it through
+`crates/pi-core-ffi`, a [UniFFI](https://mozilla.github.io/uniffi-rs/) boundary that exposes
+`pi-core`'s session and model APIs to Swift.
+
+Open `macos/swifty-pi/SwiftyPi.xcodeproj` in Xcode and build the `SwiftyPi` scheme, or from the
+command line:
+
+```sh
+cd macos/swifty-pi
+xcodebuild -project SwiftyPi.xcodeproj -scheme SwiftyPi -configuration Release build
+```
+
+An Xcode Run Script build phase invokes `scripts/build-rust.sh`, which builds `pi-core-ffi`,
+regenerates its Swift bindings, and packages `PiCoreFFI.xcframework` automatically on every
+build — no separate FFI build step. The app is arm64-only: the local-model tooling it drives
+(rapid-mlx/MLX) is itself Apple-Silicon-only, so an Intel build could never use a core feature
+anyway.
