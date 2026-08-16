@@ -110,3 +110,23 @@ regenerates its Swift bindings, and packages `PiCoreFFI.xcframework` automatical
 build — no separate FFI build step. The app is arm64-only: the local-model tooling it drives
 (rapid-mlx/MLX) is itself Apple-Silicon-only, so an Intel build could never use a core feature
 anyway.
+
+### Known issue: `error[E0463]: can't find crate for` on some Xcode versions
+
+On some Xcode betas, the Rust build occasionally fails from a clean `target/` with an error like
+`can't find crate for 'thiserror_impl'` (or `tokio_macros`, `zerofrom_derive`, etc.) when
+`cargo build` runs *inside* Xcode's Run Script build phase — even though the exact same `cargo
+build` always succeeds when run directly in a terminal. This reproduces even with `rust-analyzer`
+fully suspended, so it isn't an editor-vs-build race; it's specific to how that Xcode build
+phase's process is scheduled. If you hit it, pre-build the Rust side directly first so the script
+phase has nothing left to (re)build:
+
+```sh
+cd macos/swifty-pi
+CONFIGURATION=Release ./scripts/build-rust.sh   # or CONFIGURATION=Debug
+xcodebuild -project SwiftyPi.xcodeproj -scheme SwiftyPi -configuration Release build
+```
+
+If the `target/` directory is left in a bad state after a failed attempt (a linker error
+mentioning a "mis-aligned LINKEDIT string pool" is a sign of this), run `cargo clean --release`
+(or `--debug`) from the repo root first.

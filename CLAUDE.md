@@ -15,6 +15,9 @@ rationale before making non-trivial changes to it.
 
 The rest of this file — except the "Architecture" crate list right below — documents
 `slint/slinty-pi` specifically: its commands, threading model, transcript pipeline, and UI files.
+For `macos/swifty-pi`, see README.md's "SwiftyPi (native macOS)" section, including a known-issue
+workaround for an intermittent `error[E0463]: can't find crate for` failure in Xcode's Rust build
+script phase on some Xcode versions.
 
 ## Commands
 
