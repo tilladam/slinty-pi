@@ -13,6 +13,16 @@ struct ChatView: View {
     @State private var draft: String = ""
     @State private var showTree = false
     @FocusState private var composerFocused: Bool
+    /// Whether a Finder drag is currently hovering the composer —
+    /// drives the highlight in the `.dropDestination` below. Every
+    /// dropped file is accepted in some form (image → chip, other →
+    /// `@path` reference), so one highlight state covers "acceptable."
+    @State private var isDropTargeted = false
+    /// Local `keyDown` monitor that claims `Cmd+V` for image/file pastes
+    /// while the composer is focused — see `handlePasteboardShortcut`'s doc
+    /// comment for why this has to intercept the raw event rather than use
+    /// `onPasteCommand`. Installed/removed alongside the view's lifecycle.
+    @State private var pasteMonitor: Any?
 
     // MARK: - Prompt history (Up/Down arrows)
 
@@ -119,6 +129,27 @@ struct ChatView: View {
                             historyOffset = 0
                         }
                     }
+                    // `TextField` is backed by a real `NSTextView`, which has
+                    // its own built-in "insert dropped file as text" drag
+                    // handling that wins even over a `.dropDestination`
+                    // modifier attached directly to this same `TextField` —
+                    // SwiftUI's own control keeps its built-in behavior
+                    // regardless (same root cause as the paste beep
+                    // `pasteMonitor` works around, just via
+                    // `NSDraggingDestination` instead of the responder
+                    // chain). `FileDropCatcher` sidesteps SwiftUI entirely:
+                    // a raw `NSView` overlay that registers for file drags
+                    // itself and always returns `nil` from `hitTest`, so it
+                    // wins drag-destination resolution (a separate
+                    // mechanism from click hit-testing) while ordinary
+                    // clicks still fall through untouched to the `TextField`
+                    // beneath it.
+                    .overlay(
+                        FileDropCatcher(
+                            onDrop: { urls in _ = handleDroppedURLs(urls) },
+                            onTargetedChange: { isDropTargeted = $0 }
+                        )
+                    )
 
                 if model.isStreaming {
                     Button("Abort", role: .destructive) {
@@ -136,11 +167,19 @@ struct ChatView: View {
                 }
             }
             .padding(12)
+            .background(
+                RoundedRectangle(cornerRadius: 10)
+                    .fill(isDropTargeted ? Color.accentColor.opacity(0.12) : .clear)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 10)
+                    .strokeBorder(Color.accentColor, lineWidth: isDropTargeted ? 2 : 0)
+            )
+            .animation(.easeOut(duration: 0.12), value: isDropTargeted)
             .dropDestination(for: URL.self) { urls, _ in
-                for url in urls {
-                    model.attachPath(url.path)
-                }
-                return true
+                handleDroppedURLs(urls)
+            } isTargeted: { targeted in
+                isDropTargeted = targeted
             }
 
             statusBar
@@ -152,6 +191,19 @@ struct ChatView: View {
         .onChange(of: model.pendingComposerReplace) { _, newValue in
             guard newValue != nil, let text = model.consumePendingComposerReplace() else { return }
             draft = text
+        }
+        .onAppear {
+            pasteMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+                guard composerFocused,
+                    event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .command,
+                    event.charactersIgnoringModifiers?.lowercased() == "v"
+                else { return event }
+                return handlePasteboardShortcut() ? nil : event
+            }
+        }
+        .onDisappear {
+            if let pasteMonitor { NSEvent.removeMonitor(pasteMonitor) }
+            pasteMonitor = nil
         }
         .frame(minWidth: 480, minHeight: 360)
         .navigationTitle(model.projectDisplayName)
@@ -391,6 +443,107 @@ struct ChatView: View {
         for url in panel.urls {
             model.attachPath(url.path)
         }
+    }
+
+    /// Shared by the composer `HStack`'s `.dropDestination` (drops landing
+    /// outside the `TextField`) and `FileDropCatcher`'s `onDrop` (drops
+    /// landing on the `TextField` itself).
+    private func handleDroppedURLs(_ urls: [URL]) -> Bool {
+        for url in urls {
+            model.attachPath(url.path)
+        }
+        return true
+    }
+
+    /// `Cmd+V` while the composer is focused. `TextField`'s backing
+    /// `NSTextView` always claims the `paste:` responder action for itself
+    /// (that's the source of the plain beep when pasting an image — it
+    /// tried and gave up), so SwiftUI's `onPasteCommand` never gets a turn
+    /// no matter which view it's attached to. `pasteMonitor` intercepts the
+    /// raw key event earlier, before it becomes a `paste:` action message,
+    /// so this can claim image/file pastes for the composer and let
+    /// everything else (plain text) fall through to `NSTextView` unchanged.
+    /// Returns whether it handled the paste.
+    private func handlePasteboardShortcut() -> Bool {
+        let pasteboard = NSPasteboard.general
+        if let urls = pasteboard.readObjects(
+            forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL],
+            !urls.isEmpty
+        {
+            for url in urls { model.attachPath(url.path) }
+            return true
+        }
+        guard let image = NSImage(pasteboard: pasteboard),
+            let tiff = image.tiffRepresentation,
+            let rep = NSBitmapImageRep(data: tiff),
+            let png = rep.representation(using: .png, properties: [:])
+        else { return false }
+        model.attachImageData(name: "Pasted image.png", mimeType: "image/png", data: png)
+        return true
+    }
+}
+
+/// Raw `NSDraggingDestination` overlay for the composer `TextField` — see
+/// the doc comment where this is applied for why a SwiftUI `.dropDestination`
+/// modifier alone can't win against the `TextField`'s own built-in file-drop
+/// handling. Registering for dragged types and reading the pasteboard
+/// directly is a separate mechanism from click hit-testing, so overriding
+/// `hitTest` to always return `nil` is safe: it only affects ordinary mouse
+/// event routing (letting clicks reach the `TextField` beneath), not drag
+/// destination resolution.
+private final class FileDropCatcherView: NSView {
+    var onDrop: (([URL]) -> Void)?
+    var onTargetedChange: ((Bool) -> Void)?
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        registerForDraggedTypes([.fileURL])
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+    private func fileURLs(from sender: NSDraggingInfo) -> [URL] {
+        sender.draggingPasteboard.readObjects(
+            forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL] ?? []
+    }
+
+    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        guard !fileURLs(from: sender).isEmpty else { return [] }
+        onTargetedChange?(true)
+        return .copy
+    }
+
+    override func draggingExited(_ sender: NSDraggingInfo?) {
+        onTargetedChange?(false)
+    }
+
+    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        let urls = fileURLs(from: sender)
+        onTargetedChange?(false)
+        guard !urls.isEmpty else { return false }
+        onDrop?(urls)
+        return true
+    }
+}
+
+private struct FileDropCatcher: NSViewRepresentable {
+    var onDrop: ([URL]) -> Void
+    var onTargetedChange: (Bool) -> Void
+
+    func makeNSView(context: Context) -> FileDropCatcherView {
+        let view = FileDropCatcherView()
+        view.onDrop = onDrop
+        view.onTargetedChange = onTargetedChange
+        return view
+    }
+
+    func updateNSView(_ nsView: FileDropCatcherView, context: Context) {
+        nsView.onDrop = onDrop
+        nsView.onTargetedChange = onTargetedChange
     }
 }
 
