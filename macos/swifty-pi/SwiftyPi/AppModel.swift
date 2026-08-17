@@ -11,6 +11,20 @@ struct LiveRow: Identifiable {
     var row: RowRecord
 }
 
+/// General-settings appearance override — `system` defers to
+/// `\.colorScheme`, `light`/`dark` force it via `.preferredColorScheme`.
+enum AppearanceMode: String, CaseIterable, Identifiable {
+    case light, dark, system
+    var id: Self { self }
+    var label: String {
+        switch self {
+        case .light: "Light"
+        case .dark: "Dark"
+        case .system: "System"
+        }
+    }
+}
+
 /// Drives one `PiSession` (a spawned `pi --mode rpc` child, owned entirely
 /// on the Rust side) plus the stateless `SessionIndex` browsing object, and
 /// publishes both for `ChatView`/`SidebarView`.
@@ -63,6 +77,10 @@ final class AppModel: ChatSink {
     /// `app.slint`'s `cycle-density()` semantics exactly (see the density
     /// control plan section). Persisted like `currentProject`, below.
     private(set) var density: Int
+
+    /// General-tab preferences — persisted like `density`, above.
+    private(set) var notificationsEnabled: Bool
+    private(set) var appearance: AppearanceMode
 
     /// `currentProject`'s last path component — the sole source both
     /// `SidebarView`'s column header and `ChatView`'s window-title bar read,
@@ -162,6 +180,8 @@ final class AppModel: ChatSink {
     init() {
         currentProject = Self.loadLastProject()
         density = Self.loadDensity()
+        notificationsEnabled = Self.loadNotificationsEnabled()
+        appearance = Self.loadAppearance()
     }
 
     /// Sets density directly (0 = Verbose, 1 = Normal, 2 = Summary) — the
@@ -169,6 +189,18 @@ final class AppModel: ChatSink {
     func setDensity(_ value: Int) {
         density = value
         Self.saveDensity(density)
+    }
+
+    /// General tab's notifications toggle writes through this.
+    func setNotificationsEnabled(_ value: Bool) {
+        notificationsEnabled = value
+        Self.saveNotificationsEnabled(value)
+    }
+
+    /// General tab's appearance picker writes through this.
+    func setAppearance(_ value: AppearanceMode) {
+        appearance = value
+        Self.saveAppearance(value)
     }
 
     /// Whether a row of `kind` should render at the given `density` — a
@@ -652,6 +684,30 @@ final class AppModel: ChatSink {
 
     private static func saveDensity(_ value: Int) {
         UserDefaults.standard.set(value, forKey: densityDefaultsKey)
+    }
+
+    // MARK: - Notifications persistence
+
+    private static let notificationsEnabledDefaultsKey = "dev.slinty-pi.swifty-pi.notificationsEnabled"
+
+    private static func loadNotificationsEnabled() -> Bool {
+        (UserDefaults.standard.object(forKey: notificationsEnabledDefaultsKey) as? Bool) ?? true
+    }
+
+    private static func saveNotificationsEnabled(_ value: Bool) {
+        UserDefaults.standard.set(value, forKey: notificationsEnabledDefaultsKey)
+    }
+
+    // MARK: - Appearance persistence
+
+    private static let appearanceDefaultsKey = "dev.slinty-pi.swifty-pi.appearance"
+
+    private static func loadAppearance() -> AppearanceMode {
+        UserDefaults.standard.string(forKey: appearanceDefaultsKey).flatMap(AppearanceMode.init) ?? .system
+    }
+
+    private static func saveAppearance(_ value: AppearanceMode) {
+        UserDefaults.standard.set(value.rawValue, forKey: appearanceDefaultsKey)
     }
 
     // MARK: - ChatSink

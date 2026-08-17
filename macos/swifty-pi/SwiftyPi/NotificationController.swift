@@ -15,6 +15,11 @@ final class NotificationController: NSObject, ObservableObject {
     private let center = UNUserNotificationCenter.current()
     private let logger = Logger(subsystem: "dev.slinty-pi.swifty-pi", category: "notifications")
 
+    /// Same key `AppModel` persists its General-tab toggle under — read
+    /// directly rather than referencing `AppModel`, keeping this singleton
+    /// self-contained.
+    private static let notificationsEnabledDefaultsKey = "dev.slinty-pi.swifty-pi.notificationsEnabled"
+
     private override init() {
         super.init()
         center.delegate = self
@@ -60,6 +65,7 @@ final class NotificationController: NSObject, ObservableObject {
     /// notifications use a per-dialog id since more than one can queue.
     private func notify(id: String, title: String, body: String) {
         guard !NSApplication.shared.isActive else { return }
+        guard UserDefaults.standard.object(forKey: Self.notificationsEnabledDefaultsKey) as? Bool ?? true else { return }
         let content = UNMutableNotificationContent()
         content.title = title
         content.body = body

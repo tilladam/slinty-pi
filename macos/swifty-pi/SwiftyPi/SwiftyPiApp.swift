@@ -7,6 +7,7 @@ struct SwiftyPiApp: App {
     var body: some Scene {
         WindowGroup {
             ContentView(model: model)
+                .preferredColorScheme(colorScheme(for: model.appearance))
         }
         .commands {
             CommandGroup(after: .newItem) {
@@ -33,7 +34,18 @@ struct SwiftyPiApp: App {
         // points for free: "SwiftyPi > Settings…" in the app menu, bound to
         // ⌘,. `SidebarView`'s `SettingsLink` opens this same window.
         Settings {
-            ModelsPanelView(model: model)
+            SettingsView(model: model)
+        }
+    }
+
+    /// `nil` (system) leaves `\.colorScheme` alone; `.light`/`.dark` force
+    /// it — `ContentView`'s `@Environment(\.colorScheme)` read picks up the
+    /// override since it's applied above `ContentView` in the view tree.
+    private func colorScheme(for mode: AppearanceMode) -> ColorScheme? {
+        switch mode {
+        case .light: .light
+        case .dark: .dark
+        case .system: nil
         }
     }
 }

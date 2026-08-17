@@ -17,17 +17,13 @@ struct ModelsPanelView: View {
     @State private var keyInput = ""
 
     var body: some View {
-        NavigationStack {
-            Form {
-                rapidMlxSection
-                routerSection
-                ollamaSection
-                authSection
-            }
-            .formStyle(.grouped)
-            .navigationTitle("Settings")
+        Form {
+            rapidMlxSection
+            routerSection
+            ollamaSection
+            authSection
         }
-        .frame(minWidth: 480, minHeight: 560)
+        .formStyle(.grouped)
         .task {
             await model.refreshModelsPanel()
         }

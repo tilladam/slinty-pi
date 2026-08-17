@@ -72,10 +72,10 @@ struct SidebarView: View {
                 // Opens the same window as ⌘, / the app menu's Settings…
                 // rather than a second, sheet-shaped copy of the panel.
                 SettingsLink {
-                    Label("Models", systemImage: "cpu")
+                    Label("Settings", systemImage: "gearshape")
                 }
-                .help("Browse and manage local models")
-                .keyboardShortcut("m")
+                .help("App settings and local model management")
+                .keyboardShortcut(",")
             }
         }
         .alert("Rename Session", isPresented: $isRenaming) {
