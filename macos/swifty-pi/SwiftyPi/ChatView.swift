@@ -13,6 +13,11 @@ struct ChatView: View {
     @State private var draft: String = ""
     @State private var showTree = false
     @FocusState private var composerFocused: Bool
+    /// Local `keyDown` monitor for Escape — see the doc comment where it's
+    /// installed (`.onAppear` below) for why a raw `NSEvent` monitor is used
+    /// instead of `.onKeyPress(.escape)`. Installed/removed alongside the
+    /// view's lifecycle.
+    @State private var escapeMonitor: Any?
 
     // MARK: - Prompt history (Up/Down arrows)
 
@@ -85,6 +90,7 @@ struct ChatView: View {
                     presentAttachPicker()
                 } label: {
                     Image(systemName: "paperclip")
+						.frame(width: 24, height: 24)
                 }
                 .help("Attach a file or image")
 
@@ -121,14 +127,26 @@ struct ChatView: View {
                     }
 
                 if model.isStreaming {
-                    Button("Abort", role: .destructive) {
+                    Button(role: .destructive) {
                         model.abort()
+                    } label: {
+                        ZStack {
+                            StreamingSpinner()
+                            Image(systemName: "stop.fill")
+                                .font(.system(size: 9))
+                        }
+                        // Matches the Send button's icon footprint below so
+                        // the button doesn't change size/lose its background
+                        // when toggling between the two states.
+						.frame(width: 24, height: 24)
                     }
+                    .help("Abort")
                 } else {
                     Button {
                         send()
                     } label: {
                         Label("Send", systemImage: "paperplane.fill")
+                            .frame(width: 24, height: 24)
                     }
                     .labelStyle(.iconOnly)
                     .help("Send")
@@ -153,31 +171,58 @@ struct ChatView: View {
             guard newValue != nil, let text = model.consumePendingComposerReplace() else { return }
             draft = text
         }
+        .onAppear {
+            // `.onKeyPress(.escape)` only fires when the composer (or a
+            // focused descendant) already has focus, which can't handle
+            // "bring focus back to the composer" when focus is elsewhere
+            // (or nowhere) in the window — so this intercepts the raw key
+            // event instead, before AppKit's focus-scoped dispatch.
+            escapeMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+                guard event.keyCode == 53 else { return event }  // kVK_Escape
+                // A sheet/alert is open (tree, extension dialog, sidebar
+                // rename/delete, ...) — leave Escape alone so it can
+                // dismiss that instead of hijacking focus.
+                if NSApp.keyWindow?.attachedSheet != nil { return event }
+                if composerFocused {
+                    guard model.isStreaming else { return event }
+                    model.abort()
+                    return nil
+                }
+                composerFocused = true
+                return nil
+            }
+        }
+        .onDisappear {
+            if let escapeMonitor { NSEvent.removeMonitor(escapeMonitor) }
+            escapeMonitor = nil
+        }
         .frame(minWidth: 480, minHeight: 360)
         .navigationTitle(model.projectDisplayName)
         .navigationSubtitle(model.currentProject)
         .toolbar {
-            // Streaming + server-health indicator dots, trailing edge of the
-            // top navigation bar — moved here from the composer's own status
-            // bar so they're visible regardless of scroll position.
+            // Server-health indicator dot, trailing edge of the top
+            // navigation bar — moved here from the composer's own status bar
+            // so it's visible regardless of scroll position. (The streaming
+            // indicator that used to sit next to it moved onto the Abort
+            // button itself — see the composer's stop-icon/ring.)
             // `.sharedBackgroundVisibility(.hidden)` (macOS 26+ only — the
             // app's deployment target is 14+) opts this item out of the
-            // system's automatic grouped "glass" background: these are
-            // plain status dots, not a control, so they shouldn't look like
-            // a button. Older macOS versions don't have that background to
+            // system's automatic grouped "glass" background: this is a
+            // plain status dot, not a control, so it shouldn't look like a
+            // button. Older macOS versions don't have that background to
             // begin with, so the plain `ToolbarItem` fallback needs no
             // equivalent workaround.
             if #available(macOS 26.0, *) {
                 ToolbarItem(placement: .primaryAction) {
-                    statusDots
+                    serverDotView
                 }
                 .sharedBackgroundVisibility(.hidden)
             } else {
                 ToolbarItem(placement: .primaryAction) {
-                    statusDots
+                    serverDotView
                 }
             }
-            // Same glass-background opt-out as the status dots above — a
+            // Same glass-background opt-out as the server dot above — a
             // flat dropdown reads as a lightweight display control here,
             // not a prominent action button.
             if #available(macOS 26.0, *) {
@@ -207,23 +252,6 @@ struct ChatView: View {
             TreeView(model: model)
         }
         .extensionDialogs(model: model)
-    }
-
-    private var statusDots: some View {
-        HStack(spacing: 6) {
-            Group {
-                if model.isStreaming {
-                    StreamingSpinner()
-                } else {
-                    Circle().stroke(Color.gray, lineWidth: 2)
-                }
-            }
-            .frame(width: 12, height: 12)
-            .padding(4)
-            .contentShape(Rectangle())
-            .help(model.isStreaming ? "Streaming" : "Idle")
-            serverDotView
-        }
     }
 
     /// Direct mode selection, replacing an earlier cycle-through-3-states
