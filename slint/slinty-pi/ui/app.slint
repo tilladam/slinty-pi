@@ -548,6 +548,9 @@ export component AppWindow inherits Window {
     in property <int> composer-lines: 1;
     // File names of images queued for the next send (attach button).
     in property <[string]> pending-attachments: [];
+    // Set from Rust while a Finder/Explorer file drag hovers the window —
+    // drives the composer's drag-hover highlight.
+    in property <bool> drag-hover: false;
     // Set from Rust to the syntect theme's own background color, so
     // highlighted spans keep the contrast they were designed with.
     in property <color> code-background: #2b303b;
@@ -639,6 +642,11 @@ export component AppWindow inherits Window {
     callback palette-exec(string);
     callback attach-clicked();
     callback remove-attachment(int);
+    // Cmd+V/Ctrl+V: asks Rust whether the clipboard holds an image. `true`
+    // means it queued one as an attachment and the key event should be
+    // swallowed; `false` lets it fall through to `TextEdit`'s own
+    // text-paste.
+    callback paste-image-requested() -> bool;
 
     public function scroll-to-end() {
         list.viewport-y = -max(0px, list.viewport-height - list.height);
@@ -694,7 +702,8 @@ export component AppWindow inherits Window {
         // the tree overlay if open, else aborts from anywhere (including
         // while the composer has focus). Cmd+B toggles the sidebar; Cmd+N
         // starts a new session; Cmd+T opens the tree; Cmd+M opens the models
-        // panel; Ctrl+O cycles density.
+        // panel; Ctrl+O cycles density; Cmd/Ctrl+V attaches a clipboard
+        // image, if any.
         capture-key-pressed(event) => {
             if (event.modifiers.meta && event.text == "p") {
                 root.palette-visible = true;
@@ -730,6 +739,14 @@ export component AppWindow inherits Window {
             }
             if (event.modifiers.control && event.text == "o") {
                 root.cycle-density();
+                return accept;
+            }
+            // Cmd+V on macOS, Ctrl+V on Windows/Linux (`meta` is the
+            // Windows/Super key there, not the paste modifier) — only
+            // swallowed if the clipboard actually holds an image;
+            // otherwise falls through to `TextEdit`'s own text-paste.
+            if ((event.modifiers.meta || event.modifiers.control) && event.text == "v"
+                    && root.paste-image-requested()) {
                 return accept;
             }
             reject
@@ -860,10 +877,12 @@ export component AppWindow inherits Window {
             }
 
             Rectangle {
-                background: Style.card;
+                background: root.drag-hover ? Palette.accent-background.transparentize(0.88) : Style.card;
                 border-radius: Style.radius;
                 border-width: 1px;
-                border-color: input.has-focus ? Palette.accent-background.transparentize(0.4) : Style.hairline;
+                border-color: root.drag-hover
+                    ? Palette.accent-background
+                    : (input.has-focus ? Palette.accent-background.transparentize(0.4) : Style.hairline);
 
                 VerticalLayout {
                     padding: 6px;
