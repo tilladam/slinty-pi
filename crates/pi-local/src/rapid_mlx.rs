@@ -2,10 +2,11 @@
 //! Silicon M1+/macOS 14+): detection, CLI catalog parsing, and a managed
 //! `serve` child process lifecycle.
 //!
-//! Management is CLI-first, not HTTP: there is no documented `--json` flag
-//! (`rapid-mlx models --help` / `info --help` confirm no such option as of
-//! 0.11.3), so `models`, `models --cached`, `ps`, and `info <alias>` are
-//! parsed from rich-formatted human text. To stay robust against the
+//! Management is CLI-first, not HTTP. The catalog comes from `models --json`
+//! (stable keys, 0.15+; at least up to 0.11.3 there was no such flag), with
+//! the text table as the fallback for older installs. `models --cached`,
+//! `ps`, and `info <alias>` are parsed from rich-formatted human text. To stay
+//! robust against the
 //! renderer's column padding (verified live: a long alias can push a row's
 //! later columns past their header-aligned start, e.g.
 //! `qwen3-4b-instruct-2507-4bit` overflowing the `Alias` column in
@@ -54,10 +55,20 @@ pub struct CatalogEntry {
     pub tool_format: Option<String>,
     pub reasoning_parser: Option<String>,
     pub spec_decode: bool,
+    /// Exact from `--json`. From the text table it comes from the marker
+    /// after Spec-Decode, which shows `MTP` in preference to `hybrid`, so a
+    /// hybrid model with an MTP draft reads as `hybrid: false, mtp: true`.
     pub hybrid: bool,
+    /// Has an MTP (multi-token prediction) draft; `MTP` marker, 0.15+.
+    pub mtp: bool,
+    /// `suffix_tier`, `dflash`, `ddtree` and `preset` only exist in the text
+    /// table; `--json` has no equivalent keys, so they're `None` there.
     pub suffix_tier: Option<String>,
     pub dflash: Option<String>,
     pub ddtree: Option<String>,
+    /// Default serving preset (`Suffix`, `MTP@<draft>@<n>`, ...). `None` on
+    /// catalogs older than 0.15 (no `Preset` column) or for `—`.
+    pub preset: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -285,6 +296,13 @@ impl RapidMlx {
     }
 
     pub async fn catalog(&self) -> Result<Vec<CatalogEntry>, RapidMlxError> {
+        // Older versions reject `--json` (argparse exits non-zero); fall back
+        // to scraping the text table for those.
+        if let Ok(json) = self.run(&["models", "--json"]).await {
+            if let Some(entries) = parse_catalog_json(&json) {
+                return Ok(entries);
+            }
+        }
         Ok(parse_catalog(&self.run(&["models"]).await?))
     }
 
@@ -361,14 +379,68 @@ fn parse_ps(output: &str) -> Vec<RunningServer> {
         .collect()
 }
 
+/// `rapid-mlx models --json`: one array per modality section; only `text`
+/// models are servable as chat models, matching the text table.
+#[derive(serde::Deserialize)]
+struct CatalogJson {
+    text: Vec<CatalogJsonEntry>,
+}
+
+#[derive(serde::Deserialize)]
+struct CatalogJsonEntry {
+    alias: String,
+    size_bytes: Option<u64>,
+    tool_call_parser: Option<String>,
+    reasoning_parser: Option<String>,
+    #[serde(default)]
+    supports_spec_decode: bool,
+    #[serde(default)]
+    is_hybrid: bool,
+    #[serde(default)]
+    supports_native_mtp: bool,
+    mtp_draft_model: Option<String>,
+}
+
+fn parse_catalog_json(output: &str) -> Option<Vec<CatalogEntry>> {
+    let catalog: CatalogJson = serde_json::from_str(output).ok()?;
+    Some(
+        catalog
+            .text
+            .into_iter()
+            .map(|e| {
+                let mtp = e.supports_native_mtp || e.mtp_draft_model.is_some();
+                CatalogEntry {
+                    alias: e.alias,
+                    size_bytes: e.size_bytes,
+                    tool_format: e.tool_call_parser,
+                    reasoning_parser: e.reasoning_parser,
+                    // The text table's Spec-Decode ✓ also covers MTP drafts;
+                    // keep both sources meaning the same thing.
+                    spec_decode: e.supports_spec_decode || mtp,
+                    hybrid: e.is_hybrid,
+                    mtp,
+                    suffix_tier: None,
+                    dflash: None,
+                    ddtree: None,
+                    preset: None,
+                }
+            })
+            .collect(),
+    )
+}
+
 fn parse_catalog(output: &str) -> Vec<CatalogEntry> {
-    // 0.11.3 inserted a `Size` column right after `Alias`. A row alone is
-    // ambiguous (`—` size vs. `—` tool format shift the same way), so key
-    // the format off the header row instead of guessing per row.
-    let has_size = output
-        .lines()
-        .find(|l| l.contains("Spec-Decode"))
-        .is_some_and(|l| l.split_whitespace().any(|t| t == "Size"));
+    // 0.11.3 inserted a `Size` column right after `Alias`; 0.15 appended a
+    // `Preset` column. A row alone is ambiguous (`—` size vs. `—` tool format
+    // shift the same way, and an extra trailing column looks like the
+    // `hybrid` marker's extra token), so key the format off the header row
+    // instead of guessing per row.
+    let header = output.lines().find(|l| l.contains("Spec-Decode"));
+    let header_has = |column: &str| {
+        header.is_some_and(|l| l.split_whitespace().any(|t| t == column))
+    };
+    let has_size = header_has("Size");
+    let has_preset = header_has("Preset");
     extract_table_rows(output, "Spec-Decode")
         .into_iter()
         .filter_map(|line| {
@@ -383,12 +455,22 @@ fn parse_catalog(output: &str) -> Vec<CatalogEntry> {
             } else {
                 (None, rest)
             };
-            // Tools, Reasoning, Spec-Decode, [hybrid], Suffix Tier, DFlash,
-            // DDTree.
-            let hybrid = match rest.len() {
-                6 => false,
-                7 => true,
-                _ => return None,
+            // Tools, Reasoning, Spec-Decode, [marker], Suffix Tier, DFlash,
+            // DDTree, [Preset]. The optional marker after Spec-Decode is a
+            // literal token (`hybrid`, or since 0.15 `MTP`), so match it by
+            // value and then require the exact length the header implies —
+            // an unknown new column drops the row instead of silently
+            // shifting every later field.
+            let marker = rest.get(3).copied().filter(|t| *t == "hybrid" || *t == "MTP");
+            let has_marker = marker.is_some();
+            if rest.len() != 6 + has_marker as usize + has_preset as usize {
+                return None;
+            }
+            let (preset, rest) = if has_preset {
+                let (preset, rest) = rest.split_last()?;
+                (none_if_dash(preset), rest)
+            } else {
+                (None, rest)
             };
             Some(CatalogEntry {
                 alias: alias.to_string(),
@@ -396,10 +478,12 @@ fn parse_catalog(output: &str) -> Vec<CatalogEntry> {
                 tool_format: none_if_dash(rest[0]),
                 reasoning_parser: none_if_dash(rest[1]),
                 spec_decode: rest[2] == "✓",
-                hybrid,
-                suffix_tier: none_if_dash(rest[3 + hybrid as usize]),
+                hybrid: marker == Some("hybrid"),
+                mtp: marker == Some("MTP"),
+                suffix_tier: none_if_dash(rest[3 + has_marker as usize]),
                 dflash: none_if_dash(rest[rest.len() - 2]),
                 ddtree: none_if_dash(rest[rest.len() - 1]),
+                preset,
             })
         })
         .collect()
@@ -709,6 +793,22 @@ mod tests {
   ──────────────────────────────────────────────────────────────────────────────────────────────────────
 ";
 
+    // 0.15.3 format: trailing `Preset` column, and an `MTP` marker that can
+    // take the slot after Spec-Decode instead of `hybrid`.
+    const CATALOG_FIXTURE_PRESET: &str = "\
+  Available models (196 aliases)
+  ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Alias                             Size       Tools            Reasoning           Spec-Decode Suffix Tier DFlash    DDTree    Preset  
+  ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  bonsai-1.7b-2bit                  472.6 MiB  hermes           —                   ✗          unknown     exp     exp     —       
+  bonsai2-27b-2bit                  8.0 GiB    qwen3_coder_xml  qwen3               ✗ hybrid   n/a         exp     exp     —       
+  deepseek-r1-8b-4bit               4.3 GiB    deepseek_v3      deepseek_r1         ✓          avoid       exp     exp     Suffix  
+  glm5.3-flash-4bit                 169.3 GiB  glm47            glm5                ✓ MTP      n/a         ✗       ✗       MTP@native@1
+  qwen3.5-4b-4bit                   2.9 GiB    hermes           qwen3               ✓ MTP      n/a         exp     exp     MTP@mlx-community/Qwen3.5-4B-MTP-4bit@2
+  qwopus-27b-8bit                   —          hermes           qwen3               ✗ hybrid   n/a         exp     exp     —       
+  ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+";
+
     const CACHED_FIXTURE: &str = "\
   Cached models (4 on disk)
   ────────────────────────────────────────────────────────────────────────────────────────────────
@@ -781,9 +881,11 @@ mod tests {
                 reasoning_parser: None,
                 spec_decode: false,
                 hybrid: false,
+                mtp: false,
                 suffix_tier: Some("unknown".into()),
                 dflash: None,
                 ddtree: None,
+                preset: None,
             }
         );
 
@@ -826,6 +928,100 @@ mod tests {
                 .map(|e| (e.hybrid, e.tool_format.as_deref() == Some("gemma4"))),
             Some((true, true))
         );
+    }
+
+    #[test]
+    fn parses_catalog_json_text_section_only() {
+        // Trimmed from 0.15.3 `models --json`, unknown keys left in.
+        let json = r#"{
+          "text": [
+            {"alias": "bonsai-1.7b-2bit", "hf_path": "prism-ml/Ternary-Bonsai-1.7B-mlx-2bit",
+             "size_bytes": 495525300, "tool_call_parser": "hermes", "reasoning_parser": null,
+             "is_hybrid": false, "is_moe": false, "supports_spec_decode": false,
+             "supports_native_mtp": false, "native_mtp_draft_model": null,
+             "mtp_draft_model": null, "modality": "text"},
+            {"alias": "qwen3.6-27b-4bit", "size_bytes": null, "tool_call_parser": "qwen3_coder_xml",
+             "reasoning_parser": "qwen3", "is_hybrid": true, "supports_spec_decode": false,
+             "supports_native_mtp": false,
+             "mtp_draft_model": "mlx-community/Qwen3.6-27B-MTP-4bit"}
+          ],
+          "audio": [{"alias": "kokoro-82m", "size_bytes": 328204288}],
+          "atomic": []
+        }"#;
+        let entries = parse_catalog_json(json).unwrap();
+        assert_eq!(entries.len(), 2);
+        assert_eq!(
+            entries[0],
+            CatalogEntry {
+                alias: "bonsai-1.7b-2bit".into(),
+                size_bytes: Some(495525300),
+                tool_format: Some("hermes".into()),
+                reasoning_parser: None,
+                spec_decode: false,
+                hybrid: false,
+                mtp: false,
+                suffix_tier: None,
+                dflash: None,
+                ddtree: None,
+                preset: None,
+            }
+        );
+        // Unlike the text table, JSON reports hybrid and MTP together.
+        let both = &entries[1];
+        assert!(both.hybrid && both.mtp && both.spec_decode);
+        assert_eq!(both.size_bytes, None);
+
+        // Pre-`--json` versions print usage text instead.
+        assert!(parse_catalog_json("usage: rapid-mlx models [-h] [--cached]").is_none());
+    }
+
+    #[test]
+    fn parses_catalog_with_preset_column_and_mtp_marker() {
+        let entries = parse_catalog(CATALOG_FIXTURE_PRESET);
+        assert_eq!(entries.len(), 6);
+        let get = |alias: &str| entries.iter().find(|e| e.alias == alias).unwrap();
+
+        assert_eq!(
+            get("bonsai-1.7b-2bit"),
+            &CatalogEntry {
+                alias: "bonsai-1.7b-2bit".into(),
+                size_bytes: Some((472.6 * 1024.0 * 1024.0) as u64),
+                tool_format: Some("hermes".into()),
+                reasoning_parser: None,
+                spec_decode: false,
+                hybrid: false,
+                mtp: false,
+                suffix_tier: Some("unknown".into()),
+                dflash: Some("exp".into()),
+                ddtree: Some("exp".into()),
+                preset: None,
+            }
+        );
+
+        let hybrid = get("bonsai2-27b-2bit");
+        assert!(hybrid.hybrid && !hybrid.mtp);
+        assert_eq!(hybrid.suffix_tier.as_deref(), Some("n/a"));
+        assert_eq!(hybrid.ddtree.as_deref(), Some("exp"));
+
+        let suffix = get("deepseek-r1-8b-4bit");
+        assert!(suffix.spec_decode && !suffix.hybrid && !suffix.mtp);
+        assert_eq!(suffix.suffix_tier.as_deref(), Some("avoid"));
+        assert_eq!(suffix.preset.as_deref(), Some("Suffix"));
+
+        let mtp = get("glm5.3-flash-4bit");
+        assert!(mtp.mtp && !mtp.hybrid);
+        assert_eq!(mtp.suffix_tier.as_deref(), Some("n/a"));
+        assert_eq!(mtp.dflash.as_deref(), Some("✗"));
+        assert_eq!(mtp.preset.as_deref(), Some("MTP@native@1"));
+        assert_eq!(
+            get("qwen3.5-4b-4bit").preset.as_deref(),
+            Some("MTP@mlx-community/Qwen3.5-4B-MTP-4bit@2")
+        );
+
+        let unknown_size = get("qwopus-27b-8bit");
+        assert_eq!(unknown_size.size_bytes, None);
+        assert!(unknown_size.hybrid);
+        assert_eq!(unknown_size.tool_format.as_deref(), Some("hermes"));
     }
 
     #[test]
@@ -920,6 +1116,20 @@ mod tests {
              expected token count (see the module doc comment on the token-counting approach)",
             claimed.saturating_sub(catalog.len())
         );
+
+        // `catalog()` prefers `--json` on versions that have it; it must
+        // list exactly the aliases the text table does.
+        let mut via_catalog: Vec<String> = rmlx
+            .catalog()
+            .await
+            .expect("catalog")
+            .into_iter()
+            .map(|e| e.alias)
+            .collect();
+        let mut via_text: Vec<String> = catalog.iter().map(|e| e.alias.clone()).collect();
+        via_catalog.sort();
+        via_text.sort();
+        assert_eq!(via_catalog, via_text);
 
         let cached_text = rmlx
             .run(&["models", "--cached"])
