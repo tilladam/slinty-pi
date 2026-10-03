@@ -54,15 +54,13 @@ assistant markdown — combined with `SLINTY_SEND_AFTER="800:md!…"` this drive
 rendering test cases through the real segmenter/highlighter pipeline (used for screenshot-based
 rendering QA via the MCP server).
 
-## Slint dependency: local checkout, not crates.io
+## Slint dependency
 
-`slint`, `slint-build`, and `i-slint-backend-winit` are **path dependencies** on a local Slint
-checkout (master) at `/Users/till/Code/Rust/slint/slint`. This is required for the `mcp` feature
-and for [PR #11520](https://github.com/slint-ui/slint/pull/11520) (`set_platform()` auto-starting
-the MCP server for custom-platform apps). Move these back to crates.io pins once both land in a
-release. Because `i-slint-backend-winit` is an internal, non-semver-stable crate, it must stay in
-lockstep with whatever `slint` commit is checked out — if editing dependency versions, check that
-checkout, don't just bump a version number.
+`slint`, `slint-build`, and `i-slint-backend-winit` come from crates.io (1.18.1). 1.18+ is required
+for the `mcp` feature and for [PR #11520](https://github.com/slint-ui/slint/pull/11520)
+(`set_platform()` auto-starting the MCP server for custom-platform apps). Because
+`i-slint-backend-winit` is an internal, non-semver-stable crate, it and `slint-build` are pinned
+with `=` and must stay in lockstep with `slint` — bump all three together.
 
 ## Architecture
 
