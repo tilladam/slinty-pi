@@ -2,10 +2,10 @@
 //! Silicon M1+/macOS 14+): detection, CLI catalog parsing, and a managed
 //! `serve` child process lifecycle.
 //!
-//! Management is CLI-first, not HTTP. The catalog comes from `models --json`
-//! (stable keys, 0.15+; at least up to 0.11.3 there was no such flag), with
-//! the text table as the fallback for older installs. `models --cached`,
-//! `ps`, and `info <alias>` are parsed from rich-formatted human text. To stay
+//! Management is CLI-first, not HTTP. `models` and `models --cached` are read
+//! via `--json` (stable keys, 0.15+; at least up to 0.11.3 there was no such
+//! flag), with their text tables as the fallback for older installs. `ps` and
+//! `info <alias>` are parsed from rich-formatted human text. To stay
 //! robust against the
 //! renderer's column padding (verified live: a long alias can push a row's
 //! later columns past their header-aligned start, e.g.
@@ -307,6 +307,12 @@ impl RapidMlx {
     }
 
     pub async fn cached_models(&self) -> Result<Vec<CachedModel>, RapidMlxError> {
+        // Same `--json`-first fallback as `catalog()`.
+        if let Ok(json) = self.run(&["models", "--cached", "--json"]).await {
+            if let Some(cached) = parse_cached_json(&json) {
+                return Ok(cached);
+            }
+        }
         Ok(parse_cached(&self.run(&["models", "--cached"]).await?))
     }
 
@@ -499,6 +505,47 @@ fn size_to_bytes(value: f64, unit: &str) -> Option<u64> {
         _ => return None,
     };
     Some((value * mult) as u64)
+}
+
+/// `rapid-mlx models --cached --json`.
+#[derive(serde::Deserialize)]
+struct CachedJson {
+    cached: Vec<CachedJsonEntry>,
+}
+
+#[derive(serde::Deserialize)]
+struct CachedJsonEntry {
+    alias: Option<String>,
+    repo: String,
+    size_bytes: u64,
+    age_seconds: u64,
+}
+
+fn parse_cached_json(output: &str) -> Option<Vec<CachedModel>> {
+    let cached: CachedJson = serde_json::from_str(output).ok()?;
+    Some(
+        cached
+            .cached
+            .into_iter()
+            .map(|e| CachedModel {
+                alias: e.alias.unwrap_or_else(|| e.repo.clone()),
+                hf_repo: e.repo,
+                size_bytes: e.size_bytes,
+                modified: format_age(e.age_seconds),
+            })
+            .collect(),
+    )
+}
+
+/// Matches the text table's `Modified` column style (`"70d ago"`).
+fn format_age(secs: u64) -> String {
+    let (n, unit) = match secs {
+        s if s >= 86_400 => (s / 86_400, "d"),
+        s if s >= 3_600 => (s / 3_600, "h"),
+        s if s >= 60 => (s / 60, "m"),
+        s => (s, "s"),
+    };
+    format!("{n}{unit} ago")
 }
 
 fn parse_cached(output: &str) -> Vec<CachedModel> {
@@ -931,6 +978,42 @@ mod tests {
     }
 
     #[test]
+    fn parses_cached_json() {
+        // Trimmed from 0.15.3 `models --cached --json`.
+        let json = r#"{
+          "cached": [
+            {"alias": "gpt-oss-120b", "repo": "mlx-community/gpt-oss-120b-MXFP4-Q8",
+             "subfolder": null, "size_bytes": 63414996607, "modified_epoch": 1784930893,
+             "age_seconds": 6131602, "state": "ok", "external": false},
+            {"alias": null, "repo": "someone/custom-model", "size_bytes": 1024,
+             "age_seconds": 7200}
+          ],
+          "count": 2,
+          "total_bytes": 63414997631
+        }"#;
+        assert_eq!(
+            parse_cached_json(json).unwrap(),
+            vec![
+                CachedModel {
+                    alias: "gpt-oss-120b".into(),
+                    hf_repo: "mlx-community/gpt-oss-120b-MXFP4-Q8".into(),
+                    size_bytes: 63414996607,
+                    modified: "70d ago".into(),
+                },
+                CachedModel {
+                    alias: "someone/custom-model".into(),
+                    hf_repo: "someone/custom-model".into(),
+                    size_bytes: 1024,
+                    modified: "2h ago".into(),
+                },
+            ]
+        );
+        assert!(parse_cached_json(CACHED_FIXTURE).is_none());
+        assert_eq!(format_age(59), "59s ago");
+        assert_eq!(format_age(60), "1m ago");
+    }
+
+    #[test]
     fn parses_catalog_json_text_section_only() {
         // Trimmed from 0.15.3 `models --json`, unknown keys left in.
         let json = r#"{
@@ -1144,6 +1227,19 @@ mod tests {
                  \"ago\""
             );
         }
+        // `cached_models()` prefers `--json`; it must agree with the table.
+        let mut via_cached: Vec<(String, String)> = rmlx
+            .cached_models()
+            .await
+            .expect("cached models")
+            .into_iter()
+            .map(|c| (c.alias, c.hf_repo))
+            .collect();
+        let mut via_text: Vec<(String, String)> =
+            cached.into_iter().map(|c| (c.alias, c.hf_repo)).collect();
+        via_cached.sort();
+        via_text.sort();
+        assert_eq!(via_cached, via_text);
 
         let running = rmlx.running_servers().await.expect("ps");
         // Not asserting on contents: legitimately empty if nothing's running.
