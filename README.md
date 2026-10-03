@@ -64,6 +64,19 @@ SLINTY_DEMO=1 cargo run -p slinty-pi
 # optional: SLINTY_DEMO_RATE=500 (tokens/sec), SLINTY_DEMO_AUTOSEND="prompt" (stream on launch)
 ```
 
+## Slint dependency and MCP
+
+`slint`, `slint-build`, and `i-slint-backend-winit` come from crates.io at 1.18.1. The last two are
+pinned with `=` because `i-slint-backend-winit` is an internal, non-semver-stable crate — bump all
+three together.
+
+Slint's embedded MCP server (UI introspection and screenshots, used for rendering QA) is opt-in per
+invocation rather than a default feature, since it pulls in a sizeable extra dependency tree:
+
+```sh
+SLINT_EMIT_DEBUG_INFO=1 SLINT_MCP_PORT=9315 cargo run -p slinty-pi --features slint/mcp
+```
+
 ## Packaging
 
 [`cargo-bundle`](https://github.com/burtonageo/cargo-bundle) (`cargo install cargo-bundle`) reads

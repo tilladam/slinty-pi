@@ -29,7 +29,7 @@ cargo test -p pi-rpc get_state_round_trips # run a single test
 ```
 
 MCP (embedded Slint introspection/screenshot server) is opt-in per invocation, not a default
-feature — see the "Slint dependency" section of README.md:
+feature — see the "Slint dependency and MCP" section of README.md:
 
 ```sh
 SLINT_EMIT_DEBUG_INFO=1 SLINT_MCP_PORT=9315 cargo run -p slinty-pi --features slint/mcp
