@@ -344,7 +344,7 @@ component CodeRow inherits Rectangle {
         // binding — safe inside the ListView).
         Flickable {
             height: lines.preferred-height;
-            viewport-width: max(self.width, lines.preferred-width);
+            content-width: max(self.width, lines.preferred-width);
             lines := VerticalLayout {
                 padding: 12px;
                 padding-top: 2px;
@@ -650,7 +650,7 @@ export component AppWindow inherits Window {
     callback paste-image-requested() -> bool;
 
     public function scroll-to-end() {
-        list.viewport-y = -max(0px, list.viewport-height - list.height);
+        list.content-y = -max(0px, list.content-height - list.height);
     }
     public function focus-input() {
         input.focus();
