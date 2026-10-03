@@ -57,7 +57,7 @@ export struct QueueItem {
 
 global Style {
     out property <length> radius: 9px;
-    out property <string> mono-font: "Menlo";
+    out property <string> mono-font: "SF Mono";
     out property <color> dim: Palette.foreground.transparentize(0.45);
     out property <color> faint: Palette.foreground.transparentize(0.65);
     out property <brush> card: Palette.control-background;
@@ -524,6 +524,7 @@ component NoteRow inherits HorizontalLayout {
 
 export component AppWindow inherits Window {
     title: "slinty-pi";
+    default-font-family: "SF Pro";
     preferred-width: 940px;
     preferred-height: 760px;
     min-width: 520px;
