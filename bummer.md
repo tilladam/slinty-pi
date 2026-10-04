@@ -82,6 +82,7 @@ Next time: explicit geometry: column widths as weight fractions × block width, 
 Revisit when: #12776 lands (a measure-based cross-axis pass); then simplify TableBlock.
 Cost: not recorded.
 Scope: global-candidate     Status: active
+update 2026-10-04: #12776 was fixed by slint-ui/slint#13003 (merged 2026-08-26, in 1.18.1). On 1.18.1, TableBlock without the min-height renders like with it (screenshots, long wrapped cells); the min-height was removed. The explicit column widths stay: without them each row's HorizontalLayout sizes its columns independently and they misalign — not a #12776 effect.
 
 ## 2026-08-04 · StyledText limits: markdown subset, no selection, no accessibility · #slint #text slint/slinty-pi
 Situation: rendering assistant markdown in Slint 1.17.

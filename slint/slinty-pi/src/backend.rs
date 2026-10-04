@@ -414,8 +414,8 @@ pub fn code_lines_model(lines: &[pi_core::highlight::CodeLine]) -> ModelRc<CodeL
 /// verbose column can't starve the others entirely), normalized so a row's
 /// weights sum to 1.0. The UI multiplies the block width by the share to get
 /// explicit, identical column boundaries in every row — explicit rather than
-/// stretch-negotiated, because stretch weights resolve before wrapped cell
-/// text knows its height at the final width, which made rows too short.
+/// stretch weights, because each row lays out on its own and stretch would
+/// let the columns drift out of line from row to row.
 /// The second return value is the table's estimated natural width in
 /// logical px (the UI caps it at the available span), so narrow tables
 /// don't stretch across the whole transcript.

@@ -390,21 +390,12 @@ component TableBlock inherits Rectangle {
             spacing: 1px;
             for cell in row.cells: Rectangle {
                 // Explicit width (block width × the column's normalized
-                // share) instead of horizontal-stretch weights: stretch
-                // negotiation resolves before wrapped cell text knows its
-                // height at the final width, which sized rows too short —
-                // long cells overlapped the next row and the block clipped
-                // its last line. With definite widths the wrapped height is
-                // well-defined bottom-up and each row takes its tallest cell.
+                // share): each row is its own HorizontalLayout, so stretch
+                // weights would size every row's columns independently and
+                // the columns would drift out of line from row to row.
+                // (Row heights need no help since Slint 1.18.1 fixed
+                // slint-ui/slint#12776 — wrapped cells size their row.)
                 width: max(24px, (root.width - 2px - (row.cells.length - 1) * 1px) * cell.weight);
-                // Slint's box layouts compute row height before wrapped cell
-                // text knows its height at the final cell width, so tall cells
-                // overlapped the next row and the block clipped its last line.
-                // An explicit min-height from the text's implicit preferred
-                // height (which does track the text's actual width) forces the
-                // row to fit its tallest cell, while cells still stretch to
-                // the full row height so the grid stays uniform.
-                min-height: cell-text.preferred-height + 16px;
                 background: cell.header ? Style.card.darker(4%) : Style.card;
                 VerticalLayout {
                     padding: 8px;
