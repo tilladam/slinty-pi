@@ -290,3 +290,13 @@ Next time: after changing a font family, screenshot text that needs it (code blo
 Revisit when: Slint resolves system font names like "SF Mono" or generic families.
 Cost: a day of non-monospaced code blocks in slinty-pi.
 Scope: global-candidate     Status: active
+
+## 2026-10-04 · demo backend left the command palette empty in screenshots · #testing #demo #mcp crates/pi-core/src/backend.rs
+Situation: before/after MCP screenshots of the command palette for the slint-widgets port (Slint 1.18.1).
+Tried: `SLINTY_DEMO=1` with `SLINTY_OPEN_PALETTE_AFTER`, like the `md!` transcript shots.
+Outcome: both sides showed "No matches." and compared as identical, which proved nothing; `demo_backend` doesn't handle `UiCmd::OpenPalette`. Separately, one of six real-mode shots had the query field unfocused (retakes were focused).
+Evidence: 2026-10-04 screenshots of the slint-kit port, branch slint-kit-port.
+Next time: take palette shots in real mode (`pi` on PATH; no model call needed), wait ~3 s before opening, and retake any shot whose focus ring differs before calling it a regression. Verified.
+Revisit when: demo_backend builds palette entries.
+Cost: one wasted screenshot round.
+Scope: project     Status: active

@@ -41,6 +41,7 @@ Useful env vars for driving the UI without a display/accessibility automation (e
 `SLINTY_NEW_SESSION_AFTER`, `SLINTY_DELETE_SESSION_AFTER`, `SLINTY_RENAME_SESSION_AFTER`,
 `SLINTY_SIDEBAR_SEARCH_AFTER`,
 `SLINTY_OPEN_TREE_AFTER`, `SLINTY_FORK_FROM_AFTER`, `SLINTY_OPEN_PALETTE_AFTER`,
+`SLINTY_COLOR_SCHEME_AFTER` (`light`|`dark`),
 `SLINTY_PALETTE_QUERY_AFTER`, `SLINTY_PALETTE_EXEC_AFTER`, `SLINTY_ATTACH_AFTER`,
 `SLINTY_CYCLE_DENSITY_AFTER`, `SLINTY_RESUME_SESSION`, `SLINTY_DEMO_RATE`, `SLINTY_DEMO_AUTOSEND`,
 `SLINTY_DEMO_REPEATS`,
@@ -119,16 +120,28 @@ harness and for env-var-driven UI testing.
 
 `backend.rs` turns pi's JSON messages into `RowSpec`s (`hydrate_rowspecs` for session load,
 incremental updates during streaming), which become Slint `Row` model entries. Markdown prose goes
-through `segmenter.rs` (pulldown-cmark → `Segment`s) since Slint's `StyledText`/`@markdown` has no
-fenced code blocks, headings, tables, or images — code segments get a custom component with
-`syntect` highlighting (`highlight.rs`) instead of `StyledText`.
+through `pi_render::segmenter` (pulldown-cmark → `Segment`s) since Slint's `StyledText`/`@markdown`
+has no fenced code blocks, headings, tables, or images — code segments get a custom component with
+`syntect` highlighting (`pi_render::highlight`) instead of `StyledText`. Both modules are re-exports
+of slint-kit's `md-segments` crate.
+
+### slint-kit
+
+Shared code lives in [slint-kit](https://github.com/tilladam/slint-kit), pinned by git `rev` (no
+tags yet); every slint-kit dependency uses the same rev, so bump them together:
+`md-segments` (via `pi-render`), `palette-rank` (`pi_core::palette::rank`), `desktop-clipboard`
+(Cmd+V paste in `main.rs`), and `slint-widgets` (the `@slint-widgets` component library,
+registered in `build.rs`). Plan and open checks: `docs/plans/shared-crates.md`.
 
 ### Slint UI files (`ui/*.slint`)
 
-`app.slint` is the main window and per-row-kind components (`UserRow`, `ProseRow`, `HeadingRow`,
-`CodeRow`, `ThinkingRow`, `ToolRow`, `NoteRow`); `sidebar.slint`, `tree.slint`, `palette.slint` are
-the session sidebar, branch-tree overlay, and command palette. `build.rs` compiles `ui/app.slint`
-via `slint-build`; the other three are `import`ed from it (not standalone build targets).
+`app.slint` is the main window and the app-specific row components (`UserRow`, `ThinkingRow`,
+`ToolRow`, `NoteRow`); prose, heading, quote, rule, code and table rows and the command palette
+come from `@slint-widgets` (`ProseBlock`, `HeadingBlock`, `QuoteBlock`, `RuleBlock`, `CodeBlock`,
+`TableBlock`, `CommandPalette`). `sidebar.slint`, `tree.slint`, `models.slint` are the session
+sidebar, branch-tree overlay, and models panel. `build.rs` compiles `ui/app.slint` via
+`slint-build` with the `@slint-widgets` library path; the others are `import`ed from it (not
+standalone build targets).
 
 Known Slint layout constraints (originally found on 1.17, still true on 1.18.1; the full list of Slint
 gotchas, including yapper's, is in `bummer.md` at the repo root):

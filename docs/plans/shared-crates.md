@@ -1,9 +1,10 @@
 # Shared crates across slinty-pi, yapper and Flectar Mail — plan
 
-Status, 2026-10-04: phase 0 done (`tilladam/slint-kit`, private for now, D8). Phase 1 dropped
-(D9). Phases 2–5 extracted (`md-segments`, `emoji-shortcodes`, `desktop-clipboard`,
-`desktop-notify`, `slint-model-sync`), CI green on macOS and Linux. No consumer has switched yet
-(D10, D11); open checks are listed in §15. Phase 7 rounds 1–3 done (`slint-widgets` with `CopyButton`, `CodeBlock`,
+Status, 2026-10-04: phase 0 done (`tilladam/slint-kit`, now public, so D10 no longer blocks).
+Phase 1 dropped (D9). Phases 2–5 extracted (`md-segments`, `emoji-shortcodes`, `desktop-clipboard`,
+`desktop-notify`, `slint-model-sync`), CI green on macOS and Linux. **slinty-pi switched** to
+`md-segments`, `palette-rank`, `desktop-clipboard` and `slint-widgets` (§15, "slinty-pi port");
+yapper waits for its refactor (D11); open checks are listed in §15. Phase 7 rounds 1–3 done (`slint-widgets` with `CopyButton`, `CodeBlock`,
 `CommandPalette` and the markdown blocks; `palette-rank`; gallery); next: the SVG icon set
 (proposed) or phase 8. Builds on the code inventory of the
 three apps (2026-10-03) and the platform-glue review (2026-10-04).
@@ -26,7 +27,7 @@ three apps (2026-10-03) and the platform-glue review (2026-10-04).
 | D5 | Keep pure (toolkit-agnostic) code and Slint-dependent code in **separate crates from the start**. | Yapper's bummer.md, 2026-10-04 (user chose `yapper-app` + `yapper-view` over "one crate first"); applied here by analogy |
 | D6 | **One repo**, a Cargo workspace holding all the crates (was O1). | User, 2026-10-04 |
 | D7 | The repo is named **`slint-kit`** (`github.com/tilladam/slint-kit`; was O2). Read as "a kit for Slint apps": only the `slint-*` crates depend on Slint, the others are Slint-free companions (D5), and SwiftyPi may use them too. | User, 2026-10-04 |
-| D8 | **Private for now**; made public later, when Till decides (D1 is the end state). | User, 2026-10-04 |
+| D8 | **Private for now**; made public later, when Till decides (D1 is the end state). Done: public by 2026-10-04 (`gh repo view`). | User, 2026-10-04 |
 | D9 | **slint-kit holds code only.** This plan stays in slinty-pi, and the Slint gotchas stay in the apps' own `bummer.md` files; neither goes into slint-kit. | User, 2026-10-04 |
 | D10 | **slinty-pi keeps its own copy** of the extracted code until slint-kit is public; a public repo must not depend on a private one. | User, 2026-10-04 |
 | D11 | **Yapper's switch waits for its refactor** (another session is active there); copying out of yapper is read-only. | User, 2026-10-04 |
@@ -505,16 +506,41 @@ The total is roughly 8–12 working days spread over several sessions (estimate)
 **Progress (2026-10-04):** 0 ✓ · 1 dropped · 2 ✓ · 3 ✓ · 4 ✓ · 5 ✓ (all extraction only) ·
 7 rounds 1–3 ✓ (icons, tokens, small pieces left) · 8 · 6 waiting.
 
+**slinty-pi port (2026-10-04)**, branch `slint-kit-port`, all four crates pinned to slint-kit rev
+551aa54 by git `rev` (one rev for all; bump together):
+- `md-segments`: `pi-render` re-exports `segmenter` and `highlight`; its local copies are gone.
+  slinty-pi's table sizing uses `column_layout`. pi-core-ffi builds (`cargo build`); the Xcode
+  build fetching the git dependency is not yet checked.
+- `palette-rank`: `pi_core::palette::rank` wraps it (limit 60, label + detail).
+- `desktop-clipboard` (`decoding-fallback` on): Cmd+V keeps PNG/JPEG bytes as they are, converts
+  TIFF and others through `to_png` on a worker thread, and attaches copied files like a drop (new).
+  `pi_core::attach::encode_png` and the `png` dependency are gone.
+- `slint-widgets`: `CodeBlock`, `ProseBlock`, `HeadingBlock`, `QuoteBlock`, `RuleBlock`,
+  `TableBlock`, `CommandPalette` (rows map `kind` to an icon in `backend.rs`); slinty-pi's `Style`
+  tokens alias `KitStyle`; `KitStyle.mono-font` is set from `default_mono_font()`. Checked with
+  MCP screenshots against main (new hook `SLINTY_COLOR_SCHEME_AFTER`): `md!` transcript identical
+  in dark, identical up to a scroll offset in light (12 screenshot px = 6 logical px, streaming
+  timing); the palette differs only in the icon and label columns (the intended fixed icon
+  column), in both schemes. The palette needs real `pi` (the demo backend
+  doesn't fill it).
+- Unchecked: Windows (no Windows target here; slint-kit CI is macOS + Linux), and how Linux and
+  Windows look now that monospace text uses `default_mono_font()` (DejaVu Sans Mono, Consolas)
+  instead of a missing Menlo.
+- Not ported: `slint-model-sync` (needs per-row keys and versions that `RowSpec` lacks; a
+  redesign), `desktop-notify` (slinty-pi has no notifications yet), `emoji-shortcodes`/`inline`
+  (bare-URL linking and `:shortcode:` in prose would change rendering; not asked for).
+
 **Open checks before any phase counts as fully done:**
 
 | Phase | Check | When |
 |---|---|---|
-| 2 | slinty-pi `md!` render and yapper code block identical before/after (MCP screenshots) | When each consumer switches |
-| 3 | Manual paste of a PNG screenshot, a JPEG and a Preview TIFF in both apps (the NSPasteboard read is unverified) | When each consumer switches, or earlier with a read-only example |
+| 2 | slinty-pi `md!` render and yapper code block identical before/after (MCP screenshots) | slinty-pi done 2026-10-04; yapper when it switches |
+| 3 | Manual paste of a PNG screenshot, a JPEG and a Preview TIFF in both apps (the NSPasteboard read is unverified); slinty-pi also a Finder file copy | slinty-pi: now (switched, unchecked); yapper when it switches |
 | 4 | A real notification posted and clicked in a bundled build of each app | When each consumer switches |
 | 5 | A reload keeps the scroll position on the real backend in both apps | When each consumer switches |
-| 7 | slinty-pi and yapper import the components from `@slint-widgets`; before/after screenshots match (or differences are intended: the icon column, the code font) | When each consumer switches |
-| all | Consumers switched: slinty-pi once slint-kit is public (D10), yapper with its refactor (D11) | — |
+| 7 | slinty-pi and yapper import the components from `@slint-widgets`; before/after screenshots match (or differences are intended: the icon column, the code font) | slinty-pi done 2026-10-04; yapper when it switches |
+| all | Consumers switched: slinty-pi done for phases 2, 3 and 7 (2026-10-04); yapper with its refactor (D11) | — |
+| 2 | SwiftyPi's Xcode build resolves the `md-segments` git dependency | Next SwiftyPi build |
 
 ## 16. Three highest-risk decisions
 
