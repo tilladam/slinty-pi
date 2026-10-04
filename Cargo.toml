@@ -14,3 +14,11 @@ serde_json = "1"
 thiserror = "2"
 anyhow = "1"
 tracing = "0.1"
+
+# Optimise all dependencies (not workspace members) in dev builds, mainly
+# for image decoding (attachments); syntect and Slint's renderer likely gain
+# too, unmeasured here. Yapper measured a 1280 px JPEG decode at ~170 ms debug vs
+# ~7.5 ms optimised (2026-09-27). Costs a slower first build and makes
+# stepping into dependency code in a debugger less precise.
+[profile.dev.package."*"]
+opt-level = 3
