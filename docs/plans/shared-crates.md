@@ -4,7 +4,7 @@ Status, 2026-10-04: phase 0 done (`tilladam/slint-kit`, now public, so D10 no lo
 Phase 1 dropped (D9). Phases 2–5 extracted (`md-segments`, `emoji-shortcodes`, `desktop-clipboard`,
 `desktop-notify`, `slint-model-sync`), CI green on macOS and Linux. **slinty-pi switched** to
 `md-segments`, `palette-rank`, `desktop-clipboard` and `slint-widgets` (§15, "slinty-pi port");
-yapper waits for its refactor (D11); open checks are listed in §15. Phase 7 rounds 1–3 done (`slint-widgets` with `CopyButton`, `CodeBlock`,
+**yapper switched** to `emoji-shortcodes`, `md-segments` (inline), `desktop-clipboard`, `desktop-notify` and `slint-model-sync` after its refactor (§15, "yapper port"); `slint-widgets` is still to discuss. Open checks are listed in §15. Phase 7 rounds 1–3 done (`slint-widgets` with `CopyButton`, `CodeBlock`,
 `CommandPalette` and the markdown blocks; `palette-rank`; gallery); next: the SVG icon set
 (proposed) or phase 8. Builds on the code inventory of the
 three apps (2026-10-03) and the platform-glue review (2026-10-04).
@@ -530,16 +530,38 @@ The total is roughly 8–12 working days spread over several sessions (estimate)
   redesign), `desktop-notify` (slinty-pi has no notifications yet), `emoji-shortcodes`/`inline`
   (bare-URL linking and `:shortcode:` in prose would change rendering; not asked for).
 
+**yapper port (2026-10-04)**, on yapper's main (267d111…dfe06d9), all five crates pinned to slint-kit
+rev 39f54f0 in yapper's `[workspace.dependencies]` (one rev; bump together):
+- `emoji-shortcodes`: `yapper-emoji` is `pub use emoji_shortcodes::*`, so its six dependants are
+  unchanged; its data and licence files are gone (byte-identical in slint-kit).
+- `md-segments` (no `highlight` feature, so no syntect in `yapper-view`): `blocks.rs` re-exports
+  `links`, `linkify`, `custom_emoji`, `literal_ranges` and wraps `emoji_shortcodes` with `rocketchat()`.
+- `desktop-clipboard`: replaces the clipboard half of `attachment_input.rs`; `encode_clipboard`
+  writes `to_png`'s bytes. File picker and drops stay in yapper (no `slint-file-drop` yet).
+- `desktop-notify`: `platform.rs` keeps `notification_id`/`parse_notification_id` and wraps
+  `install`; yapper installs `env_logger` with `desktop_notify=info` so the diagnostics still reach
+  stderr.
+- `slint-model-sync`: `Timeline` holds a `KeyedModel`; `entries` is now the wanted list after each
+  apply (an unchanged-version row used to keep its old `Entry`; for message rows every field is in
+  the version).
+- Checked: yapper workspace tests, clippy (incl. `test-hooks`, `attachment-probe`), one Slint
+  version (1.18.1), no libsignal/presage under any kit crate, and `scripts/compare-screens.py`
+  before vs after: four of five states pixel-identical, the fifth differs only in the search
+  timing text ("0.5 ms" vs "1.3 ms").
+- Not ported: `palette-rank` (yapper's `complete::rank` is prefix completion, not fuzzy ranking);
+  `slint-widgets` (a visible change; to discuss: dark-only yapper vs `KitStyle`, code highlighting).
+- Expect a merge conflict on yapper's `.worktrees/lazy-timeline-images` branch (`timeline.rs`).
+
 **Open checks before any phase counts as fully done:**
 
 | Phase | Check | When |
 |---|---|---|
-| 2 | slinty-pi `md!` render and yapper code block identical before/after (MCP screenshots) | slinty-pi done 2026-10-04; yapper when it switches |
-| 3 | Manual paste of a PNG screenshot, a JPEG and a Preview TIFF in both apps (the NSPasteboard read is unverified); slinty-pi also a Finder file copy | slinty-pi: now (switched, unchecked); yapper when it switches |
-| 4 | A real notification posted and clicked in a bundled build of each app | When each consumer switches |
-| 5 | A reload keeps the scroll position on the real backend in both apps | When each consumer switches |
-| 7 | slinty-pi and yapper import the components from `@slint-widgets`; before/after screenshots match (or differences are intended: the icon column, the code font) | slinty-pi done 2026-10-04; yapper when it switches |
-| all | Consumers switched: slinty-pi done for phases 2, 3 and 7 (2026-10-04); yapper with its refactor (D11) | — |
+| 2 | slinty-pi `md!` render and yapper code block identical before/after (MCP screenshots) | slinty-pi done 2026-10-04; yapper: no code block change (no widgets yet); compare-screens 2026-10-04 identical apart from the search timing text |
+| 3 | Manual paste of a PNG screenshot, a JPEG and a Preview TIFF in both apps (the NSPasteboard read is unverified); slinty-pi also a Finder file copy | slinty-pi: now (switched, unchecked); yapper: now (switched 2026-10-04, unchecked) |
+| 4 | A real notification posted and clicked in a bundled build of each app | yapper: now (switched 2026-10-04, unchecked; `scripts/macos-runner.sh`) |
+| 5 | A reload keeps the scroll position on the real backend in both apps | yapper: now (switched 2026-10-04, unchecked); slinty-pi not ported |
+| 7 | slinty-pi and yapper import the components from `@slint-widgets`; before/after screenshots match (or differences are intended: the icon column, the code font) | slinty-pi done 2026-10-04; yapper not yet (to discuss) |
+| all | Consumers switched: slinty-pi done for phases 2, 3 and 7 (2026-10-04); yapper for phases 2, 3, 4 and 5 (2026-10-04), phase 7 to discuss | — |
 | 2 | SwiftyPi's Xcode build resolves the `md-segments` git dependency | Next SwiftyPi build |
 
 ## 16. Three highest-risk decisions
