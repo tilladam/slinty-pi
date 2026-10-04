@@ -548,15 +548,13 @@ fn spawn_delayed_invoke(
     });
 }
 
+/// Only web links: transcript text is model output, so never hand a
+/// `file:` or custom-scheme URL to the OS.
 fn open_url(url: &str) {
     if !(url.starts_with("http://") || url.starts_with("https://")) {
         return;
     }
-    #[cfg(target_os = "macos")]
-    let cmd = "open";
-    #[cfg(target_os = "linux")]
-    let cmd = "xdg-open";
-    #[cfg(target_os = "windows")]
-    let cmd = "explorer";
-    let _ = std::process::Command::new(cmd).arg(url).spawn();
+    if let Err(e) = webbrowser::open(url) {
+        tracing::warn!("failed to open {url}: {e}");
+    }
 }
