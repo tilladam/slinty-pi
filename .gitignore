@@ -16,3 +16,5 @@ macos/swifty-pi/build/
 # absolute paths and permission grants, not something to share via the repo.
 /.claude/
 /.agents/
+# Local MCP tool state (e.g. .mcp/zulipchat/), machine-specific.
+/.mcp/
