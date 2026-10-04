@@ -6,8 +6,7 @@
 //! `nucleo-matcher` — for markdown segmentation, syntax highlighting, and
 //! turning a `get_messages` payload into rows.
 
-pub mod highlight;
-pub mod segmenter;
+pub use md_segments::{highlight, segmenter};
 
 mod hydrate;
 

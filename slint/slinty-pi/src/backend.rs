@@ -410,32 +410,15 @@ pub fn code_lines_model(lines: &[pi_core::highlight::CodeLine]) -> ModelRc<CodeL
 }
 
 /// Convert row-major table cells into the Slint model, attaching each cell
-/// its column's width share (from the column's longest cell, clamped so one
-/// verbose column can't starve the others entirely), normalized so a row's
-/// weights sum to 1.0. The UI multiplies the block width by the share to get
-/// explicit, identical column boundaries in every row — explicit rather than
-/// stretch weights, because each row lays out on its own and stretch would
-/// let the columns drift out of line from row to row.
+/// its column's width share from `segmenter::column_layout`. The UI turns the
+/// shares into explicit, identical column boundaries in every row — explicit
+/// rather than stretch weights, because each row lays out on its own and
+/// stretch would let the columns drift out of line from row to row.
 /// The second return value is the table's estimated natural width in
 /// logical px (the UI caps it at the available span), so narrow tables
 /// don't stretch across the whole transcript.
 fn table_rows_model(rows: &[Vec<pi_core::segmenter::TableCell>]) -> (ModelRc<TableRowCells>, f32) {
-    let col_count = rows.first().map(Vec::len).unwrap_or(0);
-    let weights: Vec<f32> = (0..col_count)
-        .map(|i| {
-            let max_chars = rows
-                .iter()
-                .filter_map(|row| row.get(i))
-                .map(|c| c.text.chars().count())
-                .max()
-                .unwrap_or(1);
-            max_chars.clamp(3, 60) as f32
-        })
-        .collect();
-    // ~7px per character at the 12.5px table font, plus cell padding.
-    let pref_width: f32 = weights.iter().map(|w| w * 7.0 + 18.0).sum();
-    let total: f32 = weights.iter().sum::<f32>().max(1.0);
-    let weights: Vec<f32> = weights.iter().map(|w| w / total).collect();
+    let (weights, pref_width) = pi_core::segmenter::column_layout(rows);
     let rows: Vec<TableRowCells> = rows
         .iter()
         .map(|row| {
