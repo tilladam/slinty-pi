@@ -130,7 +130,8 @@ fenced code blocks, headings, tables, or images — code segments get a custom c
 the session sidebar, branch-tree overlay, and command palette. `build.rs` compiles `ui/app.slint`
 via `slint-build`; the other three are `import`ed from it (not standalone build targets).
 
-Known Slint 1.17 layout constraints (see also the "Slint gotchas" project memory):
+Known Slint layout constraints (originally found on 1.17, still true on 1.18.1; the full list of Slint
+gotchas, including yapper's, is in `bummer.md` at the repo root):
 
 - Binding a child's `width`/`max-width` to an ancestor's width inside a `Flickable` creates a
   layoutinfo binding loop — use `ListView` instead of `Flickable` for anything width-dependent;
