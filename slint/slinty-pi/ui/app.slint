@@ -866,8 +866,10 @@ export component AppWindow inherits Window {
                             vertical-alignment: center;
                         }
                         Text {
-                            text: "✕";
-                            font-size: 11px;
+                            // U+00D7, as the sidebar's delete button; "✕"
+                            // (U+2715) rendered as an empty box with SF Pro.
+                            text: "×";
+                            font-size: 13px;
                             color: Style.faint;
                             vertical-alignment: center;
                             TouchArea { clicked => { root.remove-attachment(i); } }
