@@ -30,9 +30,10 @@ three apps (2026-10-03) and the platform-glue review (2026-10-04).
 | D9 | **slint-kit holds code only.** This plan stays in slinty-pi, and the Slint gotchas stay in the apps' own `bummer.md` files; neither goes into slint-kit. | User, 2026-10-04 |
 | D10 | **slinty-pi keeps its own copy** of the extracted code until slint-kit is public; a public repo must not depend on a private one. | User, 2026-10-04 |
 | D11 | **Yapper's switch waits for its refactor** (another session is active there); copying out of yapper is read-only. | User, 2026-10-04 |
+| D12 | **Notifications: extract yapper's `platform.rs` as `desktop-notify`**, with an opt-in `notify-rust` fallback off macOS (was O4; evaluation in phase 4). | User, 2026-10-04 |
 | D13 | **Local-LLM code goes to a separate project**, not slint-kit: none of it depends on Slint (pi-local's candidates use serde/serde_json/thiserror/tokio/reqwest/sysinfo; yapper's `provider.rs` anyhow/serde_json/reqwest/tokio). slint-kit keeps its five Slint-free crates as companions (D7 unchanged). | User, 2026-10-04 |
 | D14 | The new project follows slint-kit's rules: MIT, public on GitHub eventually but **private for now**, crates.io dependencies only, the same `deny.toml` policy and CI. | User, 2026-10-04 |
-| D12 | **Notifications: extract yapper's `platform.rs` as `desktop-notify`**, with an opt-in `notify-rust` fallback off macOS (was O4; evaluation in phase 4). | User, 2026-10-04 |
+| D15 | The local-LLM project is named **`rust-llm-interactor`** (`github.com/tilladam/rust-llm-interactor`; was part of O5). | User, 2026-10-04 |
 
 **Already done (not part of this plan any more):**
 - yapper `LICENSE` + `LICENSING.md` (2526883).
@@ -45,7 +46,7 @@ three apps (2026-10-03) and the platform-glue review (2026-10-04).
 
 | # | Question | Recommendation |
 |---|---|---|
-| O5 | Name of the local-LLM project, and its crate split. | Name: Till's call (e.g. `local-llm-kit`). Split: two pure crates, model management (rapid-mlx, llama.cpp router, HF search, Ollama, RAM fit) and an OpenAI-compatible chat client. |
+| O5 | Crate split of `rust-llm-interactor` (D15). | Two pure crates: model management (rapid-mlx, llama.cpp router, HF search, Ollama, RAM fit) and an OpenAI-compatible chat client. |
 | O3 | How do consumers pin slint-kit: git `rev`, tags, or crates.io? | No tags yet: Till said not to tag for now (2026-10-04). Until decided, a consumer pins a commit (`git = "…", rev = "<sha>"`). crates.io once an API has survived both apps for a release or two. |
 
 ## 3. Bummer entries that apply
@@ -434,8 +435,8 @@ Effort: spike half a day; then about half a day per component (estimate).
 
 ## 13. Phase 8 — local-LLM crates (separate project, D13/D14)
 
-**Where:** a new repository with slint-kit's rules (D14), not slint-kit; name and crate split per
-O5. Phase 0's bootstrap steps (licence, README, `deny.toml`, CI, the outside-path check) apply
+**Where:** a new repository, `rust-llm-interactor` (D15), with slint-kit's rules (D14), not
+slint-kit; crate split per O5. Phase 0's bootstrap steps (licence, README, `deny.toml`, CI, the outside-path check) apply
 again there.
 
 **Sizes and couplings** (read 2026-10-04): the five pi-local modules below reference no other
