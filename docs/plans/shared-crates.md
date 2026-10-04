@@ -4,7 +4,7 @@ Status, 2026-10-04: phase 0 done (`tilladam/slint-kit`, now public, so D10 no lo
 Phase 1 dropped (D9). Phases 2–5 extracted (`md-segments`, `emoji-shortcodes`, `desktop-clipboard`,
 `desktop-notify`, `slint-model-sync`), CI green on macOS and Linux. **slinty-pi switched** to
 `md-segments`, `palette-rank`, `desktop-clipboard` and `slint-widgets` (§15, "slinty-pi port");
-**yapper switched** to `emoji-shortcodes`, `md-segments` (inline), `desktop-clipboard`, `desktop-notify` and `slint-model-sync` after its refactor (§15, "yapper port"); `slint-widgets` is still to discuss. Open checks are listed in §15. Phase 7 rounds 1–3 done (`slint-widgets` with `CopyButton`, `CodeBlock`,
+**yapper switched** to `emoji-shortcodes`, `md-segments` (inline), `desktop-clipboard`, `desktop-notify` and `slint-model-sync` after its refactor (§15, "yapper port"); `slint-widgets` for `CodeBlock` (2026-10-04, dark only). Open checks are listed in §15. Phase 7 rounds 1–3 done (`slint-widgets` with `CopyButton`, `CodeBlock`,
 `CommandPalette` and the markdown blocks; `palette-rank`; gallery); next: the SVG icon set
 (proposed) or phase 8. Builds on the code inventory of the
 three apps (2026-10-03) and the platform-glue review (2026-10-04).
@@ -548,8 +548,17 @@ rev 39f54f0 in yapper's `[workspace.dependencies]` (one rev; bump together):
   version (1.18.1), no libsignal/presage under any kit crate, and `scripts/compare-screens.py`
   before vs after: four of five states pixel-identical, the fifth differs only in the search
   timing text ("0.5 ms" vs "1.3 ms").
+- `slint-widgets` (later the same day, yapper 0469ca7…70acad1): `CodeBlock` for fenced code,
+  highlighted with md-segments' `highlight` (dark theme) when the fence names a language,
+  untagged code in yapper's `code-fg`; copy button through arboard. Yapper stays dark:
+  `AppWindow`'s `init` sets `KitStyle` from its own palette (4 px radius, 12 px code). Store counts
+  that decided it (2026-10-04, SQL counts only): Ferrous ~9% of recent messages have a fence, ~88%
+  of those name a language; KDAB ~1%, rarely with a language. syntect gets `opt-level = 3` in
+  yapper's dev profile (20-line block 13 → 1.5 ms, measured). Checked via MCP on the fake demo:
+  copy, row click inside the card, horizontal pan. Known gap: a diagonal trackpad scroll over a
+  horizontally overflowing card loses its vertical part (Slint Flickable takes the event).
 - Not ported: `palette-rank` (yapper's `complete::rank` is prefix completion, not fuzzy ranking);
-  `slint-widgets` (a visible change; to discuss: dark-only yapper vs `KitStyle`, code highlighting).
+  the other `slint-widgets` (yapper's blocks and search palette are different models).
 - Expect a merge conflict on yapper's `.worktrees/lazy-timeline-images` branch (`timeline.rs`).
 
 **Open checks before any phase counts as fully done:**
@@ -560,8 +569,8 @@ rev 39f54f0 in yapper's `[workspace.dependencies]` (one rev; bump together):
 | 3 | Manual paste of a PNG screenshot, a JPEG and a Preview TIFF in both apps (the NSPasteboard read is unverified); slinty-pi also a Finder file copy | slinty-pi: now (switched, unchecked); yapper: now (switched 2026-10-04, unchecked) |
 | 4 | A real notification posted and clicked in a bundled build of each app | yapper: now (switched 2026-10-04, unchecked; `scripts/macos-runner.sh`) |
 | 5 | A reload keeps the scroll position on the real backend in both apps | yapper: now (switched 2026-10-04, unchecked); slinty-pi not ported |
-| 7 | slinty-pi and yapper import the components from `@slint-widgets`; before/after screenshots match (or differences are intended: the icon column, the code font) | slinty-pi done 2026-10-04; yapper not yet (to discuss) |
-| all | Consumers switched: slinty-pi done for phases 2, 3 and 7 (2026-10-04); yapper for phases 2, 3, 4 and 5 (2026-10-04), phase 7 to discuss | — |
+| 7 | slinty-pi and yapper import the components from `@slint-widgets`; before/after screenshots match (or differences are intended: the icon column, the code font) | slinty-pi done 2026-10-04; yapper `CodeBlock` only, 2026-10-04: screenshots differ only where code blocks show (intended) |
+| all | Consumers switched: slinty-pi done for phases 2, 3 and 7 (2026-10-04); yapper for phases 2, 3, 4 and 5 (2026-10-04), phase 7 `CodeBlock` (2026-10-04) | — |
 | 2 | SwiftyPi's Xcode build resolves the `md-segments` git dependency | Next SwiftyPi build |
 
 ## 16. Three highest-risk decisions
