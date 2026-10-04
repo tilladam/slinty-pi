@@ -3,7 +3,8 @@
 Status, 2026-10-04: phase 0 done (`tilladam/slint-kit`, private for now, D8). Phase 1 dropped
 (D9). Phases 2–5 extracted (`md-segments`, `emoji-shortcodes`, `desktop-clipboard`,
 `desktop-notify`, `slint-model-sync`), CI green on macOS and Linux. No consumer has switched yet
-(D10, D11); open checks are listed in §15. Phase 7 round 1 (`slint-widgets` + gallery) done; next: more phase 7 components. Builds on the code inventory of the
+(D10, D11); open checks are listed in §15. Phase 7 rounds 1–2 done (`slint-widgets` with `CopyButton`, `CodeBlock`,
+`CommandPalette`; `palette-rank`; gallery); next: Till's pick of more components or phase 8. Builds on the code inventory of the
 three apps (2026-10-03) and the platform-glue review (2026-10-04).
 
 **How to read the evidence tags:**
@@ -377,6 +378,21 @@ a `KitStyle` global derived from std-widgets `Palette`, overridable from Rust.
   differ in the renderer, and in the code font: monospace in the gallery, proportional in
   slinty-pi. The latter is a slinty-pi bug, see §14.
 
+**Round 2, 2026-10-04** (slint-kit a07d0de, icon fix 2344cd7; CI green; provenance in the
+commit message). Criteria agreed first: the gallery opens a `CommandPalette` from
+`@slint-widgets` with sample entries; typing filters, Up/Down/Enter/Esc work (via MCP), and
+light/dark screenshots match slinty-pi's palette. Ranking decision: a new pure crate.
+- `CommandPalette`: rows are `PaletteRow { id, icon, label, detail }` (the icon replaces
+  slinty-pi's hard-coded per-kind glyphs); `placeholder-text` and `close-shortcut-key`
+  (Cmd+key) are properties. The app ranks: `query-changed` → `entries`, `exec(id)`, `close()`.
+- `palette-rank` (pure): slinty-pi's nucleo-matcher `rank()`, generic —
+  `rank(entries, query, limit, text)`; 3 tests moved, 1 added. nucleo-matcher is MPL-2.0,
+  allowed by `deny.toml`.
+- Checked through MCP key events in the gallery: `sess` narrows to two entries, Down+Enter runs
+  the second and closes, Esc closes; both schemes match slinty-pi's look.
+- Then, at Till's request, a fixed 14 px centred icon column, so labels line up whatever
+  the glyph width (slinty-pi's palette still has the ragged labels until it switches).
+
 **Steps:**
 1. Spike the distribution mechanism with one component.
 2. Design the token global and how apps override it.
@@ -438,7 +454,7 @@ Recommended sequence: 0 → 2 → 3 → 4 → 5 → 7 → 8. Phase 6 waits on th
 The total is roughly 8–12 working days spread over several sessions (estimate).
 
 **Progress (2026-10-04):** 0 ✓ · 1 dropped · 2 ✓ · 3 ✓ · 4 ✓ · 5 ✓ (all extraction only) ·
-7 round 1 ✓ (more components next) · 8 · 6 waiting.
+7 rounds 1–2 ✓ (more components on request) · 8 · 6 waiting.
 
 **Open checks before any phase counts as fully done:**
 
@@ -448,6 +464,7 @@ The total is roughly 8–12 working days spread over several sessions (estimate)
 | 3 | Manual paste of a PNG screenshot, a JPEG and a Preview TIFF in both apps (the NSPasteboard read is unverified) | When each consumer switches, or earlier with a read-only example |
 | 4 | A real notification posted and clicked in a bundled build of each app | When each consumer switches |
 | 5 | A reload keeps the scroll position on the real backend in both apps | When each consumer switches |
+| 7 | slinty-pi and yapper import the components from `@slint-widgets`; before/after screenshots match (or differences are intended: the icon column, the code font) | When each consumer switches |
 | all | Consumers switched: slinty-pi once slint-kit is public (D10), yapper with its refactor (D11) | — |
 
 ## 16. Three highest-risk decisions
