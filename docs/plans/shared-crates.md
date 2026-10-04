@@ -393,6 +393,20 @@ light/dark screenshots match slinty-pi's palette. Ranking decision: a new pure c
 - Then, at Till's request, a fixed 14 px centred icon column, so labels line up whatever
   the glyph width (slinty-pi's palette still has the ragged labels until it switches).
 
+**What's left in phase 7** (2026-10-04):
+1. **Markdown rows**: heading, quote, rule, prose (with links) and table, from slinty-pi's
+   `HeadingRow`, `QuoteRow`, `RuleRow`, `ProseRow` and `TableBlock`. These pair with
+   `md-segments`, and give yapper headings and tables. The shared `TableBlock` takes slinty-pi's
+   current form: no min-height (since #12776 is fixed), explicit widths of 24 px plus a share of
+   the remainder (661fca1).
+2. **SVG icon set** (e.g. Lucide, ISC) instead of Unicode symbols; also replaces slinty-pi's
+   colour-emoji `↪`/`⚙︎`.
+3. **Richer tokens**: a few base colours generating the rest, with a contrast check (Flectar's
+   idea, reimplemented). Mostly useful when yapper (dark-only today) adopts `KitStyle`.
+4. **Smaller pieces**: `Dots` (thinking indicator), `StripChip`, `UsageRing`, maybe the tree
+   overlay pattern.
+5. **Consumers switch** (step 3 below): blocked by D10/D11.
+
 **Steps:**
 1. Spike the distribution mechanism with one component.
 2. Design the token global and how apps override it.
@@ -434,8 +448,10 @@ Effort: 1–2 days (estimate).
 | Upstream: external file drops with position in Slint's winit 0.31 port | Slint | Phase 6, step 2. |
 | Upstream: wrapped `StyledText` link hit-testing | Slint | Yapper bummer 2026-09-28; affects slinty-pi's prose links too. |
 | Upstream: box-layout height-for-width (slint-ui/slint#12776) | Slint | Already filed; track. |
-| slinty-pi code blocks aren't monospaced: `Style.mono-font: "SF Mono"` doesn't resolve (since 6a929ea, which replaced Menlo) | slinty-pi | Found by the phase 7 comparison; fix: back to `"Menlo"` (or `KitStyle` once slinty-pi switches). |
-| slint-kit README tells readers to depend on `tag = "v0.1.0"`, which doesn't exist | slint-kit | Fix with O3 (e.g. show `rev`). |
+| ~~slinty-pi code blocks aren't monospaced~~ (`"SF Mono"` doesn't resolve) | slinty-pi | **Done** a2a34fb: back to Menlo, checked by screenshot. |
+| ~~slint-kit README tells readers to depend on a non-existent tag~~ | slint-kit | **Done** 443d836: pin by `rev`, SSH while private, current crate list. |
+| ~~TableBlock's #12776 workaround~~ | slinty-pi | **Done** aab946f: the per-cell min-height is gone (fixed upstream by #13003, in 1.18.1; screenshots unchanged). The explicit column widths stay: without them the row-major layout misaligns columns. |
+| ~~Wide tables overflow the card~~ | slinty-pi | **Done** 661fca1: `max(24px, share)` summed past the table width; now 24 px + share of the remainder. Not yet checked: a table mid-stream (screenshot came after streaming ended). |
 | Link this plan from yapper (`LICENSING.md` or `plan/refactoring.md`) | yapper | Agent memory is per project, so a yapper session won't otherwise know the slint-kit rules. Mind the concurrent session there. |
 
 ## 15. Order and dependencies
