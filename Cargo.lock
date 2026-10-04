@@ -5079,6 +5079,7 @@ dependencies = [
  "const-field-offset",
  "i-slint-backend-linuxkms",
  "i-slint-backend-selector",
+ "i-slint-backend-winit",
  "i-slint-common",
  "i-slint-core",
  "i-slint-core-macros",
@@ -5125,7 +5126,6 @@ dependencies = [
  "anyhow",
  "arboard",
  "embed-resource",
- "i-slint-backend-winit",
  "pi-core",
  "rfd",
  "slint",
@@ -5133,7 +5133,6 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
- "winit",
 ]
 
 [[package]]

@@ -3,7 +3,7 @@
 //! `pi_core::backend`'s `attach_path`, plus `pi_core::attach`'s
 //! `image_mime_type`/`encode_base64` verbatim — the Slint app's reference
 //! implementation already proves this pattern end-to-end (including its own
-//! `CustomApplicationHandler` workaround for Finder drag-and-drop, which
+//! winit event-filter workaround for Finder drag-and-drop, which
 //! SwiftUI's native `.dropDestination` makes unnecessary here), so this
 //! crate needs only the FFI-facing wiring around it.
 

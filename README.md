@@ -66,9 +66,9 @@ SLINTY_DEMO=1 cargo run -p slinty-pi
 
 ## Slint dependency and MCP
 
-`slint`, `slint-build`, and `i-slint-backend-winit` come from crates.io at 1.18.1. The last two are
-pinned with `=` because `i-slint-backend-winit` is an internal, non-semver-stable crate — bump all
-three together.
+`slint` and `slint-build` come from crates.io at 1.18.1; `slint-build` is pinned with `=` and must
+match `slint`, so bump both together. OS file drag-and-drop uses Slint's `unstable-winit-030`
+feature (a public winit event filter), which may change when Slint moves to a new winit major.
 
 Slint's embedded MCP server (UI introspection and screenshots, used for rendering QA) is opt-in per
 invocation rather than a default feature, since it pulls in a sizeable extra dependency tree:

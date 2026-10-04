@@ -2,15 +2,15 @@
 //! or a plain `@path` reference, and read+base64-encode images for pi's
 //! `ImageContent` prompt field.
 //!
-//! Slint 1.17's `DropArea`/`DragArea` are intra-UI drag primitives (see
+//! Slint's `DropArea`/`DragArea` (1.18) are intra-UI drag primitives (see
 //! `DropEvent { mime_type, data, position }` in slint-core) — winit's
 //! `WindowEvent::DroppedFile` isn't consumed anywhere in Slint's winit
 //! backend, so a real Finder-drag-into-window has no path through Slint's
-//! own event handling. `main.rs` works around this by installing an
-//! `i_slint_backend_winit::CustomApplicationHandler`, which sees winit's
-//! `WindowEvent`s before Slint's event loop does and forwards
-//! `DroppedFile` paths in as `UiCmd::AttachPath` — the same command the
-//! attach button already sends per picked file.
+//! own event handling. slinty-pi's `main.rs` works around this with a winit
+//! window-event filter (`install_file_drop`, Slint's `unstable-winit-030`
+//! feature), which sees winit's `WindowEvent`s before Slint does and
+//! forwards `DroppedFile` paths in as `UiCmd::AttachPath` — the same command
+//! the attach button already sends per picked file.
 
 use std::path::Path;
 

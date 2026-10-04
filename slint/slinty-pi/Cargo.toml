@@ -21,9 +21,7 @@ category = "Developer Tool"
 
 [dependencies]
 pi-core = { path = "../../crates/pi-core" }
-# Slint from crates.io (1.18+ has both the `mcp` feature
-# — embedded MCP server — and PR #11520 (`slint::platform::set_platform()`
-# auto-starting that server for custom-platform apps like this one)).
+# Slint from crates.io (1.18+ has the `mcp` feature — embedded MCP server).
 #
 # `mcp` is deliberately NOT enabled here (per the official Slint AI-plugins
 # skill's guidance) — it pulls in a whole extra dependency tree (async-net,
@@ -35,25 +33,21 @@ pi-core = { path = "../../crates/pi-core" }
 # glutin/OpenGL — a deprecated compatibility layer on macOS — and re-tessellates
 # every path on the CPU each frame, which measurably loses to Skia's Metal
 # pipeline on transcript-heavy frames.
-slint = { version = "1.18.1", features = ["renderer-winit-skia"] }
+# unstable-winit-030: the public winit event filter `install_file_drop` in
+# main.rs uses to see OS file drops. Tied to winit 0.30; Slint may change it
+# when it moves to a new winit major.
+slint = { version = "1.18.1", features = ["renderer-winit-skia", "unstable-winit-030"] }
 tokio.workspace = true
 anyhow.workspace = true
 tracing.workspace = true
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 arboard = "3.6.1"
 rfd = "0.17.2"
-# Internal Slint crate (not semver-stable, must match `slint`'s source exactly
-# — hence the `=` pin, bump all three Slint crates together); used to install a CustomApplicationHandler
-# so we can see winit's WindowEvent::DroppedFile before Slint silently
-# discards it. See slinty-pi's src/main.rs platform setup and
-# attach.rs's doc comment.
-i-slint-backend-winit = "=1.18.1"
-winit = "0.30"
 
 [build-dependencies]
-# Must match the `slint` runtime's source exactly (same reasoning as above) —
-# otherwise the compiled .slint code and the runtime types it references can
-# drift apart, which fails loudly at compile time (missing/renamed fields).
+# Must match the `slint` runtime's version exactly — otherwise the compiled
+# .slint code and the runtime types it references can drift apart, which
+# fails loudly at compile time (missing/renamed fields).
 slint-build = "=1.18.1"
 # Embeds icon.ico into the .exe itself (taskbar/Explorer icon) — separate from
 # cargo-bundle's .msi installer icon above. Deliberately NOT a

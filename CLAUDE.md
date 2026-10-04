@@ -56,11 +56,10 @@ rendering QA via the MCP server).
 
 ## Slint dependency
 
-`slint`, `slint-build`, and `i-slint-backend-winit` come from crates.io (1.18.1). 1.18+ is required
-for the `mcp` feature and for [PR #11520](https://github.com/slint-ui/slint/pull/11520)
-(`set_platform()` auto-starting the MCP server for custom-platform apps). Because
-`i-slint-backend-winit` is an internal, non-semver-stable crate, it and `slint-build` are pinned
-with `=` and must stay in lockstep with `slint` — bump all three together.
+`slint` and `slint-build` come from crates.io (1.18.1; 1.18+ is required for the `mcp` feature).
+`slint-build` is pinned with `=` and must match `slint` — bump both together. Winit access goes
+through Slint's public `unstable-winit-030` feature, not the internal `i-slint-backend-winit` crate;
+that feature is tied to winit 0.30 and may change when Slint moves to a new winit major.
 
 ## Architecture
 
@@ -107,10 +106,10 @@ direction:
 - Streaming text/thinking deltas are coalesced (`TEXT_FLUSH` = 33ms) before hitting
   `set_row_data`; tool-call partial results at `TOOL_FLUSH` = 100ms.
 
-`main.rs` also installs an `i_slint_backend_winit::CustomApplicationHandler` (`DropFileHandler`)
-*before* creating any window, because Slint's own winit backend never surfaces
-`WindowEvent::DroppedFile` — this is the only way to see a real Finder/Explorer drag-and-drop; see
-`attach.rs`'s doc comment.
+`main.rs` also registers a winit window-event filter (`install_file_drop`, via
+`slint::winit_030::WinitWindowAccessor::on_winit_window_event`), because Slint's own event handling
+never surfaces `WindowEvent::DroppedFile` — this is how a real Finder/Explorer drag-and-drop gets
+in; see `attach.rs`'s doc comment.
 
 `SLINTY_DEMO=1` swaps `backend::pi_backend` for `backend::demo_backend`, a synthetic token
 streamer that exercises the same rendering path without spawning `pi` — used as the M0/perf

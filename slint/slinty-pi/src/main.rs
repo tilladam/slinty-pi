@@ -23,37 +23,27 @@ slint::include_modules!();
 /// drops) into the same `UiCmd::AttachPath` the attach button sends per picked
 /// file, and `HoveredFile`/`HoveredFileCancelled` (drag-enter/drag-cancel) into
 /// `UiCmd::SetDragHover` for the composer's drag-hover highlight. Slint's own
-/// winit event loop never surfaces any of these (see `attach.rs`), so this hook
-/// is the only way to see them — it runs before Slint's handling and only ever
+/// event handling never surfaces any of these (see `attach.rs`), but its
+/// public winit event filter sees every window event first. Only ever
 /// forwards, never suppresses.
-struct DropFileHandler {
-    tx: mpsc::UnboundedSender<UiCmd>,
-}
-
-impl i_slint_backend_winit::CustomApplicationHandler for DropFileHandler {
-    fn window_event(
-        &mut self,
-        _event_loop: &winit::event_loop::ActiveEventLoop,
-        _window_id: winit::window::WindowId,
-        _winit_window: Option<&winit::window::Window>,
-        _slint_window: Option<&slint::Window>,
-        event: &winit::event::WindowEvent,
-    ) -> i_slint_backend_winit::EventResult {
+fn install_file_drop(app: &AppWindow, tx: mpsc::UnboundedSender<UiCmd>) {
+    use slint::winit_030::{winit::event::WindowEvent, EventResult, WinitWindowAccessor};
+    app.window().on_winit_window_event(move |_window, event| {
         match event {
-            winit::event::WindowEvent::HoveredFile(_) => {
-                let _ = self.tx.send(UiCmd::SetDragHover(true));
+            WindowEvent::HoveredFile(_) => {
+                let _ = tx.send(UiCmd::SetDragHover(true));
             }
-            winit::event::WindowEvent::HoveredFileCancelled => {
-                let _ = self.tx.send(UiCmd::SetDragHover(false));
+            WindowEvent::HoveredFileCancelled => {
+                let _ = tx.send(UiCmd::SetDragHover(false));
             }
-            winit::event::WindowEvent::DroppedFile(path) => {
-                let _ = self.tx.send(UiCmd::SetDragHover(false));
-                let _ = self.tx.send(UiCmd::AttachPath(path.clone()));
+            WindowEvent::DroppedFile(path) => {
+                let _ = tx.send(UiCmd::SetDragHover(false));
+                let _ = tx.send(UiCmd::AttachPath(path.clone()));
             }
             _ => {}
         }
-        i_slint_backend_winit::EventResult::Propagate
-    }
+        EventResult::Propagate
+    });
 }
 
 fn main() -> anyhow::Result<()> {
@@ -66,15 +56,15 @@ fn main() -> anyhow::Result<()> {
     let rt = tokio::runtime::Runtime::new()?;
     let (cmd_tx, cmd_rx) = mpsc::unbounded_channel::<UiCmd>();
 
-    // Must run before any Slint window is created (AppWindow::new() below
-    // lazily picks the default platform otherwise).
-    let backend = i_slint_backend_winit::Backend::builder()
-        .with_custom_application_handler(Box::new(DropFileHandler { tx: cmd_tx.clone() }))
-        .build()?;
-    slint::platform::set_platform(Box::new(backend))
-        .map_err(|e| anyhow::anyhow!("failed to install winit platform: {e}"))?;
+    // The file-drop hook below needs the winit backend; select it before any
+    // window is created (AppWindow::new() lazily picks a default otherwise).
+    slint::BackendSelector::new()
+        .backend_name("winit".into())
+        .select()
+        .map_err(|e| anyhow::anyhow!("failed to select the winit backend: {e}"))?;
 
     let app = AppWindow::new()?;
+    install_file_drop(&app, cmd_tx.clone());
     let transcript: Rc<VecModel<Row>> = Rc::new(VecModel::default());
     app.set_transcript(ModelRc::from(transcript.clone()));
 
