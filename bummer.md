@@ -278,3 +278,14 @@ Next time: when a crate has target- or feature-dependent code, put `#[cfg]` on t
 Revisit when: a Linux target or container is available locally for pre-push checks.
 Cost: two extra CI cycles and fix commits.
 Scope: project     Status: active
+
+## 2026-10-04 · "SF Mono" as the code font silently fell back to a proportional font · #slint #fonts slint/slinty-pi/ui/app.slint
+Situation: 6a929ea switched slinty-pi's fonts to "SF Pro" / "SF Mono" (Slint 1.18.1, Skia renderer, macOS).
+Tried: `Style.mono-font: "SF Mono"`, checked only that the app built and the UI text looked right.
+Outcome: code blocks rendered in a proportional font (no error); noticed a day later when comparing screenshots with the slint-kit gallery. The generic "monospace" isn't resolved either; "Menlo" is (software and Skia renderers).
+Evidence: 2026-10-04 MCP screenshots of slinty-pi's demo code block vs slint-widgets-gallery with Menlo.
+Hypothesis: SF Mono isn't a font Slint's font lookup sees by that name on macOS; not verified further.
+Next time: after changing a font family, screenshot text that needs it (code blocks for the mono font) and check the glyph shapes, not just that text appears. Use "Menlo" for monospace on macOS. Verified.
+Revisit when: Slint resolves system font names like "SF Mono" or generic families.
+Cost: a day of non-monospaced code blocks in slinty-pi.
+Scope: global-candidate     Status: active

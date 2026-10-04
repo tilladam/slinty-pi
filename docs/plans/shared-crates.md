@@ -3,7 +3,7 @@
 Status, 2026-10-04: phase 0 done (`tilladam/slint-kit`, private for now, D8). Phase 1 dropped
 (D9). Phases 2–5 extracted (`md-segments`, `emoji-shortcodes`, `desktop-clipboard`,
 `desktop-notify`, `slint-model-sync`), CI green on macOS and Linux. No consumer has switched yet
-(D10, D11); open checks are listed in §15. Next: phase 7. Builds on the code inventory of the
+(D10, D11); open checks are listed in §15. Phase 7 round 1 (`slint-widgets` + gallery) done; next: more phase 7 components. Builds on the code inventory of the
 three apps (2026-10-03) and the platform-glue review (2026-10-04).
 
 **How to read the evidence tags:**
@@ -356,6 +356,27 @@ Effort: half a day for the crate; the upstream proposal takes Till's time (estim
 consumer's `build.rs` maps a library name to it with `slint_build::CompilerConfiguration::
 with_library_paths`, and imports `@<lib>/palette.slint`.
 
+**Round 1, 2026-10-04** (slint-kit f8a56b4, CI green; provenance in the commit message).
+Acceptance criteria agreed first: a gallery in slint-kit imports `CopyButton` and `CodeBlock`
+from `@slint-widgets` via `with_library_paths`, builds in CI on macOS and Linux, and its MCP
+screenshots show both matching slinty-pi's current look in light and dark mode. Token decision:
+a `KitStyle` global derived from std-widgets `Palette`, overridable from Rust.
+- **Mechanism (spike done):** `slint-widgets` is only `.slint` files plus `library_paths()`.
+  Apps use it as a build-dependency and `import { … } from "@slint-widgets"`, and re-export
+  `KitStyle` to reach it from Rust. It needs no Slint dependency itself.
+- **Components:** `KitStyle`, `CopyButton`, `CodeBlock` (plus `CodeLine`/`ColoredSpan`).
+- **Gallery:** `slint-widgets-gallery`, `publish = false`, software renderer on every platform
+  (Till: pixel parity with Skia isn't the point). `GALLERY_SCHEME=light|dark` forces the
+  scheme through a public function: a `changed` handler ran too late for Rust to read the
+  new scheme, so the first screenshot had light highlighting on a dark window.
+- **Fonts:** Slint doesn't resolve the generic name `"monospace"`, and `.slint` can't pick per
+  platform. So `KitStyle.mono-font` defaults to `"Menlo"`, and `default_mono_font()` (Menlo,
+  Consolas, DejaVu Sans Mono) is for apps to set off macOS.
+- **Comparison:** gallery vs slinty-pi (demo `md!` code block; light forced by a temporary,
+  reverted `init`) match in layout, padding, highlighting, card, label and copy button. They
+  differ in the renderer, and in the code font: monospace in the gallery, proportional in
+  slinty-pi. The latter is a slinty-pi bug, see §14.
+
 **Steps:**
 1. Spike the distribution mechanism with one component.
 2. Design the token global and how apps override it.
@@ -397,6 +418,7 @@ Effort: 1–2 days (estimate).
 | Upstream: external file drops with position in Slint's winit 0.31 port | Slint | Phase 6, step 2. |
 | Upstream: wrapped `StyledText` link hit-testing | Slint | Yapper bummer 2026-09-28; affects slinty-pi's prose links too. |
 | Upstream: box-layout height-for-width (slint-ui/slint#12776) | Slint | Already filed; track. |
+| slinty-pi code blocks aren't monospaced: `Style.mono-font: "SF Mono"` doesn't resolve (since 6a929ea, which replaced Menlo) | slinty-pi | Found by the phase 7 comparison; fix: back to `"Menlo"` (or `KitStyle` once slinty-pi switches). |
 | slint-kit README tells readers to depend on `tag = "v0.1.0"`, which doesn't exist | slint-kit | Fix with O3 (e.g. show `rev`). |
 | Link this plan from yapper (`LICENSING.md` or `plan/refactoring.md`) | yapper | Agent memory is per project, so a yapper session won't otherwise know the slint-kit rules. Mind the concurrent session there. |
 
@@ -416,7 +438,7 @@ Recommended sequence: 0 → 2 → 3 → 4 → 5 → 7 → 8. Phase 6 waits on th
 The total is roughly 8–12 working days spread over several sessions (estimate).
 
 **Progress (2026-10-04):** 0 ✓ · 1 dropped · 2 ✓ · 3 ✓ · 4 ✓ · 5 ✓ (all extraction only) ·
-**7 next** · 8 · 6 waiting.
+7 round 1 ✓ (more components next) · 8 · 6 waiting.
 
 **Open checks before any phase counts as fully done:**
 
