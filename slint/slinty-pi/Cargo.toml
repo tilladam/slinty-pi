@@ -50,12 +50,18 @@ desktop-clipboard = { git = "https://github.com/tilladam/slint-kit", rev = "551a
 rfd = "0.17.2"
 # Same crate Slint's winit backend uses for `Platform::open_url`.
 webbrowser = "1.2"
+# Only for `default_mono_font()` at runtime; the components themselves come
+# in through the build-dependency below.
+slint-widgets = { git = "https://github.com/tilladam/slint-kit", rev = "551aa54e88f77632fa3834243849c5264e639a85" }
 
 [build-dependencies]
 # Must match the `slint` runtime's version exactly — otherwise the compiled
 # .slint code and the runtime types it references can drift apart, which
 # fails loudly at compile time (missing/renamed fields).
 slint-build = "=1.18.1"
+# slint-kit's `.slint` component library (`@slint-widgets`), registered in
+# build.rs. Same rev as the runtime dependency above; bump them together.
+slint-widgets = { git = "https://github.com/tilladam/slint-kit", rev = "551aa54e88f77632fa3834243849c5264e639a85" }
 # Embeds icon.ico into the .exe itself (taskbar/Explorer icon) — separate from
 # cargo-bundle's .msi installer icon above. Deliberately NOT a
 # `[target.'cfg(windows)'.build-dependencies]` entry: Cargo evaluates that

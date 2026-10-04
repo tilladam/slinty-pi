@@ -1,29 +1,12 @@
 import { Button, ComboBox, ListView, Palette, TextEdit, VerticalBox, HorizontalBox } from "std-widgets.slint";
 import { Sidebar, SessionRow } from "sidebar.slint";
 import { TreeOverlay, TreeRow } from "tree.slint";
-import { CommandPalette, PaletteRow } from "palette.slint";
+import { KitStyle, CodeBlock, CodeLine, ColoredSpan, CommandPalette, PaletteRow, ProseBlock, HeadingBlock, QuoteBlock, RuleBlock, TableBlock, TableCell, TableRowCells } from "@slint-widgets";
 import { ModelsOverlay, CachedModelRow, RouterModelRow, HfSearchOverlay, HfResultRow } from "models.slint";
 
-export struct TableCell {
-    text: string,
-    header: bool,
-    // Column stretch weight (same for every cell of a column), precomputed
-    // in Rust from the column's longest cell.
-    weight: float,
-}
-
-export struct TableRowCells {
-    cells: [TableCell],
-}
-
-export struct ColoredSpan {
-    text: string,
-    color: color,
-}
-
-export struct CodeLine {
-    spans: [ColoredSpan],
-}
+// Shared with slint-kit's widgets; exported so Rust can build them, and
+// KitStyle so Rust can set its mono font per platform.
+export { KitStyle, CodeLine, ColoredSpan, TableCell, TableRowCells }
 
 // One transcript row. Assistant messages are segmented (prose / heading /
 // code / quote / rule / table) into several rows; user/thinking/tool/info/
@@ -56,16 +39,16 @@ export struct QueueItem {
 }
 
 global Style {
-    out property <length> radius: 9px;
-    // "SF Mono" does not resolve in Slint (code fell back to a proportional
-    // font); Menlo does. See bummer.md, 2026-10-04.
-    out property <string> mono-font: "Menlo";
-    out property <color> dim: Palette.foreground.transparentize(0.45);
-    out property <color> faint: Palette.foreground.transparentize(0.65);
-    out property <brush> card: Palette.control-background;
+    // Shared tokens come from slint-kit's KitStyle (std-widgets Palette
+    // based); see bummer.md 2026-10-04 on "SF Mono" for the mono font.
+    out property <length> radius: KitStyle.radius;
+    out property <string> mono-font: KitStyle.mono-font;
+    out property <color> dim: KitStyle.dim;
+    out property <color> faint: KitStyle.faint;
+    out property <brush> card: KitStyle.card;
     out property <brush> code-bg: Palette.color-scheme == ColorScheme.dark
         ? #16181d : #f6f7f9;
-    out property <brush> hairline: Palette.border.transparentize(0.5);
+    out property <brush> hairline: KitStyle.hairline;
 
     // density: 0 = Verbose, 1 = Normal, 2 = Summary. Errors always show;
     // Summary additionally hides thinking/tool/info rows.
@@ -111,38 +94,6 @@ component Dots inherits Text {
     color: Style.dim;
     font-size: 13px;
     min-width: 14px;
-}
-
-component CopyButton inherits Rectangle {
-    in property <string> payload;
-    callback copy-requested(string);
-    property <bool> copied: false;
-
-    width: 34px;
-    height: 20px;
-    border-radius: 5px;
-    background: touch.has-hover ? Palette.alternate-background : transparent;
-
-    touch := TouchArea {
-        clicked => {
-            root.copy-requested(root.payload);
-            root.copied = true;
-            reset.running = true;
-        }
-    }
-    Text {
-        text: root.copied ? "✓" : "copy";
-        font-size: 10px;
-        color: root.copied ? Palette.accent-background : Style.dim;
-    }
-    reset := Timer {
-        interval: 1400ms;
-        running: false;
-        triggered => {
-            root.copied = false;
-            self.running = false;
-        }
-    }
 }
 
 // Composer-strip action chip. The 1px hairline outline and pointer cursor are
@@ -233,185 +184,6 @@ component UserRow inherits HorizontalLayout {
         }
     }
     Rectangle { width: 2px; }
-}
-
-component ProseRow inherits HorizontalLayout {
-    in property <Row> entry;
-    callback open-link(string);
-    callback copy-requested(string);
-    padding-right: 12px;
-    StyledText {
-        text: entry.styled;
-        default-font-size: 14px;
-        default-color: Palette.foreground;
-        link-color: Palette.accent-background;
-        link-clicked(l) => { root.open-link(l); }
-    }
-    if entry.first && entry.raw != "": Rectangle { horizontal-stretch: 1; min-width: 8px; }
-    if entry.first && entry.raw != "": CopyButton {
-        payload: entry.raw;
-        copy-requested(t) => { root.copy-requested(t); }
-    }
-}
-
-component HeadingRow inherits HorizontalLayout {
-    in property <Row> entry;
-    callback copy-requested(string);
-    Text {
-        text: entry.text;
-        wrap: word-wrap;
-        font-size: entry.level == 1 ? 20px
-            : entry.level == 2 ? 17.5px
-            : entry.level == 3 ? 15.5px
-            : 14px;
-        font-weight: 700;
-        // h4+ is body-sized; set it apart from bold prose by dimming.
-        color: entry.level >= 4 ? Palette.foreground.transparentize(0.2) : Palette.foreground;
-    }
-    if entry.first && entry.raw != "": Rectangle { horizontal-stretch: 1; min-width: 8px; }
-    if entry.first && entry.raw != "": CopyButton {
-        payload: entry.raw;
-        copy-requested(t) => { root.copy-requested(t); }
-    }
-}
-
-component QuoteRow inherits HorizontalLayout {
-    in property <Row> entry;
-    callback open-link(string);
-    callback copy-requested(string);
-    padding-right: 12px;
-    spacing: 10px;
-    Rectangle {
-        width: 3px;
-        border-radius: 1.5px;
-        background: Palette.foreground.transparentize(0.75);
-    }
-    StyledText {
-        text: entry.styled;
-        default-font-size: 14px;
-        default-color: Style.dim;
-        link-color: Palette.accent-background;
-        link-clicked(l) => { root.open-link(l); }
-    }
-    if entry.first && entry.raw != "": Rectangle { horizontal-stretch: 1; min-width: 8px; }
-    if entry.first && entry.raw != "": CopyButton {
-        payload: entry.raw;
-        copy-requested(t) => { root.copy-requested(t); }
-    }
-}
-
-component RuleRow inherits HorizontalLayout {
-    padding-top: 5px;
-    padding-bottom: 5px;
-    padding-right: 12px;
-    Rectangle {
-        height: 1px;
-        background: Style.hairline;
-    }
-}
-
-component CodeRow inherits Rectangle {
-    in property <Row> entry;
-    in property <color> bg: #2b303b;
-    callback copy-requested(string);
-
-    background: bg;
-    border-radius: Style.radius;
-    border-width: 1px;
-    border-color: Style.hairline;
-    clip: true;
-
-    VerticalLayout {
-        HorizontalLayout {
-            padding-left: 12px;
-            padding-right: 8px;
-            padding-top: 6px;
-            height: 28px;
-            Text {
-                text: entry.lang == "" ? "code" : entry.lang;
-                font-size: 10px;
-                font-family: Style.mono-font;
-                color: Style.faint;
-                vertical-alignment: center;
-            }
-            Rectangle { horizontal-stretch: 1; }
-            CopyButton {
-                payload: entry.text;
-                copy-requested(t) => { root.copy-requested(t); }
-            }
-        }
-        // Long lines pan horizontally instead of clipping at the card edge.
-        // The Flickable has no intrinsic size, so its height comes from the
-        // line stack's preferred height (content-driven, no ancestor-width
-        // binding — safe inside the ListView).
-        Flickable {
-            height: lines.preferred-height;
-            content-width: max(self.width, lines.preferred-width);
-            lines := VerticalLayout {
-                padding: 12px;
-                padding-top: 2px;
-                alignment: start;
-                for line in entry.code-lines: HorizontalLayout {
-                    alignment: start;
-                    // Keeps blank lines at full line-height instead of collapsing.
-                    if line.spans.length == 0: Text {
-                        text: " ";
-                        font-family: Style.mono-font;
-                        font-size: 12.5px;
-                    }
-                    for span in line.spans: Text {
-                        text: span.text;
-                        color: span.color;
-                        font-family: Style.mono-font;
-                        font-size: 12.5px;
-                    }
-                }
-            }
-        }
-    }
-}
-
-// Row-major so a wrapping cell grows its whole row (cells in a
-// HorizontalLayout share the row's height) — with column-major stacks the
-// columns drift out of alignment and overflow clips at the card edge.
-component TableBlock inherits Rectangle {
-    in property <[TableRowCells]> rows;
-
-    background: Style.hairline;
-    border-radius: Style.radius;
-    border-width: 1px;
-    border-color: Style.hairline;
-    clip: true;
-
-    VerticalLayout {
-        padding: 1px;
-        spacing: 1px;
-        for row in rows: HorizontalLayout {
-            spacing: 1px;
-            for cell in row.cells: Rectangle {
-                // Explicit width: a 24px minimum plus the column's share of
-                // what's left, so the widths always add up to the block's
-                // width (a max(24px, share) overflowed the card when narrow
-                // columns hit the minimum). Explicit because each row is its
-                // own HorizontalLayout: stretch weights would size every
-                // row's columns independently and they'd drift out of line.
-                // (Row heights need no help since Slint 1.18.1 fixed
-                // slint-ui/slint#12776 — wrapped cells size their row.)
-                width: 24px + max(0px, root.width - 2px - (row.cells.length - 1) * 1px - row.cells.length * 24px) * cell.weight;
-                background: cell.header ? Style.card.darker(4%) : Style.card;
-                VerticalLayout {
-                    padding: 8px;
-                    cell-text := Text {
-                        text: cell.text;
-                        font-size: 12.5px;
-                        font-weight: cell.header ? 700 : 400;
-                        color: Palette.foreground;
-                        wrap: word-wrap;
-                    }
-                }
-            }
-        }
-    }
 }
 
 component ThinkingRow inherits VerticalLayout {
@@ -556,6 +328,11 @@ export component AppWindow inherits Window {
     // startup seed can't see (winit only reports the real theme once the
     // window exists).
     changed dark-mode => { root.scheme-changed(root.dark-mode); }
+    // Test hook (SLINTY_COLOR_SCHEME_AFTER): forces light or dark mode, e.g.
+    // for screenshots of both schemes on one machine.
+    public function force-color-scheme(dark: bool) {
+        Palette.color-scheme = dark ? ColorScheme.dark : ColorScheme.light;
+    }
 
     in-out property <bool> sidebar-visible: true;
     in property <[string]> project-list: [];
@@ -694,7 +471,7 @@ export component AppWindow inherits Window {
         // Cmd+P opens the command palette (it closes itself via its own
         // internal FocusScope, since opening moves keyboard focus into its
         // subtree — outside this scope — so this handler can no longer
-        // reach it once it's up; see palette.slint). Esc otherwise closes
+        // reach it once it's up; see CommandPalette in @slint-widgets). Esc otherwise closes
         // the tree overlay if open, else aborts from anywhere (including
         // while the composer has focus). Cmd+B toggles the sidebar; Cmd+N
         // starts a new session; Cmd+T opens the tree; Cmd+M opens the models
@@ -762,26 +539,32 @@ export component AppWindow inherits Window {
                         padding-top: row-shown ? Style.row-gap(entry.kind, entry.first) : 0px;
 
                         if row-shown && entry.kind == "user": UserRow { entry: entry; }
-                        if row-shown && entry.kind == "prose": ProseRow {
-                            entry: entry;
+                        if row-shown && entry.kind == "prose": ProseBlock {
+                            text: entry.styled;
+                            copy-payload: entry.first ? entry.raw : "";
                             open-link(l) => { root.open-link(l); }
                             copy-requested(t) => { root.copy-text(t); }
                         }
-                        if row-shown && entry.kind == "heading": HeadingRow {
-                            entry: entry;
+                        if row-shown && entry.kind == "heading": HeadingBlock {
+                            text: entry.text;
+                            level: entry.level;
+                            copy-payload: entry.first ? entry.raw : "";
                             copy-requested(t) => { root.copy-text(t); }
                         }
-                        if row-shown && entry.kind == "code": CodeRow {
-                            entry: entry;
-                            bg: root.code-background;
+                        if row-shown && entry.kind == "code": CodeBlock {
+                            lang: entry.lang;
+                            code: entry.text;
+                            lines: entry.code-lines;
+                            code-background: root.code-background;
                             copy-requested(t) => { root.copy-text(t); }
                         }
-                        if row-shown && entry.kind == "quote": QuoteRow {
-                            entry: entry;
+                        if row-shown && entry.kind == "quote": QuoteBlock {
+                            text: entry.styled;
+                            copy-payload: entry.first ? entry.raw : "";
                             open-link(l) => { root.open-link(l); }
                             copy-requested(t) => { root.copy-text(t); }
                         }
-                        if row-shown && entry.kind == "rule": RuleRow { }
+                        if row-shown && entry.kind == "rule": RuleBlock { }
                         // Explicit width (capped at the available span): a
                         // narrow table keeps its natural width instead of
                         // spanning the transcript, and the weight-only cells
@@ -1083,6 +866,8 @@ export component AppWindow inherits Window {
 
     if root.palette-visible: CommandPalette {
         entries: root.palette-entries;
+        placeholder-text: "Type a command, session, or action…";
+        close-shortcut-key: "p";
         close => { root.palette-visible = false; }
         query-changed(q) => { root.palette-query(q); }
         exec(id) => {

@@ -318,7 +318,7 @@ impl UiSink for SlintUi {
                 .into_iter()
                 .map(|e| PaletteRow {
                     id: e.id.as_str().into(),
-                    kind: e.kind.into(),
+                    icon: palette_icon(e.kind).into(),
                     label: e.label.as_str().into(),
                     detail: e.detail.as_str().into(),
                 })
@@ -407,6 +407,17 @@ pub fn code_lines_model(lines: &[pi_core::highlight::CodeLine]) -> ModelRc<CodeL
         })
         .collect();
     ModelRc::new(VecModel::from(rows))
+}
+
+/// The palette's glyph for an entry kind (shapes that render in the system
+/// UI font; see bummer.md on symbols that drew as empty boxes).
+fn palette_icon(kind: &str) -> &'static str {
+    match kind {
+        "session" => "≡",
+        "command" => "/",
+        "model" => "◇",
+        _ => "▸",
+    }
 }
 
 /// Convert row-major table cells into the Slint model, attaching each cell

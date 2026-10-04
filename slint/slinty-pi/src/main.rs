@@ -82,6 +82,9 @@ fn main() -> anyhow::Result<()> {
         .map_err(|e| anyhow::anyhow!("failed to select the winit backend: {e}"))?;
 
     let app = AppWindow::new()?;
+    // KitStyle's own default (Menlo) only exists on macOS.
+    app.global::<KitStyle>()
+        .set_mono_font(slint_widgets::default_mono_font().into());
     install_file_drop(&app, cmd_tx.clone());
     let transcript: Rc<VecModel<Row>> = Rc::new(VecModel::default());
     app.set_transcript(ModelRc::from(transcript.clone()));
@@ -403,6 +406,14 @@ fn main() -> anyhow::Result<()> {
     spawn_delayed_cmd(&rt, &cmd_tx, "SLINTY_FORK_FROM_AFTER", UiCmd::ForkFrom);
     // Same as SLINTY_DEMO_AUTOSEND but for the real (non-demo) backend.
     spawn_delayed_cmd(&rt, &cmd_tx, "SLINTY_SEND_AFTER", UiCmd::Send);
+    // Forces light or dark mode (arg `light`|`dark`), so screenshots of
+    // both schemes can be taken on one machine.
+    spawn_delayed_invoke(
+        &rt,
+        app.as_weak(),
+        "SLINTY_COLOR_SCHEME_AFTER",
+        |app, scheme| app.invoke_force_color_scheme(scheme == "dark"),
+    );
     // Mirrors Cmd+P: setting `palette-visible` shows the overlay AND fires
     // the `open-palette` callback (via its changed handler), which is what
     // sends `UiCmd::OpenPalette` to the backend — sending the command

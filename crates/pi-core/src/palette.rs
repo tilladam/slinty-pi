@@ -4,8 +4,8 @@
 //! current project's sessions, pi's `get_commands` slash commands, and the
 //! composer's model list ("load model"). The `id` prefix (`action:` /
 //! `session:` / `command:` / `model:`) is how the palette's `exec` dispatch
-//! (in `main.rs`) tells them apart — see `PaletteRow` in `ui/palette.slint`
-//! for the Slint-side mirror of this shape.
+//! (in `main.rs`) tells them apart — see `PaletteRow` in slint-kit's
+//! `@slint-widgets` for the Slint-side shape (slinty-pi maps `kind` to its icon).
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct PaletteEntry {
