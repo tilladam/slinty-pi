@@ -1,8 +1,8 @@
 # Shared crates across slinty-pi, yapper and Flectar Mail — plan
 
 Status: plan, 2026-10-04. Phase 0 done: `tilladam/slint-kit` exists (private for now, D8) with
-licence, policy and CI. Phase 2 extracted (`md-segments`, `emoji-shortcodes`); the consumers
-haven't switched yet (D10, D11). Builds on the code inventory of the three
+licence, policy and CI. Phases 2 and 3 extracted (`md-segments`, `emoji-shortcodes`,
+`desktop-clipboard`); the consumers haven't switched yet (D10, D11). Builds on the code inventory of the three
 apps done on 2026-10-03 and the platform-glue review of 2026-10-04.
 
 **How to read the evidence tags:**
@@ -203,6 +203,19 @@ documented as decoding.
    on macOS) needs conversion to PNG with bounded decoding (`image` crate `Limits`, as in
    yapper's `encode_clipboard`).
 3. yapper: depend on the crate instead of its local copy.
+
+**Extracted 2026-10-04** (slint-kit c90888c, CI green on macOS and Linux; provenance in the
+commit message):
+- `clipboard_attachment()` → `Files(Vec<PathBuf>)` or `Image(EncodedImage { bytes, format })`;
+  `clipboard_image()`; `to_png(EncodedImage) -> Vec<u8>` (yapper's `encode_clipboard`, now
+  returning bytes, same limits: 8192 px per side, 16 MP, 128 MiB); `EncodedImage::mime_type()`.
+- Differs from step 1: off macOS, images read as `None` by default (yapper's policy against
+  unbounded decoding). The `arboard` decode is the opt-in feature `decoding-fallback`, which
+  slinty-pi will enable to keep pasting images on Linux and Windows.
+- CI now runs clippy and tests with `--all-features` (so Linux compiles the fallback) and a
+  `--no-default-features` build.
+- Not yet verified: the macOS NSPasteboard read itself (no automated way to put an image on
+  the clipboard). It is covered by the manual acceptance check below when a consumer switches.
 
 Acceptance: a manual paste check of a screenshot (PNG), a copied JPEG and a Preview copy (TIFF)
 in both apps. MCP can't inject OS clipboard images (bummer: "Slint MCP cannot drive
