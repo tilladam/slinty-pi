@@ -1,8 +1,8 @@
 # Shared crates across slinty-pi, yapper and Flectar Mail — plan
 
 Status: plan, 2026-10-04. Phase 0 done: `tilladam/slint-kit` exists (private for now, D8) with
-licence, policy and CI. Phases 2 and 3 extracted (`md-segments`, `emoji-shortcodes`,
-`desktop-clipboard`); the consumers haven't switched yet (D10, D11). Builds on the code inventory of the three
+licence, policy and CI. Phases 2–4 extracted (`md-segments`, `emoji-shortcodes`,
+`desktop-clipboard`, `desktop-notify`); the consumers haven't switched yet (D10, D11). Builds on the code inventory of the three
 apps done on 2026-10-03 and the platform-glue review of 2026-10-04.
 
 **How to read the evidence tags:**
@@ -26,6 +26,7 @@ apps done on 2026-10-03 and the platform-glue review of 2026-10-04.
 | D9 | **slint-kit holds code only.** This plan stays in slinty-pi, and the Slint gotchas stay in the apps' own `bummer.md` files; neither goes into slint-kit. | User, 2026-10-04 |
 | D10 | **slinty-pi keeps its own copy** of the extracted code until slint-kit is public; a public repo must not depend on a private one. | User, 2026-10-04 |
 | D11 | **Yapper's switch waits for its refactor** (another session is active there); copying out of yapper is read-only. | User, 2026-10-04 |
+| D12 | **Notifications: extract yapper's `platform.rs` as `desktop-notify`**, with an opt-in `notify-rust` fallback off macOS (was O4; evaluation in phase 4). | User, 2026-10-04 |
 | D7 | The repo is named **`slint-kit`** (`github.com/tilladam/slint-kit`; was O2). Read as "a kit for Slint apps": only the `slint-*` crates depend on Slint, the others are Slint-free companions (D5), and SwiftyPi may use them too. | User, 2026-10-04 |
 
 **Already done (not part of this plan any more):**
@@ -40,7 +41,6 @@ apps done on 2026-10-03 and the platform-glue review of 2026-10-04.
 | # | Question | Recommendation |
 |---|---|---|
 | O3 | Consume via git tags only, or also publish to crates.io? | **Git tags first** (`git = "…", tag = "v0.x"`), crates.io once an API has survived both apps for a release or two. |
-| O4 | Notifications: adopt the `user-notify` crate, or extract yapper's `platform.rs`? | Decide after the evaluation in phase 4. |
 
 ## 3. Bummer entries that apply
 
@@ -238,6 +238,32 @@ Effort: half a day to a day (estimate).
    no-op stubs off macOS.
 4. slinty-pi use cases: a turn finishes while the window is inactive; an extension dialog needs
    input (M4); the notification settings in M5 §1.
+
+**Evaluation, 2026-10-04** (from the crates' source):
+
+| Criterion | `user-notify` 0.4.2 | `notify-rust` 4.18.1 (+ `preview-macos-un` → `mac-usernotifications` 0.3.1) | yapper `platform.rs` |
+|---|---|---|---|
+| Licence | **LGPL-3.0-or-later ✗** (rejected by `deny.toml`; static linking makes LGPL awkward for MIT binaries) | MIT/Apache ✓ | MIT ✓ |
+| macOS API | `UNUserNotificationCenter` ✓ | deprecated `NSUserNotification` by default; UN only behind a *preview* feature | `UNUserNotificationCenter` ✓ |
+| Click → callback with an id | ✓ delegate | only while the app holds that notification's handle; clicks without one (launch, after restart) are dropped ("no pending sender") | ✓ one global callback, including the launch click |
+| No bundle | mock fallback ✓ | `NoBundleIdentifier` error ✓ | guarded, off ✓ |
+| Linux / Windows | ✓ | ✓ | no-ops |
+| Badge, activate, withdraw by id | badge permission only | close by handle; no badge | ✓ all |
+
+Decision D12: extract yapper's code. **Extracted 2026-10-04** (slint-kit 7dee607, fix d63dbe2;
+provenance in the commit message):
+- API: `install(app_name, on_click: Fn(String))` (raw id; yapper keeps its
+  `notification_id`/`parse_notification_id`), `available()`, `notify(id, thread, title,
+  subtitle, body)`, `withdraw(ids)`, `set_badge(n)`, `activate()`, `is_active()`.
+- Off macOS: no-ops; feature `fallback` shows notifications through notify-rust (show-only).
+- Diagnostics use the `log` facade instead of `eprintln!`. slinty-pi's `tracing-subscriber`
+  picks them up; yapper needs a logger (or `env_logger`) to keep seeing them when it switches.
+- The ObjC delegate class is `SlintKitNotificationDelegate`. A process must not install both
+  this crate and yapper's own copy.
+- The first CI run failed on Linux only: with `fallback` on, the test was compiled out but its
+  `use super::*` stayed, and `-D warnings` rejected it. Fixed by gating the whole test module.
+- Not yet verified: a real notification and click. That needs a bundled build, so it is
+  covered by the acceptance check below when a consumer switches.
 
 Acceptance: an evaluation note answering each criterion with evidence; a notification raised and
 clicked in a bundled build of each app (cargo-bundle for slinty-pi, yapper's
