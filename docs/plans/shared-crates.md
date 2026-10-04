@@ -1,9 +1,10 @@
 # Shared crates across slinty-pi, yapper and Flectar Mail — plan
 
-Status: plan, 2026-10-04. Phase 0 done: `tilladam/slint-kit` exists (private for now, D8) with
-licence, policy and CI. Phases 2–5 extracted (`md-segments`, `emoji-shortcodes`,
-`desktop-clipboard`, `desktop-notify`, `slint-model-sync`); the consumers haven't switched yet (D10, D11). Builds on the code inventory of the three
-apps done on 2026-10-03 and the platform-glue review of 2026-10-04.
+Status, 2026-10-04: phase 0 done (`tilladam/slint-kit`, private for now, D8). Phase 1 dropped
+(D9). Phases 2–5 extracted (`md-segments`, `emoji-shortcodes`, `desktop-clipboard`,
+`desktop-notify`, `slint-model-sync`), CI green on macOS and Linux. No consumer has switched yet
+(D10, D11); open checks are listed in §15. Next: phase 7. Builds on the code inventory of the
+three apps (2026-10-03) and the platform-glue review (2026-10-04).
 
 **How to read the evidence tags:**
 - **[read]**: checked against the code or upstream source in the session that wrote this plan.
@@ -22,12 +23,12 @@ apps done on 2026-10-03 and the platform-glue review of 2026-10-04.
 | D4 | **Flectar Mail is ideas-only.** It is AGPL-3.0-only and mostly another author's work (git: 338 commits by its author, 4 by Till) [read]. Nothing is copied from it; ideas are reimplemented from a description, not from its source. | Analysis 2026-10-03 |
 | D5 | Keep pure (toolkit-agnostic) code and Slint-dependent code in **separate crates from the start**. | Yapper's bummer.md, 2026-10-04 (user chose `yapper-app` + `yapper-view` over "one crate first"); applied here by analogy |
 | D6 | **One repo**, a Cargo workspace holding all the crates (was O1). | User, 2026-10-04 |
+| D7 | The repo is named **`slint-kit`** (`github.com/tilladam/slint-kit`; was O2). Read as "a kit for Slint apps": only the `slint-*` crates depend on Slint, the others are Slint-free companions (D5), and SwiftyPi may use them too. | User, 2026-10-04 |
 | D8 | **Private for now**; made public later, when Till decides (D1 is the end state). | User, 2026-10-04 |
 | D9 | **slint-kit holds code only.** This plan stays in slinty-pi, and the Slint gotchas stay in the apps' own `bummer.md` files; neither goes into slint-kit. | User, 2026-10-04 |
 | D10 | **slinty-pi keeps its own copy** of the extracted code until slint-kit is public; a public repo must not depend on a private one. | User, 2026-10-04 |
 | D11 | **Yapper's switch waits for its refactor** (another session is active there); copying out of yapper is read-only. | User, 2026-10-04 |
 | D12 | **Notifications: extract yapper's `platform.rs` as `desktop-notify`**, with an opt-in `notify-rust` fallback off macOS (was O4; evaluation in phase 4). | User, 2026-10-04 |
-| D7 | The repo is named **`slint-kit`** (`github.com/tilladam/slint-kit`; was O2). Read as "a kit for Slint apps": only the `slint-*` crates depend on Slint, the others are Slint-free companions (D5), and SwiftyPi may use them too. | User, 2026-10-04 |
 
 **Already done (not part of this plan any more):**
 - yapper `LICENSE` + `LICENSING.md` (2526883).
@@ -40,7 +41,7 @@ apps done on 2026-10-03 and the platform-glue review of 2026-10-04.
 
 | # | Question | Recommendation |
 |---|---|---|
-| O3 | Consume via git tags only, or also publish to crates.io? | **Git tags first** (`git = "…", tag = "v0.x"`), crates.io once an API has survived both apps for a release or two. |
+| O3 | How do consumers pin slint-kit: git `rev`, tags, or crates.io? | No tags yet: Till said not to tag for now (2026-10-04). Until decided, a consumer pins a commit (`git = "…", rev = "<sha>"`). crates.io once an API has survived both apps for a release or two. |
 
 ## 3. Bummer entries that apply
 
@@ -70,13 +71,14 @@ One public workspace repo, `slint-kit` (D6, D7), MIT, with pure and Slint crates
 
 ```
 slint-kit/
-  LICENSE (MIT)            deny.toml (license + source policy, see §5)
+  LICENSE (MIT)  README.md  deny.toml (licence + source policy, see §5)
+  .github/workflows/ci.yml (fmt, clippy, tests, cargo-deny, path check; macOS + Linux)
   crates/
     md-segments/           pure   markdown → segments, syntect highlighting, linkify   (phase 2)
     emoji-shortcodes/      pure   :shortcode: tables (iamcal, joypixels), zero deps     (phase 2)
     desktop-clipboard/     pure   clipboard image as encoded bytes                       (phase 3)
-    desktop-notify/        pure   notifications + dock badge — only if O4 says extract   (phase 4)
-    slint-model-sync/      slint  keyed VecModel reconcile + update coalescing           (phase 5)
+    desktop-notify/        pure   notifications, Dock badge, activate (D12)              (phase 4)
+    slint-model-sync/      slint  keyed, versioned VecModel reconcile                    (phase 5)
     slint-file-drop/       slint  OS file drops with hover state and drop position       (phase 6)
     slint-widgets/         slint  .slint library: palette, code block, copy button,
                                   tokens, SVG icons                                     (phase 7)
@@ -122,6 +124,8 @@ Effort: half a day (estimate).
   `sources`, and a path dependency into slinty-pi fails the `cargo metadata` check.
 - Pushing needed SSH (`git@github.com:`): the `gh` token lacks the `workflow` scope that adding
   `.github/workflows/` over HTTPS requires.
+- CI grew later: clippy and tests with `--all-features` plus a `--no-default-features` build
+  (phase 3), and `libfontconfig-dev` installed on Linux for Slint (phase 5).
 
 ## 6. Phase 1 — dropped
 
@@ -168,10 +172,11 @@ slinty-pi gets bare-URL linking and `:shortcode:` emoji in prose.
 - `emoji-shortcodes` is yapper-emoji with the API unchanged and the data and licence files
   byte-identical.
 - 25 tests moved (13 segmenter, 6 highlight, 5 inline, 1 emoji), all passing; clippy with
-  `-D warnings`, fmt, cargo-deny and the path check are clean locally.
+  `-D warnings`, fmt, cargo-deny and the path check clean, locally and in CI (the first CI run
+  with real cargo steps).
 
 **Still to do: switching the consumers.**
-- slinty-pi (once slint-kit is public, D10): `pi-render` depends on `md-segments` by tag and
+- slinty-pi (once slint-kit is public, D10): `pi-render` depends on `md-segments` (pinned per O3) and
   re-exports the *modules* (`pub use md_segments::{segmenter, highlight}`), so
   `pi_render::segmenter::…` paths keep compiling in pi-core, pi-core-ffi and SwiftyPi; then
   delete the two local files.
@@ -219,7 +224,8 @@ commit message):
 
 Acceptance: a manual paste check of a screenshot (PNG), a copied JPEG and a Preview copy (TIFF)
 in both apps. MCP can't inject OS clipboard images (bummer: "Slint MCP cannot drive
-everything"). A unit test for format detection.
+everything"). Unit tests cover the PNG conversion and its limits, and the MIME types; format
+detection is the NSPasteboard read itself, so it is part of the manual check.
 Effort: half a day to a day (estimate).
 
 ## 9. Phase 4 — notifications and dock badge
@@ -391,6 +397,8 @@ Effort: 1–2 days (estimate).
 | Upstream: external file drops with position in Slint's winit 0.31 port | Slint | Phase 6, step 2. |
 | Upstream: wrapped `StyledText` link hit-testing | Slint | Yapper bummer 2026-09-28; affects slinty-pi's prose links too. |
 | Upstream: box-layout height-for-width (slint-ui/slint#12776) | Slint | Already filed; track. |
+| slint-kit README tells readers to depend on `tag = "v0.1.0"`, which doesn't exist | slint-kit | Fix with O3 (e.g. show `rev`). |
+| Link this plan from yapper (`LICENSING.md` or `plan/refactoring.md`) | yapper | Agent memory is per project, so a yapper session won't otherwise know the slint-kit rules. Mind the concurrent session there. |
 
 ## 15. Order and dependencies
 
@@ -406,6 +414,19 @@ Effort: 1–2 days (estimate).
 
 Recommended sequence: 0 → 2 → 3 → 4 → 5 → 7 → 8. Phase 6 waits on the upstream answer.
 The total is roughly 8–12 working days spread over several sessions (estimate).
+
+**Progress (2026-10-04):** 0 ✓ · 1 dropped · 2 ✓ · 3 ✓ · 4 ✓ · 5 ✓ (all extraction only) ·
+**7 next** · 8 · 6 waiting.
+
+**Open checks before any phase counts as fully done:**
+
+| Phase | Check | When |
+|---|---|---|
+| 2 | slinty-pi `md!` render and yapper code block identical before/after (MCP screenshots) | When each consumer switches |
+| 3 | Manual paste of a PNG screenshot, a JPEG and a Preview TIFF in both apps (the NSPasteboard read is unverified) | When each consumer switches, or earlier with a read-only example |
+| 4 | A real notification posted and clicked in a bundled build of each app | When each consumer switches |
+| 5 | A reload keeps the scroll position on the real backend in both apps | When each consumer switches |
+| all | Consumers switched: slinty-pi once slint-kit is public (D10), yapper with its refactor (D11) | — |
 
 ## 16. Three highest-risk decisions
 

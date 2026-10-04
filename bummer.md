@@ -268,3 +268,13 @@ Revisit when: the aliases are removed from the shell profile, or a hook rewrites
 Cost: one hung call plus a restore here; a 300 s timeout in yapper; an invalid test run in Flectar.
 Scope: global-candidate     Status: active
 recurred: the global CLAUDE.md already warns about `cp` (2026-10-04); a repeat despite an instruction means tooling (a hook), not more text.
+
+## 2026-10-04 · local macOS checks passed, Linux CI failed twice in slint-kit · #ci #slint #cfg slint-kit
+Situation: slint-kit phases 4 and 5 (Slint 1.18.1); fmt, clippy -D warnings, tests and cargo-deny all run locally on macOS before every push.
+Tried: treating the local run as enough before pushing.
+Outcome: Linux CI failed twice. (1) desktop-notify: with the `fallback` feature on, a `#[cfg]`'d-out test left `use super::*` unused, rejected by `-D warnings`; macOS compiles a different cfg branch. (2) slint-model-sync: Slint's core needs fontconfig via pkg-config on Linux even with no backend or renderer (`yeslogic-fontconfig-sys` build script failed).
+Evidence: slint-kit CI runs 37187734024 and 37188108232; fixes d63dbe2 and 3df9f1c.
+Next time: when a crate has target- or feature-dependent code, put `#[cfg]` on the whole test module, not the single test; expect each new Slint-dependent crate to need Linux system packages in CI. Only CI covers Linux here (no Linux target installed locally). Verified fixes.
+Revisit when: a Linux target or container is available locally for pre-push checks.
+Cost: two extra CI cycles and fix commits.
+Scope: project     Status: active
