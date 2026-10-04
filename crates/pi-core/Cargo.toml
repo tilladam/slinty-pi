@@ -15,7 +15,8 @@ serde_json = { workspace = true, features = ["preserve_order"] }
 thiserror.workspace = true
 tracing.workspace = true
 tokio.workspace = true
-nucleo-matcher = "0.3.1"
+# Same slint-kit rev as pi-render's md-segments; bump them together.
+palette-rank = { git = "https://github.com/tilladam/slint-kit", rev = "551aa54e88f77632fa3834243849c5264e639a85" }
 base64 = "0.23.0"
 directories = "6.0.0"
 trash = "5.2.6"

@@ -7,9 +7,6 @@
 //! (in `main.rs`) tells them apart — see `PaletteRow` in `ui/palette.slint`
 //! for the Slint-side mirror of this shape.
 
-use nucleo_matcher::pattern::{CaseMatching, Normalization, Pattern};
-use nucleo_matcher::{Config, Matcher};
-
 #[derive(Clone, Debug, PartialEq)]
 pub struct PaletteEntry {
     pub id: String,
@@ -100,37 +97,11 @@ pub fn build_entries(
     entries
 }
 
-struct Candidate {
-    idx: usize,
-    haystack: String,
-}
-
-impl AsRef<str> for Candidate {
-    fn as_ref(&self) -> &str {
-        &self.haystack
-    }
-}
-
-/// Fuzzy-rank `entries` against `query`, most relevant first, capped to a
-/// reasonable list size. An empty query returns entries in their built
-/// (action, then session, then command) order.
+/// Fuzzy-rank `entries` against `query` (label and detail), most relevant
+/// first, capped to a reasonable list size. An empty query returns entries
+/// in their built (action, then session, then command) order.
 pub fn rank(entries: &[PaletteEntry], query: &str) -> Vec<PaletteEntry> {
-    const LIMIT: usize = 60;
-    if query.trim().is_empty() {
-        return entries.iter().take(LIMIT).cloned().collect();
-    }
-    let mut matcher = Matcher::new(Config::DEFAULT);
-    let pattern = Pattern::parse(query, CaseMatching::Ignore, Normalization::Smart);
-    let candidates = entries.iter().enumerate().map(|(idx, e)| Candidate {
-        idx,
-        haystack: format!("{} {}", e.label, e.detail),
-    });
-    pattern
-        .match_list(candidates, &mut matcher)
-        .into_iter()
-        .take(LIMIT)
-        .map(|(c, _score)| entries[c.idx].clone())
-        .collect()
+    palette_rank::rank(entries, query, 60, |e| format!("{} {}", e.label, e.detail))
 }
 
 #[cfg(test)]
