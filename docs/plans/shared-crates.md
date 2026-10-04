@@ -1,8 +1,8 @@
 # Shared crates across slinty-pi, yapper and Flectar Mail — plan
 
 Status: plan, 2026-10-04. Phase 0 done: `tilladam/slint-kit` exists (private for now, D8) with
-licence, policy and CI. Phases 2–4 extracted (`md-segments`, `emoji-shortcodes`,
-`desktop-clipboard`, `desktop-notify`); the consumers haven't switched yet (D10, D11). Builds on the code inventory of the three
+licence, policy and CI. Phases 2–5 extracted (`md-segments`, `emoji-shortcodes`,
+`desktop-clipboard`, `desktop-notify`, `slint-model-sync`); the consumers haven't switched yet (D10, D11). Builds on the code inventory of the three
 apps done on 2026-10-03 and the platform-glue review of 2026-10-04.
 
 **How to read the evidence tags:**
@@ -288,6 +288,22 @@ pi-core and is toolkit-agnostic.
 2. Property tests: for random old/new lists, applying the emitted operations to `old` yields
    `new`.
 3. Adopt in yapper's timeline (replacing its local diff) and in slinty-pi's history reloads.
+
+**Extracted 2026-10-04** (slint-kit 6f6a47a, CI fix 3df9f1c; provenance in the commit message):
+- `KeyedModel<K, T>` holds a `VecModel<T>` plus each row's key and version.
+  `apply(&[(K, u64)], build: FnMut(&K) -> T) -> Changes { inserted, removed, updated }` is yapper's
+  merge walk, generalised; `build` runs only for inserted and updated rows. There are also
+  `model_rc()`, `model()`, `keys()` and `index_of()`.
+- Differs from the sketch: keys with versions instead of a whole-row `PartialEq` diff (yapper's
+  proven shape, and rows aren't built just to compare them); no prefix/suffix fast path; no
+  `Coalescer` (add it when a consumer needs it).
+- Tests: yapper's "refresh is row operations" scenario, moves, lazy building, and a 2000-round
+  randomized convergence test. Disabling updates on purpose fails three of the four tests.
+- Depends on `slint` with only `std` and `compat-1-18` (Slint's mandatory feature when default
+  features are off).
+- The first CI run failed on Linux: Slint's core needs `libfontconfig-dev` there even without a
+  backend. CI now installs it on Linux; later Slint crates may need more system packages.
+- Still to do: step 3 (the consumers), and the real-backend scroll check below.
 
 Acceptance: property tests; on the real backend (not headless, bummer: "headless backend
 differs on element lifetime"), a reload keeps the scroll position in both apps.
