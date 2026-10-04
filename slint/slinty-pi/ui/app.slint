@@ -638,8 +638,8 @@ export component AppWindow inherits Window {
     callback palette-exec(string);
     callback attach-clicked();
     callback remove-attachment(int);
-    // Cmd+V/Ctrl+V: asks Rust whether the clipboard holds an image. `true`
-    // means it queued one as an attachment and the key event should be
+    // Cmd+V/Ctrl+V: asks Rust whether the clipboard holds an image or
+    // copied files. `true` means it queued them as attachments and the key event should be
     // swallowed; `false` lets it fall through to `TextEdit`'s own
     // text-paste.
     callback paste-image-requested() -> bool;

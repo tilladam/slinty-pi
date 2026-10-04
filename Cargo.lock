@@ -1167,6 +1167,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "desktop-clipboard"
+version = "0.1.0"
+source = "git+https://github.com/tilladam/slint-kit?rev=551aa54e88f77632fa3834243849c5264e639a85#551aa54e88f77632fa3834243849c5264e639a85"
+dependencies = [
+ "arboard",
+ "image",
+ "objc2-app-kit 0.3.2",
+ "objc2-foundation 0.3.2",
+]
+
+[[package]]
 name = "directories"
 version = "6.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3598,6 +3609,7 @@ checksum = "e3e0adef53c21f888deb4fa59fc59f7eb17404926ee8a6f59f5df0fd7f9f3272"
 dependencies = [
  "bitflags 2.13.2",
  "block2 0.6.2",
+ "libc",
  "objc2 0.6.4",
  "objc2-core-foundation",
 ]
@@ -3813,7 +3825,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7d8fae84b431384b68627d0f9b3b1245fcf9f46f6c0e3dc902e9dce64edd1967"
 dependencies = [
  "libc",
- "windows-sys 0.48.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -3973,7 +3985,6 @@ dependencies = [
  "pi-render",
  "pi-rpc",
  "pi-sessions",
- "png",
  "serde",
  "serde_json",
  "tempfile",
@@ -5147,6 +5158,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "arboard",
+ "desktop-clipboard",
  "embed-resource",
  "pi-core",
  "rfd",
@@ -6744,7 +6756,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.48.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]

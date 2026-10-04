@@ -14,6 +14,7 @@ use slint::{ComponentHandle, Model, ModelRc, VecModel};
 use tokio::sync::mpsc;
 
 use backend::SlintUi;
+use desktop_clipboard::{ClipboardAttachment, EncodedImage, ImageFormat};
 use pi_core::backend::{Secret, UiCmd};
 use pi_core::{density, highlight};
 
@@ -44,6 +45,23 @@ fn install_file_drop(app: &AppWindow, tx: mpsc::UnboundedSender<UiCmd>) {
         }
         EventResult::Propagate
     });
+}
+
+/// A pasted image as `(name, mime type, bytes)` for `UiCmd::AttachImageData`.
+/// PNG and JPEG keep their clipboard bytes; anything else (TIFF, common on
+/// macOS) is decoded within `desktop_clipboard`'s limits and re-encoded as
+/// PNG, so call it off the UI thread.
+fn pasted_image(image: EncodedImage) -> Result<(String, String, Vec<u8>), String> {
+    let ext = match image.format {
+        ImageFormat::Png => "png",
+        ImageFormat::Jpeg => "jpg",
+        _ => {
+            let png = desktop_clipboard::to_png(image)?;
+            return Ok(("Pasted image.png".into(), "image/png".into(), png));
+        }
+    };
+    let mime_type = image.mime_type().to_string();
+    Ok((format!("Pasted image.{ext}"), mime_type, image.bytes))
 }
 
 fn main() -> anyhow::Result<()> {
@@ -206,23 +224,35 @@ fn main() -> anyhow::Result<()> {
         });
         let tx = cmd_tx.clone();
         app.on_paste_image_requested(move || -> bool {
-            let Ok(mut clipboard) = arboard::Clipboard::new() else {
-                return false;
-            };
-            let Ok(image) = clipboard.get_image() else {
-                return false;
-            };
-            let Ok(png) =
-                pi_core::attach::encode_png(image.width as u32, image.height as u32, &image.bytes)
-            else {
-                return false;
-            };
-            let _ = tx.send(UiCmd::AttachImageData {
-                name: "Pasted image.png".to_string(),
-                mime_type: "image/png".to_string(),
-                data: png,
-            });
-            true
+            // Copied files attach like a drop; images are prepared off the
+            // UI thread (see `pasted_image`).
+            match desktop_clipboard::clipboard_attachment() {
+                Ok(Some(ClipboardAttachment::Files(paths))) => {
+                    for path in paths {
+                        let _ = tx.send(UiCmd::AttachPath(path));
+                    }
+                    true
+                }
+                Ok(Some(ClipboardAttachment::Image(image))) => {
+                    let tx = tx.clone();
+                    std::thread::spawn(move || match pasted_image(image) {
+                        Ok((name, mime_type, data)) => {
+                            let _ = tx.send(UiCmd::AttachImageData {
+                                name,
+                                mime_type,
+                                data,
+                            });
+                        }
+                        Err(e) => tracing::warn!("pasted image not attached: {e}"),
+                    });
+                    true
+                }
+                Ok(None) => false,
+                Err(e) => {
+                    tracing::warn!("clipboard read failed: {e}");
+                    false
+                }
+            }
         });
         let tx = cmd_tx.clone();
         app.on_open_palette(move || {
