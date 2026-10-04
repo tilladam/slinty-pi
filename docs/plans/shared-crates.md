@@ -1,7 +1,8 @@
 # Shared crates across slinty-pi, yapper and Flectar Mail — plan
 
 Status: plan, 2026-10-04. Phase 0 done: `tilladam/slint-kit` exists (private for now, D8) with
-licence, policy and CI. Nothing is extracted yet. Builds on the code inventory of the three
+licence, policy and CI. Phase 2 extracted (`md-segments`, `emoji-shortcodes`); the consumers
+haven't switched yet (D10, D11). Builds on the code inventory of the three
 apps done on 2026-10-03 and the platform-glue review of 2026-10-04.
 
 **How to read the evidence tags:**
@@ -23,6 +24,8 @@ apps done on 2026-10-03 and the platform-glue review of 2026-10-04.
 | D6 | **One repo**, a Cargo workspace holding all the crates (was O1). | User, 2026-10-04 |
 | D8 | **Private for now**; made public later, when Till decides (D1 is the end state). | User, 2026-10-04 |
 | D9 | **slint-kit holds code only.** This plan stays in slinty-pi, and the Slint gotchas stay in the apps' own `bummer.md` files; neither goes into slint-kit. | User, 2026-10-04 |
+| D10 | **slinty-pi keeps its own copy** of the extracted code until slint-kit is public; a public repo must not depend on a private one. | User, 2026-10-04 |
+| D11 | **Yapper's switch waits for its refactor** (another session is active there); copying out of yapper is read-only. | User, 2026-10-04 |
 | D7 | The repo is named **`slint-kit`** (`github.com/tilladam/slint-kit`; was O2). Read as "a kit for Slint apps": only the `slint-*` crates depend on Slint, the others are Slint-free companions (D5), and SwiftyPi may use them too. | User, 2026-10-04 |
 
 **Already done (not part of this plan any more):**
@@ -157,6 +160,24 @@ Vec<CodeLine>` behind a default `highlight` feature (syntect is the heavy depend
 **What each app gains:** yapper gets syntax highlighting for code blocks, though its
 `BlockView` needs coloured spans to show it (or the shared code-block widget from phase 7).
 slinty-pi gets bare-URL linking and `:shortcode:` emoji in prose.
+
+**Extracted 2026-10-04** (slint-kit ea92be5; provenance in the commit message):
+- `md-segments` holds `segmenter`, `highlight` (feature `highlight`, default on) and `inline`
+  (yapper's helpers). `emoji_shortcodes(src, &Table)` now takes the table, so yapper's
+  wrapper passes `rocketchat()`. `literal_ranges` is public.
+- `emoji-shortcodes` is yapper-emoji with the API unchanged and the data and licence files
+  byte-identical.
+- 25 tests moved (13 segmenter, 6 highlight, 5 inline, 1 emoji), all passing; clippy with
+  `-D warnings`, fmt, cargo-deny and the path check are clean locally.
+
+**Still to do: switching the consumers.**
+- slinty-pi (once slint-kit is public, D10): `pi-render` depends on `md-segments` by tag and
+  re-exports the *modules* (`pub use md_segments::{segmenter, highlight}`), so
+  `pi_render::segmenter::…` paths keep compiling in pi-core, pi-core-ffi and SwiftyPi; then
+  delete the two local files.
+- yapper (with its refactor, D11): `yapper-emoji` becomes a re-export of `emoji-shortcodes`, so
+  its six dependants don't change; `blocks.rs` keeps thin wrappers (`emoji_shortcodes` passing
+  `rocketchat()`). Touch only those files; no workspace-wide `cargo fmt`.
 
 Acceptance: all moved tests pass in the new repo; slinty-pi `cargo test --workspace` green;
 yapper tests green; a slinty-pi `md!` demo render and a yapper code block look identical before
