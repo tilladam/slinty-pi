@@ -394,7 +394,7 @@ light/dark screenshots match slinty-pi's palette. Ranking decision: a new pure c
 - Then, at Till's request, a fixed 14 px centred icon column, so labels line up whatever
   the glyph width (slinty-pi's palette still has the ragged labels until it switches).
 
-**Round 3, 2026-10-04** (slint-kit a914d5b; CI pending when recorded; provenance in the
+**Round 3, 2026-10-04** (slint-kit a914d5b, CI green on macOS and Linux; provenance in the
 commit message). Till chose "all markdown rows now" over table-only. Criterion, per component:
 shown in the gallery in light and dark, matching slinty-pi rendering the same markdown.
 - `ProseBlock`, `HeadingBlock`, `QuoteBlock`, `RuleBlock`, `TableBlock` (+ `TableCell`,
