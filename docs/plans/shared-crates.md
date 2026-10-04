@@ -3,8 +3,9 @@
 Status, 2026-10-04: phase 0 done (`tilladam/slint-kit`, private for now, D8). Phase 1 dropped
 (D9). Phases 2–5 extracted (`md-segments`, `emoji-shortcodes`, `desktop-clipboard`,
 `desktop-notify`, `slint-model-sync`), CI green on macOS and Linux. No consumer has switched yet
-(D10, D11); open checks are listed in §15. Phase 7 rounds 1–2 done (`slint-widgets` with `CopyButton`, `CodeBlock`,
-`CommandPalette`; `palette-rank`; gallery); next: Till's pick of more components or phase 8. Builds on the code inventory of the
+(D10, D11); open checks are listed in §15. Phase 7 rounds 1–3 done (`slint-widgets` with `CopyButton`, `CodeBlock`,
+`CommandPalette` and the markdown blocks; `palette-rank`; gallery); next: the SVG icon set
+(proposed) or phase 8. Builds on the code inventory of the
 three apps (2026-10-03) and the platform-glue review (2026-10-04).
 
 **How to read the evidence tags:**
@@ -393,12 +394,25 @@ light/dark screenshots match slinty-pi's palette. Ranking decision: a new pure c
 - Then, at Till's request, a fixed 14 px centred icon column, so labels line up whatever
   the glyph width (slinty-pi's palette still has the ragged labels until it switches).
 
+**Round 3, 2026-10-04** (slint-kit a914d5b; CI pending when recorded; provenance in the
+commit message). Till chose "all markdown rows now" over table-only. Criterion, per component:
+shown in the gallery in light and dark, matching slinty-pi rendering the same markdown.
+- `ProseBlock`, `HeadingBlock`, `QuoteBlock`, `RuleBlock`, `TableBlock` (+ `TableCell`,
+  `TableRowCells`): slinty-pi's rows with plain properties instead of its `Row` struct; a
+  non-empty `copy-payload` shows a copy button. `KitStyle` gains `card`.
+- `TableBlock` is slinty-pi's current form: no min-height (#12776 fixed in 1.18.1), columns of
+  24 px plus a share of the remainder (661fca1), so they always fit the card. The app gives it
+  an explicit width, e.g. `min(available, natural width)`.
+- `md-segments` gains `column_layout(rows) -> (shares, natural width)`, slinty-pi's backend
+  table sizing (one new test).
+- Gallery page `GALLERY_PAGE=markdown`: heading, prose with bold/link/inline code, quote, rule,
+  the three- and six-column test tables. Screenshots in both schemes match slinty-pi (the same
+  markdown via its demo `md!` hook; light forced by a temporary, reverted `init`): colours,
+  quote bar, rule, table shading and borders, column proportions. Lines wrap differently only
+  because slinty-pi's transcript is wider.
+
 **What's left in phase 7** (2026-10-04):
-1. **Markdown rows**: heading, quote, rule, prose (with links) and table, from slinty-pi's
-   `HeadingRow`, `QuoteRow`, `RuleRow`, `ProseRow` and `TableBlock`. These pair with
-   `md-segments`, and give yapper headings and tables. The shared `TableBlock` takes slinty-pi's
-   current form: no min-height (since #12776 is fixed), explicit widths of 24 px plus a share of
-   the remainder (661fca1).
+1. ~~Markdown rows~~: done in round 3.
 2. **SVG icon set** (e.g. Lucide, ISC) instead of Unicode symbols; also replaces slinty-pi's
    colour-emoji `↪`/`⚙︎`.
 3. **Richer tokens**: a few base colours generating the rest, with a contrast check (Flectar's
@@ -470,7 +484,7 @@ Recommended sequence: 0 → 2 → 3 → 4 → 5 → 7 → 8. Phase 6 waits on th
 The total is roughly 8–12 working days spread over several sessions (estimate).
 
 **Progress (2026-10-04):** 0 ✓ · 1 dropped · 2 ✓ · 3 ✓ · 4 ✓ · 5 ✓ (all extraction only) ·
-7 rounds 1–2 ✓ (more components on request) · 8 · 6 waiting.
+7 rounds 1–3 ✓ (icons, tokens, small pieces left) · 8 · 6 waiting.
 
 **Open checks before any phase counts as fully done:**
 
