@@ -34,6 +34,8 @@ three apps (2026-10-03) and the platform-glue review (2026-10-04).
 | D13 | **Local-LLM code goes to a separate project**, not slint-kit: none of it depends on Slint (pi-local's candidates use serde/serde_json/thiserror/tokio/reqwest/sysinfo; yapper's `provider.rs` anyhow/serde_json/reqwest/tokio). slint-kit keeps its five Slint-free crates as companions (D7 unchanged). | User, 2026-10-04 |
 | D14 | The new project follows slint-kit's rules: MIT, public on GitHub eventually but **private for now**, crates.io dependencies only, the same `deny.toml` policy and CI. | User, 2026-10-04 |
 | D15 | The local-LLM project is named **`rust-llm-interactor`** (`github.com/tilladam/rust-llm-interactor`; was part of O5). | User, 2026-10-04 |
+| D16 | **Yapper doesn't manage local models, for now**: it keeps using the configured `[assistant] base_url`. | User, 2026-10-04 |
+| D17 | `rust-llm-interactor` has **two pure crates**: model management (rapid-mlx, llama.cpp router, HF search, Ollama, RAM fit) and an OpenAI-compatible chat client (was O5). | User, 2026-10-04 |
 
 **Already done (not part of this plan any more):**
 - yapper `LICENSE` + `LICENSING.md` (2526883).
@@ -46,7 +48,6 @@ three apps (2026-10-03) and the platform-glue review (2026-10-04).
 
 | # | Question | Recommendation |
 |---|---|---|
-| O5 | Crate split of `rust-llm-interactor` (D15). | Two pure crates: model management (rapid-mlx, llama.cpp router, HF search, Ollama, RAM fit) and an OpenAI-compatible chat client. |
 | O3 | How do consumers pin slint-kit: git `rev`, tags, or crates.io? | No tags yet: Till said not to tag for now (2026-10-04). Until decided, a consumer pins a commit (`git = "…", rev = "<sha>"`). crates.io once an API has survived both apps for a release or two. |
 
 ## 3. Bummer entries that apply
@@ -436,7 +437,7 @@ Effort: spike half a day; then about half a day per component (estimate).
 ## 13. Phase 8 — local-LLM crates (separate project, D13/D14)
 
 **Where:** a new repository, `rust-llm-interactor` (D15), with slint-kit's rules (D14), not
-slint-kit; crate split per O5. Phase 0's bootstrap steps (licence, README, `deny.toml`, CI, the outside-path check) apply
+slint-kit; two crates (D17). Phase 0's bootstrap steps (licence, README, `deny.toml`, CI, the outside-path check) apply
 again there.
 
 **Sizes and couplings** (read 2026-10-04): the five pi-local modules below reference no other
@@ -457,9 +458,10 @@ on `yapper_http::bounded_body`, which would be copied in.
   plus the `provider_preset` functions of `rapid_mlx.rs`/`ollama.rs`, which build pi
   `models.json` entries.
 - **Stays in yapper:** `session.rs`, `tools.rs`, `compact.rs` (tied to yapper-query).
-- **Open question for Till:** should yapper manage local models at all (detect/start
-  rapid-mlx, pick models), or keep using a configured `[assistant] base_url`? If not, the
-  project starts with only the chat client, or waits.
+- **Users per crate (D16):** the model-management crate serves slinty-pi (and SwiftyPi via
+  pi-core-ffi) only, so its value is shared maintenance, e.g. this week's rapid-mlx output
+  change fixed once. The chat client is yapper's `provider.rs`; slinty-pi has no use for it
+  (pi talks to the models). Neither has a second consumer yet.
 
 **What each app gains:** yapper can detect and start rapid-mlx and list models instead of
 assuming a running server. slinty-pi gains only shared maintenance, since pi itself makes the
