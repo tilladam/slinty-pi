@@ -57,7 +57,9 @@ export struct QueueItem {
 
 global Style {
     out property <length> radius: 9px;
-    out property <string> mono-font: "SF Mono";
+    // "SF Mono" does not resolve in Slint (code fell back to a proportional
+    // font); Menlo does. See bummer.md, 2026-10-04.
+    out property <string> mono-font: "Menlo";
     out property <color> dim: Palette.foreground.transparentize(0.45);
     out property <color> faint: Palette.foreground.transparentize(0.65);
     out property <brush> card: Palette.control-background;
