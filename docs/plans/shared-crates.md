@@ -1,6 +1,7 @@
 # Shared crates across slinty-pi, yapper and Flectar Mail — plan
 
-Status: plan, 2026-10-04. Nothing is extracted yet. Builds on the code inventory of the three
+Status: plan, 2026-10-04. Phase 0 done: `tilladam/slint-kit` exists (private for now, D8) with
+licence, policy and CI. Nothing is extracted yet. Builds on the code inventory of the three
 apps done on 2026-10-03 and the platform-glue review of 2026-10-04.
 
 **How to read the evidence tags:**
@@ -20,6 +21,8 @@ apps done on 2026-10-03 and the platform-glue review of 2026-10-04.
 | D4 | **Flectar Mail is ideas-only.** It is AGPL-3.0-only and mostly another author's work (git: 338 commits by its author, 4 by Till) [read]. Nothing is copied from it; ideas are reimplemented from a description, not from its source. | Analysis 2026-10-03 |
 | D5 | Keep pure (toolkit-agnostic) code and Slint-dependent code in **separate crates from the start**. | Yapper's bummer.md, 2026-10-04 (user chose `yapper-app` + `yapper-view` over "one crate first"); applied here by analogy |
 | D6 | **One repo**, a Cargo workspace holding all the crates (was O1). | User, 2026-10-04 |
+| D8 | **Private for now**; made public later, when Till decides (D1 is the end state). | User, 2026-10-04 |
+| D9 | **slint-kit holds code only.** This plan stays in slinty-pi, and the Slint gotchas stay in the apps' own `bummer.md` files; neither goes into slint-kit. | User, 2026-10-04 |
 | D7 | The repo is named **`slint-kit`** (`github.com/tilladam/slint-kit`; was O2). Read as "a kit for Slint apps": only the `slint-*` crates depend on Slint, the others are Slint-free companions (D5), and SwiftyPi may use them too. | User, 2026-10-04 |
 
 **Already done (not part of this plan any more):**
@@ -39,7 +42,8 @@ apps done on 2026-10-03 and the platform-glue review of 2026-10-04.
 ## 3. Bummer entries that apply
 
 From slinty-pi `bummer.md`:
-- **All `global-candidate` Slint entries** → phase 1 moves them into the shared repo's docs.
+- **All Slint entries**: read before any `slint-*` crate work. They stay in the apps'
+  `bummer.md` files, not in slint-kit (D9).
 - **"internal CustomApplicationHandler believed the only way…"** → phase 6: use public
   `slint::winit_030` hooks only; no internal Slint crates in shared code.
 - **"✕ ✎ ◷ drew as empty boxes with SF Pro"** → phase 7: SVG icons, not Unicode symbols.
@@ -64,7 +68,6 @@ One public workspace repo, `slint-kit` (D6, D7), MIT, with pure and Slint crates
 ```
 slint-kit/
   LICENSE (MIT)            deny.toml (license + source policy, see §5)
-  docs/slint-gotchas.md    (phase 1)
   crates/
     md-segments/           pure   markdown → segments, syntect highlighting, linkify   (phase 2)
     emoji-shortcodes/      pure   :shortcode: tables (iamcal, joypixels), zero deps     (phase 2)
@@ -107,20 +110,21 @@ Acceptance: an empty-crate PR passes CI including `cargo deny check`; a test PR 
 dependency fails it.
 Effort: half a day (estimate).
 
-## 6. Phase 1 — Slint gotchas doc
+**Done 2026-10-04** (slint-kit b9f1882). Differences from the steps above:
+- Cargo can't run on a workspace with no members, so CI skips its cargo steps until the first
+  crate exists; no placeholder crate.
+- `BSL-1.0` joined the allow list (Boost; arboard → clipboard-win on Windows, via Slint).
+- Policy verified locally with a throwaway probe crate (cargo-deny 0.20.2): Slint 1.18 alone
+  passes (its `OR` licence resolves to the royalty-free branch), a git dependency fails
+  `sources`, and a path dependency into slinty-pi fails the `cargo metadata` check.
+- Pushing needed SSH (`git@github.com:`): the `gh` token lacks the `workflow` scope that adding
+  `.github/workflows/` over HTTPS requires.
 
-1. Run the `bummer` skill's review on slinty-pi's `bummer.md` and yapper's Slint entries.
-2. Promote the `global-candidate` Slint entries into `slint-kit/docs/slint-gotchas.md`, grouped
-   (layout, input/hit-testing, text/fonts, rendering/perf, testing via MCP), each with the
-   workaround and the "revisit when" condition.
-3. Mark the source entries `Status: promoted → slint-kit/docs/slint-gotchas.md`; link the doc from
-   slinty-pi's and yapper's CLAUDE.md/AGENTS.md.
-4. Optional: package the doc as a skill so agents load it for `.slint` work. It would complement
-   the official `slint@slint` plugin, not duplicate it.
+## 6. Phase 1 — dropped
 
-Acceptance: both apps' agent guidance points at the doc; promoted entries are marked in both
-bummer.md files.
-Effort: 1–2 hours (estimate).
+Was: move the Slint gotchas into a `slint-kit/docs/slint-gotchas.md`. Dropped on 2026-10-04
+(D9): they stay in slinty-pi's `bummer.md` (which also summarises yapper's Slint entries) and in
+yapper's own `bummer.md`. Phase numbers below are kept as they were.
 
 ## 7. Phase 2 — `md-segments` and `emoji-shortcodes`
 
@@ -315,8 +319,7 @@ Effort: 1–2 days (estimate).
 ## 15. Order and dependencies
 
 ```
-0 bootstrap ─┬─ 1 gotchas doc
-             ├─ 2 md-segments + emoji ──(yapper refactor timing)
+0 bootstrap ─┬─ 2 md-segments + emoji ──(yapper refactor timing)
              ├─ 3 clipboard
              ├─ 4 notify evaluation
              ├─ 5 model-sync
@@ -325,7 +328,7 @@ Effort: 1–2 days (estimate).
              └─ 8 local-llm
 ```
 
-Recommended sequence: 0 → 1 → 2 → 3 → 4 → 5 → 7 → 8. Phase 6 waits on the upstream answer.
+Recommended sequence: 0 → 2 → 3 → 4 → 5 → 7 → 8. Phase 6 waits on the upstream answer.
 The total is roughly 8–12 working days spread over several sessions (estimate).
 
 ## 16. Three highest-risk decisions

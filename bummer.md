@@ -17,8 +17,8 @@
 # Seeded 2026-10-04 with Slint gotchas: slinty-pi's own (carried over from the project memory
 # "slint-gotchas-slinty-pi", dated by when they were recorded there), the Slint-related entries
 # of yapper's bummer.md (summarised; the original entry is the reference), and one second-hand
-# Flectar Mail lesson. Entries marked global-candidate apply to Slint work in general and are
-# meant to move into the shared crates repo's docs (docs/plans/shared-crates.md, phase 1).
+# Flectar Mail lesson. Entries marked global-candidate apply to Slint work in general; they stay
+# here rather than in slint-kit (docs/plans/shared-crates.md, D9).
 
 ## 2026-08-04 · width bindings inside a Flickable loop · #slint #layout slint/slinty-pi/ui/app.slint
 Situation: transcript bubbles in Slint 1.17; capping bubble width relative to the window.
