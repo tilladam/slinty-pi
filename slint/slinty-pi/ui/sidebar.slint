@@ -53,7 +53,8 @@ component RenameButton inherits Rectangle {
     background: touch.has-hover ? Palette.alternate-background.darker(10%) : transparent;
 
     Text {
-        text: "✎";
+        // No pencil glyph draws as text with SF Pro (✎ ✐ ✑ are boxes, ✏ ✒ ✍ emoji).
+        text: "⋯";
         font-size: 11px;
         color: Palette.foreground.transparentize(0.4);
     }
