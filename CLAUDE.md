@@ -138,8 +138,9 @@ registered in `build.rs`). Plan and open checks: `docs/plans/shared-crates.md`.
 `app.slint` is the main window and the app-specific row components (`UserRow`, `ThinkingRow`,
 `ToolRow`, `NoteRow`); prose, heading, quote, rule, code and table rows and the command palette
 come from `@slint-widgets` (`ProseBlock`, `HeadingBlock`, `QuoteBlock`, `RuleBlock`, `CodeBlock`,
-`TableBlock`, `CommandPalette`). `sidebar.slint`, `tree.slint`, `models.slint` are the session
-sidebar, branch-tree overlay, and models panel. `build.rs` compiles `ui/app.slint` via
+`TableBlock`, `CommandPalette`), as do the session delete and tree fork buttons (`ConfirmButton`).
+`sidebar.slint`, `tree.slint`, `models.slint` are the session sidebar, branch-tree overlay, and
+models panel. `build.rs` compiles `ui/app.slint` via
 `slint-build` with the `@slint-widgets` library path; the others are `import`ed from it (not
 standalone build targets).
 

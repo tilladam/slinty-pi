@@ -300,3 +300,14 @@ Next time: take palette shots in real mode (`pi` on PATH; no model call needed),
 Revisit when: demo_backend builds palette entries.
 Cost: one wasted screenshot round.
 Scope: project     Status: active
+
+## 2026-10-09 · MCP click on a hover-only sidebar button did nothing · #slint #testing #mcp slint/slinty-pi/ui/sidebar.slint
+Situation: arming the session delete button via MCP `click_element` for before/after screenshots (Slint 1.18.1, demo mode, no active row).
+Tried: `hover_element` on the row, look up the button, `click_element` on it.
+Outcome: the button never armed, on the old DeleteButton and the new ConfirmButton alike; its element handle changed after the click (4 → 5), so it was destroyed and recreated.
+Evidence: 2026-10-09 ConfirmButton port, MCP element handles.
+Hypothesis: the button exists only while the row's TouchArea `has-hover`; moving the pointer onto the button (a sibling on top) briefly clears that, recreating the button and dropping its state. Whether a real mouse hits the same on non-active rows is not checked.
+Next time: test such buttons on the active row (`SLINTY_SWITCH_SESSION_AFTER`), where they don't depend on hover; and look up element handles after the last hover, not before. Verified.
+Revisit when: someone checks deleting a non-active session with a real mouse.
+Cost: two screenshot rounds.
+Scope: project     Status: active

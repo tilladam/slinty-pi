@@ -416,14 +416,26 @@ shown in the gallery in light and dark, matching slinty-pi rendering the same ma
   quote bar, rule, table shading and borders, column proportions. Lines wrap differently only
   because slinty-pi's transcript is wider.
 
+**Round 4, 2026-10-09** (slint-kit 8465432; provenance in the commit message). Criterion agreed
+first: the gallery shows both variants in light and dark, idle and armed, and a second click fires
+`confirmed`; slinty-pi's delete and fork buttons match the previous build pixel for pixel, idle and
+armed, in both schemes.
+- `ConfirmButton`: slinty-pi's `DeleteButton` and `ForkButton` merged into one component (two
+  clicks to confirm, 2.5 s timeout, explicit widths so the width animates, optional outline).
+- Gallery: checked via MCP (arm both, confirm one: counter 0 → 1, the other disarms on timeout).
+- slinty-pi switched in the same change (all slint-kit pins bumped to 8465432): MCP screenshots
+  identical to the previous build, idle and armed, both schemes (the composer's blinking caret
+  masked). The sidebar shots use the active row: on a merely hovered row the button is
+  recreated when the pointer reaches it (both builds; see bummer.md, 2026-10-09).
+
 **What's left in phase 7** (2026-10-04):
 1. ~~Markdown rows~~: done in round 3.
 2. **SVG icon set** (e.g. Lucide, ISC) instead of Unicode symbols; also replaces slinty-pi's
    colour-emoji `↪`/`⚙︎`.
 3. **Richer tokens**: a few base colours generating the rest, with a contrast check (Flectar's
    idea, reimplemented). Mostly useful when yapper (dark-only today) adopts `KitStyle`.
-4. **Smaller pieces**: `Dots` (thinking indicator), `StripChip`, `UsageRing`, maybe the tree
-   overlay pattern.
+4. **Smaller pieces**: ~~`ConfirmButton`~~ (round 4); `Dots` and `LiveDot` (timer-driven, wait for
+   a yapper need), `StripChip`, `UsageRing`, maybe the tree overlay pattern.
 5. **Consumers switch** (step 3 below): blocked by D10/D11.
 
 **Steps:**
