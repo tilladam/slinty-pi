@@ -476,7 +476,7 @@ Effort: 1–2 days (estimate).
 
 | Item | Where | Notes |
 |---|---|---|
-| Switch yapper's macOS-only keychain code (`yapper-config/src/secrets.rs`, `security-framework`) to `keyring` | yapper | Cross-platform; Flectar uses keyring for the same job [inventory]. Watch for re-prompting Keychain approvals after the switch (yapper bummer, 2026-09-27). |
+| ~~Switch yapper's macOS-only keychain code (`yapper-config/src/secrets.rs`, `security-framework`) to `keyring`~~ | yapper | **Done** 2026-10-09 (yapper 980ea0c, keyring 4.2, same service/account items). Not yet checked: whether the signed app and CLI read existing entries without new Keychain approvals (yapper bummer, 2026-09-27). |
 | ~~`license = "MIT"` metadata in yapper's crates~~ | yapper | **Done** 2026-10-09 (yapper 8d8512d): workspace field plus `license.workspace = true`; `yapper-signal` and `spikes/sg-link` keep AGPL-3.0-only. |
 | slinty-pi `demo_backend`: handle `AttachPath`/`AttachImageData`/`SetDragHover` | slinty-pi | So demo mode can exercise phases 3 and 6. |
 | Upstream: external file drops with position in Slint's winit 0.31 port | Slint | Phase 6, step 2. |
