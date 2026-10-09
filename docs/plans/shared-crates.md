@@ -477,7 +477,7 @@ Effort: 1–2 days (estimate).
 | Item | Where | Notes |
 |---|---|---|
 | Switch yapper's macOS-only keychain code (`yapper-config/src/secrets.rs`, `security-framework`) to `keyring` | yapper | Cross-platform; Flectar uses keyring for the same job [inventory]. Watch for re-prompting Keychain approvals after the switch (yapper bummer, 2026-09-27). |
-| `license = "MIT"` metadata in yapper's crates | yapper | Workspace field plus `license.workspace = true`, except the AGPL crates. |
+| ~~`license = "MIT"` metadata in yapper's crates~~ | yapper | **Done** 2026-10-09 (yapper 8d8512d): workspace field plus `license.workspace = true`; `yapper-signal` and `spikes/sg-link` keep AGPL-3.0-only. |
 | slinty-pi `demo_backend`: handle `AttachPath`/`AttachImageData`/`SetDragHover` | slinty-pi | So demo mode can exercise phases 3 and 6. |
 | Upstream: external file drops with position in Slint's winit 0.31 port | Slint | Phase 6, step 2. |
 | Upstream: wrapped `StyledText` link hit-testing | Slint | Yapper bummer 2026-09-28; affects slinty-pi's prose links too. |
@@ -532,8 +532,9 @@ The total is roughly 8–12 working days spread over several sessions (estimate)
 
 **yapper port (2026-10-04)**, on yapper's main (267d111…dfe06d9), all five crates pinned to slint-kit
 rev 39f54f0 in yapper's `[workspace.dependencies]` (one rev; bump together):
-- `emoji-shortcodes`: `yapper-emoji` is `pub use emoji_shortcodes::*`, so its six dependants are
-  unchanged; its data and licence files are gone (byte-identical in slint-kit).
+- `emoji-shortcodes`: its six users (five backends and `yapper-view`) depend on it directly;
+  the data and licence files moved to slint-kit byte-identical. At first `yapper-emoji` re-exported
+  it (`pub use emoji_shortcodes::*`); that crate was deleted on 2026-10-09 (yapper 5db57da).
 - `md-segments` (no `highlight` feature, so no syntect in `yapper-view`): `blocks.rs` re-exports
   `links`, `linkify`, `custom_emoji`, `literal_ranges` and wraps `emoji_shortcodes` with `rocketchat()`.
 - `desktop-clipboard`: replaces the clipboard half of `attachment_input.rs`; `encode_clipboard`
