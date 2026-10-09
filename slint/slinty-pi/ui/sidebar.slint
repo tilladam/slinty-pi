@@ -1,4 +1,5 @@
 import { Button, ComboBox, ListView, LineEdit, Palette } from "std-widgets.slint";
+import { ConfirmButton } from "@slint-widgets";
 
 export struct SessionRow {
     path: string,
@@ -6,42 +7,6 @@ export struct SessionRow {
     relative-time: string,
     active: bool,
     cost: string,
-}
-
-component DeleteButton inherits Rectangle {
-    callback delete-requested();
-    property <bool> confirming: false;
-
-    width: confirming ? 54px : 20px;
-    height: 20px;
-    border-radius: 5px;
-    background: touch.has-hover ? Palette.alternate-background.darker(10%) : transparent;
-    animate width { duration: 120ms; }
-
-    Text {
-        text: confirming ? "sure?" : "×";
-        font-size: confirming ? 10px : 14px;
-        color: confirming ? #d35454 : Palette.foreground.transparentize(0.4);
-    }
-    touch := TouchArea {
-        clicked => {
-            if (root.confirming) {
-                root.delete-requested();
-                root.confirming = false;
-            } else {
-                root.confirming = true;
-                reset.running = true;
-            }
-        }
-    }
-    reset := Timer {
-        interval: 2500ms;
-        running: false;
-        triggered => {
-            root.confirming = false;
-            self.running = false;
-        }
-    }
 }
 
 component RenameButton inherits Rectangle {
@@ -157,8 +122,10 @@ component SessionRowItem inherits Rectangle {
             }
         }
         Rectangle { horizontal-stretch: 1; }
-        if touch.has-hover || entry.active: DeleteButton {
-            delete-requested => { root.delete(); }
+        if touch.has-hover || entry.active: ConfirmButton {
+            text: "×";
+            font-size: 14px;
+            confirmed => { root.delete(); }
         }
     }
 }

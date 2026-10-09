@@ -46,13 +46,13 @@ arboard = "3.6.1"
 # decoded RGBA. `decoding-fallback` keeps image paste working off macOS,
 # where only arboard's (decoding) reader exists. Same slint-kit rev as
 # pi-render's md-segments; bump them together.
-desktop-clipboard = { git = "https://github.com/tilladam/slint-kit", rev = "551aa54e88f77632fa3834243849c5264e639a85", features = ["decoding-fallback"] }
+desktop-clipboard = { git = "https://github.com/tilladam/slint-kit", rev = "846543273c8d92ca8559744743cddcd7c15010f1", features = ["decoding-fallback"] }
 rfd = "0.17.2"
 # Same crate Slint's winit backend uses for `Platform::open_url`.
 webbrowser = "1.2"
 # Only for `default_mono_font()` at runtime; the components themselves come
 # in through the build-dependency below.
-slint-widgets = { git = "https://github.com/tilladam/slint-kit", rev = "551aa54e88f77632fa3834243849c5264e639a85" }
+slint-widgets = { git = "https://github.com/tilladam/slint-kit", rev = "846543273c8d92ca8559744743cddcd7c15010f1" }
 
 [build-dependencies]
 # Must match the `slint` runtime's version exactly — otherwise the compiled
@@ -61,7 +61,7 @@ slint-widgets = { git = "https://github.com/tilladam/slint-kit", rev = "551aa54e
 slint-build = "=1.18.1"
 # slint-kit's `.slint` component library (`@slint-widgets`), registered in
 # build.rs. Same rev as the runtime dependency above; bump them together.
-slint-widgets = { git = "https://github.com/tilladam/slint-kit", rev = "551aa54e88f77632fa3834243849c5264e639a85" }
+slint-widgets = { git = "https://github.com/tilladam/slint-kit", rev = "846543273c8d92ca8559744743cddcd7c15010f1" }
 # Embeds icon.ico into the .exe itself (taskbar/Explorer icon) — separate from
 # cargo-bundle's .msi installer icon above. Deliberately NOT a
 # `[target.'cfg(windows)'.build-dependencies]` entry: Cargo evaluates that

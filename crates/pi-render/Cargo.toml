@@ -10,4 +10,4 @@ pi-rpc = { path = "../pi-rpc" }
 serde_json = { workspace = true, features = ["preserve_order"] }
 # Markdown segmentation and syntect highlighting, shared with yapper via
 # slint-kit (public, crates.io-only dependencies). No tags yet: pinned by rev.
-md-segments = { git = "https://github.com/tilladam/slint-kit", rev = "551aa54e88f77632fa3834243849c5264e639a85" }
+md-segments = { git = "https://github.com/tilladam/slint-kit", rev = "846543273c8d92ca8559744743cddcd7c15010f1" }

@@ -1169,7 +1169,7 @@ dependencies = [
 [[package]]
 name = "desktop-clipboard"
 version = "0.1.0"
-source = "git+https://github.com/tilladam/slint-kit?rev=551aa54e88f77632fa3834243849c5264e639a85#551aa54e88f77632fa3834243849c5264e639a85"
+source = "git+https://github.com/tilladam/slint-kit?rev=846543273c8d92ca8559744743cddcd7c15010f1#846543273c8d92ca8559744743cddcd7c15010f1"
 dependencies = [
  "arboard",
  "image",
@@ -1332,7 +1332,7 @@ dependencies = [
 [[package]]
 name = "emoji-shortcodes"
 version = "0.1.0"
-source = "git+https://github.com/tilladam/slint-kit?rev=551aa54e88f77632fa3834243849c5264e639a85#551aa54e88f77632fa3834243849c5264e639a85"
+source = "git+https://github.com/tilladam/slint-kit?rev=846543273c8d92ca8559744743cddcd7c15010f1#846543273c8d92ca8559744743cddcd7c15010f1"
 
 [[package]]
 name = "endi"
@@ -3124,7 +3124,7 @@ dependencies = [
 [[package]]
 name = "md-segments"
 version = "0.1.0"
-source = "git+https://github.com/tilladam/slint-kit?rev=551aa54e88f77632fa3834243849c5264e639a85#551aa54e88f77632fa3834243849c5264e639a85"
+source = "git+https://github.com/tilladam/slint-kit?rev=846543273c8d92ca8559744743cddcd7c15010f1#846543273c8d92ca8559744743cddcd7c15010f1"
 dependencies = [
  "emoji-shortcodes",
  "pulldown-cmark",
@@ -3840,7 +3840,7 @@ dependencies = [
 [[package]]
 name = "palette-rank"
 version = "0.1.0"
-source = "git+https://github.com/tilladam/slint-kit?rev=551aa54e88f77632fa3834243849c5264e639a85#551aa54e88f77632fa3834243849c5264e639a85"
+source = "git+https://github.com/tilladam/slint-kit?rev=846543273c8d92ca8559744743cddcd7c15010f1#846543273c8d92ca8559744743cddcd7c15010f1"
 dependencies = [
  "nucleo-matcher",
 ]
@@ -5155,7 +5155,7 @@ dependencies = [
 [[package]]
 name = "slint-widgets"
 version = "0.1.0"
-source = "git+https://github.com/tilladam/slint-kit?rev=551aa54e88f77632fa3834243849c5264e639a85#551aa54e88f77632fa3834243849c5264e639a85"
+source = "git+https://github.com/tilladam/slint-kit?rev=846543273c8d92ca8559744743cddcd7c15010f1#846543273c8d92ca8559744743cddcd7c15010f1"
 
 [[package]]
 name = "slinty-pi"

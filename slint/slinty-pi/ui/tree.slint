@@ -1,4 +1,5 @@
 import { ListView, Palette } from "std-widgets.slint";
+import { ConfirmButton } from "@slint-widgets";
 
 export struct TreeRow {
     id: string,
@@ -7,44 +8,6 @@ export struct TreeRow {
     label: string,
     can-fork: bool,
     active: bool,
-}
-
-component ForkButton inherits Rectangle {
-    callback fork-requested();
-    property <bool> confirming: false;
-
-    width: confirming ? 74px : 46px;
-    height: 20px;
-    border-radius: 5px;
-    border-width: 1px;
-    border-color: Palette.border.transparentize(0.5);
-    background: touch.has-hover ? Palette.alternate-background.darker(10%) : transparent;
-    animate width { duration: 120ms; }
-
-    Text {
-        text: confirming ? "fork here?" : "fork";
-        font-size: 10px;
-        color: confirming ? Palette.accent-background : Palette.foreground.transparentize(0.3);
-    }
-    touch := TouchArea {
-        clicked => {
-            if (root.confirming) {
-                root.fork-requested();
-                root.confirming = false;
-            } else {
-                root.confirming = true;
-                reset.running = true;
-            }
-        }
-    }
-    reset := Timer {
-        interval: 2500ms;
-        running: false;
-        triggered => {
-            root.confirming = false;
-            self.running = false;
-        }
-    }
 }
 
 component TreeNodeItem inherits Rectangle {
@@ -89,8 +52,15 @@ component TreeNodeItem inherits Rectangle {
             }
         }
         Rectangle { horizontal-stretch: 1; }
-        if entry.can-fork: ForkButton {
-            fork-requested => { root.fork(); }
+        if entry.can-fork: ConfirmButton {
+            text: "fork";
+            confirm-text: "fork here?";
+            text-color: Palette.foreground.transparentize(0.3);
+            confirm-text-color: Palette.accent-background;
+            idle-width: 46px;
+            confirm-width: 74px;
+            outlined: true;
+            confirmed => { root.fork(); }
         }
     }
 }
