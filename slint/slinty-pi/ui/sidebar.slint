@@ -65,67 +65,71 @@ component SessionRowItem inherits Rectangle {
     background: entry.active ? Palette.accent-background.transparentize(0.85)
         : touch.has-hover ? Palette.alternate-background : transparent;
 
+    // The layout is the TouchArea's child, not a sibling on top of it: an
+    // ancestor keeps `has-hover` while the pointer is over a child, so the
+    // hover-only buttons below don't vanish (and lose their state) as the
+    // pointer reaches them.
     touch := TouchArea {
         clicked => { if (!root.renaming) { root.resume(); } }
-    }
-    HorizontalLayout {
-        padding-left: 9px;
-        padding-right: 6px;
-        spacing: 6px;
-        VerticalLayout {
-            alignment: center;
-            spacing: 1px;
-            HorizontalLayout {
-                spacing: 5px;
-                alignment: start;
-                if root.live: LiveDot { }
-                if !root.renaming: Text {
-                    text: entry.title == "" ? "(untitled)" : entry.title;
-                    font-size: 12.5px;
-                    font-weight: entry.active ? 700 : 400;
-                    color: Palette.foreground;
-                    overflow: elide;
-                }
-                if root.renaming: LineEdit {
-                    text: entry.title;
-                    font-size: 12.5px;
-                    horizontal-stretch: 1;
-                    init => { self.select-all(); self.focus(); }
-                    accepted(text) => {
-                        root.renaming = false;
-                        if (text != "" && text != entry.title) {
-                            root.rename(text);
-                        }
+        HorizontalLayout {
+            padding-left: 9px;
+            padding-right: 6px;
+            spacing: 6px;
+            VerticalLayout {
+                alignment: center;
+                spacing: 1px;
+                HorizontalLayout {
+                    spacing: 5px;
+                    alignment: start;
+                    if root.live: LiveDot { }
+                    if !root.renaming: Text {
+                        text: entry.title == "" ? "(untitled)" : entry.title;
+                        font-size: 12.5px;
+                        font-weight: entry.active ? 700 : 400;
+                        color: Palette.foreground;
+                        overflow: elide;
                     }
-                    changed has-focus => {
-                        if (!self.has-focus) {
+                    if root.renaming: LineEdit {
+                        text: entry.title;
+                        font-size: 12.5px;
+                        horizontal-stretch: 1;
+                        init => { self.select-all(); self.focus(); }
+                        accepted(text) => {
                             root.renaming = false;
+                            if (text != "" && text != entry.title) {
+                                root.rename(text);
+                            }
+                        }
+                        changed has-focus => {
+                            if (!self.has-focus) {
+                                root.renaming = false;
+                            }
                         }
                     }
+                    if entry.active && !root.renaming && touch.has-hover: RenameButton {
+                        clicked => { root.renaming = true; }
+                    }
                 }
-                if entry.active && !root.renaming && touch.has-hover: RenameButton {
-                    clicked => { root.renaming = true; }
+                HorizontalLayout {
+                    spacing: 4px;
+                    Text {
+                        text: entry.relative-time;
+                        font-size: 10px;
+                        color: Palette.foreground.transparentize(0.5);
+                    }
+                    if entry.cost != "": Text {
+                        text: "· " + entry.cost;
+                        font-size: 10px;
+                        color: Palette.foreground.transparentize(0.5);
+                    }
                 }
             }
-            HorizontalLayout {
-                spacing: 4px;
-                Text {
-                    text: entry.relative-time;
-                    font-size: 10px;
-                    color: Palette.foreground.transparentize(0.5);
-                }
-                if entry.cost != "": Text {
-                    text: "· " + entry.cost;
-                    font-size: 10px;
-                    color: Palette.foreground.transparentize(0.5);
-                }
+            Rectangle { horizontal-stretch: 1; }
+            if touch.has-hover || entry.active: ConfirmButton {
+                text: "×";
+                font-size: 14px;
+                confirmed => { root.delete(); }
             }
-        }
-        Rectangle { horizontal-stretch: 1; }
-        if touch.has-hover || entry.active: ConfirmButton {
-            text: "×";
-            font-size: 14px;
-            confirmed => { root.delete(); }
         }
     }
 }
